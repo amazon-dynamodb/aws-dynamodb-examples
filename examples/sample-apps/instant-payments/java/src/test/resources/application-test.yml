@@ -1,0 +1,12 @@
+# Merged when spring.profiles.active=test (@ActiveProfiles on AbstractIntegrationTest in integration.utils).
+# DynamoDbTableTestReset (test profile) deletes / recreates / seeds the table before each test method.
+
+dynamodb:
+  endpoint: http://localhost:8000    # overridden by AbstractIntegrationTest#dynamoDbProperties
+  region: eu-west-1
+  client-type: high-level
+  table-name: JavaInstantPayments
+  idempotency-ttl-seconds: 2592000
+  streams:
+    # Lets integration tests observe INSERTs without relying on LATEST iterator timing.
+    iterator-type: TRIM_HORIZON

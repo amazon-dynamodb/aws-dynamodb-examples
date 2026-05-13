@@ -1,0 +1,23 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: instant-payments
+
+dynamodb:
+  endpoint: http://localhost:8000     # required: local or https://dynamodb.{region}.amazonaws.com
+  region: eu-west-1                   # required
+  client-type: high-level             # required: high-level | low-level
+  table-name: JavaInstantPayments
+  # Seconds until idempotency items get ttl = createdAtUtc + this (DynamoDB deletes eventually). Min 3600, max 31536000.
+  idempotency-ttl-seconds: 2592000
+  streams:
+    iterator-type: LATEST             # optional: LATEST (default) | TRIM_HORIZON — sample tests use TRIM_HORIZON
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
