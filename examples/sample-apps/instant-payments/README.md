@@ -38,7 +38,7 @@ Retrieves an account’s balances and active reservations in a single read. The 
 
 ### POST /api/v1/accounts/{accountId}/batch-get-reservations
 
-Retrieves specific reservations for a single account by their ids using **BatchGetItem**. The service accepts up to **100** reservation identifiers in JSON, merging duplicates while keeping first-seen order. The response includes found reservations and lists missing ids separately, returning a success response even when some ids are absent so callers can merge partial success with the request list.
+Retrieves specific reservations for a single account by their ids. The caller supplies between **1** and **100** reservation identifiers in JSON. Duplicate ids in the list are merged while preserving first-seen order. Requests with no ids, more than **100** ids, or blank identifiers are rejected. For valid requests, the response includes found reservations and lists any missing ids separately, so callers can reconcile partial results against the identifiers they sent.
 
 ### GET /api/v1/merchants/{merchantId}/payments
 

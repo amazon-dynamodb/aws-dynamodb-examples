@@ -55,6 +55,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
 
     private static final String STREAM_ARN =
             "arn:aws:dynamodb:eu-west-1:123456789012:table/T/stream/2024-01-01T00:00:00.000";
+
     private static final String SHARD_ID = "shardId-000000000000";
 
     @Mock
@@ -68,6 +69,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
 
     private DynamoDbStreamsPaymentEventListener listener;
 
+    /** Constructs the listener with test table name and LATEST shard iterator type. */
     @BeforeEach
     void setUp() {
         listener = new DynamoDbStreamsPaymentEventListener(
@@ -75,7 +77,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void lifecycle_startStopAndPhase() {
+    void lifecycle_whenStartedAndStopped_shouldTransitionPhases() {
         assertThat(listener.isRunning()).isFalse();
         assertThat(listener.getPhase()).isEqualTo(Integer.MAX_VALUE);
 
@@ -87,7 +89,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_insertCreatedEvent_shouldInvokeProcessor() {
+    void processStreamRecord_whenCreatedEventInserted_shouldInvokeProcessor() {
         Record record = Record.builder()
                 .eventName(OperationType.INSERT)
                 .dynamodb(StreamRecord.builder()
@@ -105,7 +107,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_modify_shouldIgnore() {
+    void processStreamRecord_whenRecordModified_shouldIgnore() {
         Record record = Record.builder()
                 .eventName(OperationType.MODIFY)
                 .dynamodb(StreamRecord.builder().newImage(Map.of()).build())
@@ -117,7 +119,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_nonPaymentEventEntity_shouldIgnore() {
+    void processStreamRecord_whenNonPaymentEventEntity_shouldIgnore() {
         Record record = Record.builder()
                 .eventName(OperationType.INSERT)
                 .dynamodb(StreamRecord.builder()
@@ -133,7 +135,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_nullNewImage_shouldIgnore() {
+    void processStreamRecord_whenNewImageNull_shouldIgnore() {
         Record record = Record.builder()
                 .eventName(OperationType.INSERT)
                 .dynamodb(StreamRecord.builder().newImage(null).build())
@@ -145,7 +147,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_missingEntityType_shouldIgnore() {
+    void processStreamRecord_whenEntityTypeMissing_shouldIgnore() {
         Record record = Record.builder()
                 .eventName(OperationType.INSERT)
                 .dynamodb(StreamRecord.builder()
@@ -162,7 +164,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_wrongEventType_shouldIgnore() {
+    void processStreamRecord_whenWrongEventType_shouldIgnore() {
         Record record = Record.builder()
                 .eventName(OperationType.INSERT)
                 .dynamodb(StreamRecord.builder()
@@ -179,7 +181,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_missingPaymentId_shouldIgnore() {
+    void processStreamRecord_whenPaymentIdMissing_shouldIgnore() {
         Record record = Record.builder()
                 .eventName(OperationType.INSERT)
                 .dynamodb(StreamRecord.builder()
@@ -196,7 +198,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void parseShardIteratorType_nullBlankUnknownAndValid() {
+    void parseShardIteratorType_whenNullBlankUnknownOrValid_shouldParseCorrectly() {
         assertThat((ShardIteratorType) ReflectionTestUtils.invokeMethod(
                 DynamoDbStreamsPaymentEventListener.class, "parseShardIteratorType", (String) null))
                 .isEqualTo(ShardIteratorType.LATEST);
@@ -215,7 +217,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_processorThrows_shouldPropagateUnderRetryLimit() {
+    void processStreamRecord_whenProcessorThrows_shouldPropagateUnderRetryLimit() {
         Record record = buildCreatedRecord("pay_err");
 
         doThrow(new RuntimeException("fail"))
@@ -229,7 +231,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_processorExhaustsRetries_shouldSwallowAndUnblockShard() {
+    void processStreamRecord_whenProcessorExhaustsRetries_shouldSwallowAndUnblockShard() {
         Record record = buildCreatedRecord("pay_poison");
 
         doThrow(new RuntimeException("permanent failure"))
@@ -253,7 +255,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void processStreamRecord_successAfterFailure_shouldClearRetryCount() {
+    void processStreamRecord_whenSuccessAfterFailure_shouldClearRetryCount() {
         Record record = buildCreatedRecord("pay_retry_ok");
 
         doThrow(new RuntimeException("transient"))
@@ -274,7 +276,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void discoverStreamArn_tableDescribeFailure_returnsNull() {
+    void discoverStreamArn_whenTableDescribeFails_shouldReturnNull() {
         when(dynamoDbClient.describeTable(any(DescribeTableRequest.class)))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("no table")));
 
@@ -283,7 +285,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void getRecordsWithRenewal_expiredIterator_opensFreshIteratorAndRetriesGetRecords() throws Exception {
+    void getRecordsWithRenewal_whenIteratorExpired_shouldOpenFreshIteratorAndRetryGetRecords() throws Exception {
         GetRecordsResponse second = GetRecordsResponse.builder()
                 .records(List.of())
                 .nextShardIterator("next-after-retry")
@@ -315,7 +317,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void getRecordsWithRenewal_nonExpiredCompletionException_rethrows() throws Exception {
+    void getRecordsWithRenewal_whenNonExpiredCompletionException_shouldRethrow() throws Exception {
         when(streamsClient.getRecords(any(GetRecordsRequest.class)))
                 .thenReturn(CompletableFuture.failedFuture(
                         new CompletionException(new RuntimeException("throttle"))));
@@ -334,7 +336,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     }
 
     @Test
-    void openShardIterator_trimmedAfterSequence_clearsSequenceAndFallsBackToConfiguredIterator() throws Exception {
+    void openShardIterator_whenTrimmedAfterSequence_shouldClearSequenceAndFallBackToConfiguredIterator() throws Exception {
         when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
                 .thenReturn(CompletableFuture.failedFuture(
                         new CompletionException(TrimmedDataAccessException.builder().build())))
@@ -352,6 +354,7 @@ public class DynamoDbStreamsPaymentEventListenerTest {
         assertThat(ReflectionTestUtils.getField(cp, "nextIterator")).isEqualTo("fallback-iter");
     }
 
+    /** Builds an INSERT stream record for an OUTBOUND_PAYMENT_CREATED payment event. */
     private static Record buildCreatedRecord(String paymentId) {
         return Record.builder()
                 .eventName(OperationType.INSERT)
@@ -365,9 +368,10 @@ public class DynamoDbStreamsPaymentEventListenerTest {
                 .build();
     }
 
+    /** Reflectively instantiates the listener package-private {@code ShardCheckpoint} type. */
     private static Object newShardCheckpoint() throws Exception {
         Class<?> inner = Class.forName(
-                "software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.DynamoDbStreamsPaymentEventListener$ShardCheckpoint");
+                DynamoDbStreamsPaymentEventListener.class.getName() + "$ShardCheckpoint");
         Constructor<?> ctor = inner.getDeclaredConstructor();
         ctor.setAccessible(true);
         return ctor.newInstance();

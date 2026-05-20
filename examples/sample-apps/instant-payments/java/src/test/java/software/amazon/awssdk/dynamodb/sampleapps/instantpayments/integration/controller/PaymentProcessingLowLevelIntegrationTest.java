@@ -11,6 +11,11 @@ import org.springframework.test.context.DynamicPropertySource;
 @Tag("integration")
 public class PaymentProcessingLowLevelIntegrationTest extends PaymentProcessingIntegrationTest {
 
+    /**
+     * Overrides the default high-level client with {@code dynamodb.client-type=low-level}.
+     *
+     * @param registry dynamic property registry for the test context
+     */
     @DynamicPropertySource
     static void useLowLevelClient(DynamicPropertyRegistry registry) {
         registry.add("dynamodb.client-type", () -> "low-level");

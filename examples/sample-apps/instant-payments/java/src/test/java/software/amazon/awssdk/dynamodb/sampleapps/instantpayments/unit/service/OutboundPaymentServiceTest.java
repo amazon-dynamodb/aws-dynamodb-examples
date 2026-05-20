@@ -46,13 +46,14 @@ public class OutboundPaymentServiceTest {
 
     private OutboundPaymentService service;
 
+    /** Constructs the service with a fresh mapper for each test method. */
     @BeforeEach
     void setUp() {
         service = new OutboundPaymentService(paymentRepository, new PaymentMapper());
     }
 
     @Test
-    void createOutboundPayment_shouldCreateNewPayment() {
+    void createOutboundPayment_whenNewRequest_shouldCreateNewPayment() {
         when(paymentRepository.createPaymentTransaction(
                 any(PaymentStreamHead.class), any(PaymentEvent.class), any(IdempotencyRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
@@ -77,7 +78,7 @@ public class OutboundPaymentServiceTest {
     }
 
     @Test
-    void createOutboundPayment_shouldReturnStoredResponseOnIdempotentRetry() {
+    void createOutboundPayment_whenIdempotentRetry_shouldReturnStoredResponse() {
         var request = sampleRequest("key-dup");
         String requestHash = HashUtils.sha256(IdempotencyCanonicalizer.canonicalForm(request));
 
@@ -102,7 +103,7 @@ public class OutboundPaymentServiceTest {
     }
 
     @Test
-    void createOutboundPayment_shouldThrowConflictOnHashMismatch() {
+    void createOutboundPayment_whenHashMismatch_shouldThrowConflict() {
         var request = sampleRequest("key-conflict");
 
         IdempotencyRecord existing = new IdempotencyRecord();
@@ -123,7 +124,7 @@ public class OutboundPaymentServiceTest {
     }
 
     @Test
-    void createOutboundPayment_shouldPropagateUnexpectedTransactionFailure() {
+    void createOutboundPayment_whenUnexpectedTransactionFailure_shouldPropagateFailure() {
         when(paymentRepository.createPaymentTransaction(any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("DynamoDB unavailable")));
 
@@ -136,7 +137,7 @@ public class OutboundPaymentServiceTest {
     }
 
     @Test
-    void createOutboundPayment_idempotencyRecordMissingAfterConflict_shouldThrowIllegalState() {
+    void createOutboundPayment_whenIdempotencyRecordMissingAfterConflict_shouldThrowIllegalState() {
         var request = sampleRequest("key-missing-record");
         TransactionCanceledException tce = buildIdempotencyConflictException();
 
@@ -151,7 +152,7 @@ public class OutboundPaymentServiceTest {
     }
 
     @Test
-    void createOutboundPayment_transactionCanceledWithShortReasons_shouldNotTreatAsIdempotencyConflict() {
+    void createOutboundPayment_whenTransactionCanceledWithShortReasons_shouldNotTreatAsIdempotencyConflict() {
         var request = sampleRequest("key-short-reasons");
         TransactionCanceledException tce = TransactionCanceledException.builder()
                 .cancellationReasons(
@@ -169,12 +170,17 @@ public class OutboundPaymentServiceTest {
                 .hasCauseInstanceOf(TransactionCanceledException.class);
     }
 
+    /** Returns a minimal valid create request with the given idempotency key. */
     private CreateOutboundPaymentRequest sampleRequest(String idempotencyKey) {
         return new CreateOutboundPaymentRequest(
                 idempotencyKey, "merch_1", "acc_usd_1", "RO49AAAA1B31007593840000",
                 "John Doe", new BigDecimal("100"), "USD");
     }
 
+    /**
+     * Builds a {@link TransactionCanceledException} whose third cancellation reason is a conditional
+     * check failure, matching idempotency record already exists semantics.
+     */
     private TransactionCanceledException buildIdempotencyConflictException() {
         return TransactionCanceledException.builder()
                 .cancellationReasons(

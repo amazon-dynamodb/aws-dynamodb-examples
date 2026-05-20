@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbTableInitializer;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.SeedAccountsData;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
@@ -36,8 +37,8 @@ import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
  * Drops the configured DynamoDB table, recreates it (matching production layout), and seeds accounts
  * from {@link SeedAccountsData}.
  *
- * <p>Used by integration tests for isolation; table definition must stay aligned with
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbTableInitializer}.
+ * <p>Used by integration tests for isolation. Table definition must stay aligned with
+ * {@link DynamoDbTableInitializer}.
  *
  * <p>Active only for Spring profile {@code test}.
  */
@@ -45,14 +46,17 @@ import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
 @Profile("test")
 public class DynamoDbTableTestReset {
 
-    private static final Logger log = LoggerFactory.getLogger(DynamoDbTableTestReset.class);
+    private static final Logger logger = LoggerFactory.getLogger(DynamoDbTableTestReset.class);
 
     private final DynamoDbAsyncClient dynamoDbAsyncClient;
+
     private final String tableName;
 
     /**
-     * @param dynamoDbAsyncClient low-level async client for table and item ops
-     * @param tableName           single-table name (same property as the app)
+     * Creates the reset helper bound to the configured table name.
+     *
+     * @param dynamoDbAsyncClient client for table operations
+     * @param tableName payments table name from configuration
      */
     public DynamoDbTableTestReset(DynamoDbAsyncClient dynamoDbAsyncClient,
                                   @Value("${dynamodb.table-name}") String tableName) {
@@ -61,8 +65,7 @@ public class DynamoDbTableTestReset {
     }
 
     /**
-     * Drops the table if present, recreates it with Streams ({@link StreamViewType#NEW_IMAGE}),
-     * then loads seed accounts (unconditional put — table is empty).
+     * Deletes the table when present, recreates it with production layout, and seeds account rows.
      */
     public void deleteRecreateAndSeed() {
         deleteTableIfExists();
@@ -70,20 +73,22 @@ public class DynamoDbTableTestReset {
         seedAccounts();
     }
 
+    /** Deletes the configured table and waits until it no longer exists. */
     private void deleteTableIfExists() {
         try {
             dynamoDbAsyncClient.deleteTable(DeleteTableRequest.builder().tableName(tableName).build()).join();
             dynamoDbAsyncClient.waiter().waitUntilTableNotExists(r -> r.tableName(tableName));
-            log.debug("Deleted DynamoDB table '{}'", tableName);
+            logger.debug("Deleted DynamoDB table '{}'", tableName);
         } catch (CompletionException e) {
             if (e.getCause() instanceof ResourceNotFoundException) {
-                log.debug("DynamoDB table '{}' did not exist, skipping delete", tableName);
+                logger.debug("DynamoDB table '{}' did not exist, skipping delete", tableName);
                 return;
             }
             throw new IllegalStateException("Failed to delete DynamoDB table: " + tableName, e);
         }
     }
 
+    /** Creates the payments table with GSIs, streams, and TTL matching application startup. */
     private void createTable() {
         Projection allProjection = Projection.builder().projectionType(ProjectionType.ALL).build();
 
@@ -132,7 +137,7 @@ public class DynamoDbTableTestReset {
 
         dynamoDbAsyncClient.createTable(request).join();
         dynamoDbAsyncClient.waiter().waitUntilTableExists(r -> r.tableName(tableName)).join();
-        log.debug("Created DynamoDB table '{}' with Streams (NEW_IMAGE)", tableName);
+        logger.debug("Created DynamoDB table '{}' with Streams (NEW_IMAGE)", tableName);
         try {
             dynamoDbAsyncClient.updateTimeToLive(
                             UpdateTimeToLiveRequest.builder()
@@ -144,14 +149,15 @@ public class DynamoDbTableTestReset {
                                                     .build())
                                     .build())
                     .join();
-            log.debug("Enabled TTL on attribute ttl for table '{}'", tableName);
+            logger.debug("Enabled TTL on attribute ttl for table '{}'", tableName);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            log.warn("Could not enable TTL on table '{}' (may already be enabled or in progress): {}",
+            logger.warn("Could not enable TTL on table '{}' (may already be enabled or in progress): {}",
                     tableName, cause.getMessage());
         }
     }
 
+    /** Inserts seed account rows from {@link SeedAccountsData}. */
     private void seedAccounts() {
         List<Map<String, Object>> accounts = loadSeedData();
         for (Map<String, Object> account : accounts) {
@@ -162,13 +168,20 @@ public class DynamoDbTableTestReset {
                             .build())
                     .join();
         }
-        log.debug("Seeded {} account rows into '{}'", accounts.size(), tableName);
+        logger.debug("Seeded {} account rows into '{}'", accounts.size(), tableName);
     }
 
+    /** Loads account seed rows as maps for DynamoDB {@code PutItem} conversion. */
     private List<Map<String, Object>> loadSeedData() {
         return SeedAccountsData.accountRowsAsMaps();
     }
 
+    /**
+     * Converts a string-keyed seed map into DynamoDB attribute values.
+     *
+     * @param source seed row with Java scalar values
+     * @return item map ready for {@code PutItemRequest}
+     */
     private static Map<String, AttributeValue> convertToAttributeValueMap(Map<String, Object> source) {
         Map<String, AttributeValue> item = new HashMap<>();
         for (Map.Entry<String, Object> entry : source.entrySet()) {
@@ -177,6 +190,12 @@ public class DynamoDbTableTestReset {
         return item;
     }
 
+    /**
+     * Maps a Java scalar seed value to the corresponding {@link AttributeValue}.
+     *
+     * @param value string, number, boolean, or other value coerced to string
+     * @return DynamoDB attribute value for the seed field
+     */
     private static AttributeValue toAttributeValue(Object value) {
         if (value instanceof String s) {
             return AttributeValue.builder().s(s).build();

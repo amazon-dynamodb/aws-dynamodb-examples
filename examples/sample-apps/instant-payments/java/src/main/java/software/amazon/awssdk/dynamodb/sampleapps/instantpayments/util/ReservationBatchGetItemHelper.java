@@ -7,6 +7,7 @@ import java.util.function.Function;
 
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Account;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Reservation;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BatchGetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
@@ -14,11 +15,11 @@ import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
 /**
  * Reservation-specific helpers for {@code BatchGetItem} under an account partition.
  *
- * <p>High-level and low-level {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository}
+ * <p>High-level and low-level {@link PaymentRepository}
  * implementations share the same PK/SK layout ({@code ACCOUNT#}{@code accountId} plus
  * {@code RESERVATION#}{@code reservationId}) but differ in how attribute maps become
- * {@link Reservation} instances. This type centralises key construction and response merging;
- * retry orchestration for unprocessed keys stays in {@link BatchGetItemHelper}.
+ * {@link Reservation} instances. This type centralises key construction and response merging.
+ * Retry orchestration for unprocessed keys stays in {@link BatchGetItemHelper}.
  */
 public final class ReservationBatchGetItemHelper {
 

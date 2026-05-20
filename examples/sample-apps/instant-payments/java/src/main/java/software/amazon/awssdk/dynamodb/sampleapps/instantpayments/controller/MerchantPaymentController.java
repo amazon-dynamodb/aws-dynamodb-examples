@@ -24,9 +24,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Mercha
  *
  * <p>Exposes:
  * <ul>
- *   <li>{@code GET /api/v1/merchants/{merchantId}/payments} — list payments by merchant (GSI with
+ *   <li>{@code GET /api/v1/merchants/{merchantId}/payments}: list payments by merchant (GSI with
  *       multi-attribute sort key)</li>
- *   <li>{@code GET /api/v1/merchants/{merchantId}/payments/state/{state}} — list payments by
+ *   <li>{@code GET /api/v1/merchants/{merchantId}/payments/state/{state}}: list payments by
  *       merchant and state (GSI with multi-attribute partition key)</li>
  * </ul>
  */
@@ -35,8 +35,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Mercha
 @Tag(name = "Merchant Payments", description = "Query merchant payment projections via Global Secondary Indexes")
 public class MerchantPaymentController {
 
-    private static final Logger log = LoggerFactory.getLogger(MerchantPaymentController.class);
+    private static final Logger logger = LoggerFactory.getLogger(MerchantPaymentController.class);
 
+    /** Read-model service for GSI-backed merchant payment queries. */
     private final MerchantPaymentQueryService merchantPaymentQueryService;
 
     /**
@@ -47,15 +48,15 @@ public class MerchantPaymentController {
     }
 
     /**
-     * Lists a merchant's payment projections; default order is newest first.
+     * Lists a merchant's payment projections. Default order is newest first.
      *
      * <p>Uses {@code GSI_MERCHANT_PAYMENTS} with a multi-attribute sort key
      * ({@code createdAtUtc + paymentId}).
      *
      * @param merchantId        merchant scope
-     * @param limit             optional page size; defaults to 50 when omitted or invalid
-     * @param scanIndexForward  optional; when {@code true}, same as DynamoDB Query {@code ScanIndexForward}
-     *                          (ascending / oldest first); omitted or {@code false} yields newest first
+     * @param limit             optional page size, defaults to 50 when omitted or invalid
+     * @param scanIndexForward  optional. When {@code true}, same as DynamoDB Query {@code ScanIndexForward}
+     *                          (ascending, oldest first). Omitted or {@code false} yields newest first
      * @param nextToken         optional opaque pagination token from a previous page
      * @return 200 OK with ordered page of projections
      */
@@ -66,21 +67,32 @@ public class MerchantPaymentController {
                     first (DynamoDB ScanIndexForward=false). Pass scanIndexForward=true for oldest first. \
                     Uses GSI_MERCHANT_PAYMENTS (multi-attribute sort key: createdAtUtc + paymentId). \
                     Default page size is 50 when limit is omitted or invalid. Pass nextToken from a \
-                    previous response to continue pagination.""")
-    @ApiResponse(responseCode = "200", description = "Payments listed (may be empty)")
-    @ApiResponse(responseCode = "500", description = "Internal server error",
+                    previous response on this route to continue pagination.""")
+    @ApiResponse(responseCode = "200", description = "Payments listed (may be empty)",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = MerchantPaymentsPage.class)))
+    @ApiResponse(responseCode = "400",
+            description = """
+                    HTTP 400 with ErrorResponse.error INVALID_PAGINATION_TOKEN for a malformed or \
+                    undecodable nextToken, or for a token from GET .../payments/state/{state} used on \
+                    this route.""",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "500",
+            description = "Server error with ErrorResponse.error INTERNAL_ERROR",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping
     public ResponseEntity<MerchantPaymentsPage> listMerchantPayments(
             @PathVariable String merchantId,
-            @Parameter(description = "Maximum results; defaults to 50")
+            @Parameter(description = "Maximum results, default 50")
             @RequestParam(required = false) Integer limit,
-            @Parameter(description = "DynamoDB ScanIndexForward; true = oldest first, false or omitted = newest first")
+            @Parameter(description = "DynamoDB ScanIndexForward. true means oldest first, false or omitted means newest first")
             @RequestParam(required = false) Boolean scanIndexForward,
-            @Parameter(description = "Opaque pagination token from the previous merchant payments response")
+            @Parameter(description = "Opaque token from a prior GET .../merchants/{merchantId}/payments response only. "
+                    + "Do not pass a token from GET .../payments/state/{state}")
             @RequestParam(required = false) String nextToken) {
-        log.debug("List merchant payments: merchantId={}, limit={}, scanIndexForward={}, nextTokenPresent={}",
+        logger.debug("List merchant payments: merchantId={}, limit={}, scanIndexForward={}, nextTokenPresent={}",
                 merchantId, limit, scanIndexForward, nextToken != null && !nextToken.isBlank());
         MerchantPaymentsPage page =
                 merchantPaymentQueryService.listMerchantPayments(merchantId, limit, scanIndexForward, nextToken);
@@ -88,16 +100,16 @@ public class MerchantPaymentController {
     }
 
     /**
-     * Lists a merchant's payment projections filtered by lifecycle state; default order is newest first.
+     * Lists a merchant's payment projections filtered by lifecycle state. Default order is newest first.
      *
      * <p>Uses {@code GSI_MERCHANT_STATE_PAYMENTS} with a multi-attribute partition key
      * ({@code merchantId + aggregateState}).
      *
      * @param merchantId        merchant scope
-     * @param state             payment state (case-insensitive); invalid values yield 400
-     * @param limit             optional page size; defaults to 50 when omitted or invalid
-     * @param scanIndexForward  optional; when {@code true}, DynamoDB Query ascending (oldest first);
-     *                          omitted or {@code false} yields newest first
+     * @param state             payment state (case-insensitive). Invalid values yield 400
+     * @param limit             optional page size, defaults to 50 when omitted or invalid
+     * @param scanIndexForward  optional. When {@code true}, DynamoDB Query ascending (oldest first).
+     *                          Omitted or {@code false} yields newest first
      * @param nextToken         optional opaque pagination token from a previous page
      * @return 200 OK with ordered page of matching projections, or 400 on invalid state
      */
@@ -105,29 +117,38 @@ public class MerchantPaymentController {
             summary = "List merchant payments by state",
             description = """
                     Returns payment projections for the requested merchant filtered by state. \
-                    Default order is newest first (DynamoDB ScanIndexForward=false); pass \
+                    Default order is newest first (DynamoDB ScanIndexForward=false). Pass \
                     scanIndexForward=true for oldest first. Uses GSI_MERCHANT_STATE_PAYMENTS \
                     (multi-attribute partition key: merchantId + aggregateState). State matching is \
                     case-insensitive. Default page size is 50 when limit is omitted or invalid. \
-                    Pass nextToken from a previous response to continue pagination.""")
-    @ApiResponse(responseCode = "200", description = "Payments listed (may be empty)")
-    @ApiResponse(responseCode = "400", description = "Invalid payment state",
+                    Pass nextToken from a previous response on this route to continue pagination.""")
+    @ApiResponse(responseCode = "200", description = "Payments listed (may be empty)",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = MerchantPaymentsPage.class)))
+    @ApiResponse(responseCode = "400",
+            description = """
+                    HTTP 400 with ErrorResponse.error INVALID_PAYMENT_STATE for an unknown state, \
+                    ErrorResponse.error INVALID_PAGINATION_TOKEN for a malformed or undecodable nextToken, \
+                    or ErrorResponse.error INVALID_PAGINATION_TOKEN when a token from \
+                    GET .../merchants/{merchantId}/payments without /state/... is used on this route.""",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error",
+    @ApiResponse(responseCode = "500",
+            description = "Server error with ErrorResponse.error INTERNAL_ERROR",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/state/{state}")
     public ResponseEntity<MerchantPaymentsPage> listMerchantPaymentsByState(
             @PathVariable String merchantId,
             @PathVariable String state,
-            @Parameter(description = "Maximum results; defaults to 50")
+            @Parameter(description = "Maximum results, default 50")
             @RequestParam(required = false) Integer limit,
-            @Parameter(description = "DynamoDB ScanIndexForward; true = oldest first, false or omitted = newest first")
+            @Parameter(description = "DynamoDB ScanIndexForward. true means oldest first, false or omitted means newest first")
             @RequestParam(required = false) Boolean scanIndexForward,
-            @Parameter(description = "Opaque pagination token from the previous merchant payments-by-state response")
+            @Parameter(description = "Opaque token from a prior GET .../merchants/{merchantId}/payments/state/{state} "
+                    + "response for the same state value. Do not pass a token from GET .../payments without /state/...")
             @RequestParam(required = false) String nextToken) {
-        log.debug("List merchant payments by state: merchantId={}, state={}, limit={}, scanIndexForward={}, nextTokenPresent={}",
+        logger.debug("List merchant payments by state: merchantId={}, state={}, limit={}, scanIndexForward={}, nextTokenPresent={}",
                 merchantId, state, limit, scanIndexForward, nextToken != null && !nextToken.isBlank());
         MerchantPaymentsPage page =
                 merchantPaymentQueryService.listMerchantPaymentsByState(merchantId, state, limit,

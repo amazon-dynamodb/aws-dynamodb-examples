@@ -47,11 +47,19 @@ final class PaginationTokenCodec {
      */
     static final String GSI_MERCHANT_STATE_PAYMENTS_DISCRIMINATOR = "aggregateState";
 
+    /** Jackson mapper for serializing pagination token payloads. */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** Utility class, not instantiable. */
     private PaginationTokenCodec() {
     }
 
+    /**
+     * Encodes a DynamoDB {@code LastEvaluatedKey} map as an opaque URL-safe Base64 token.
+     *
+     * @param lastEvaluatedKey pagination key from a query response, or empty for no continuation
+     * @return encoded token, or {@code null} when there is no next page
+     */
     static String encode(Map<String, AttributeValue> lastEvaluatedKey) {
         if (lastEvaluatedKey == null || lastEvaluatedKey.isEmpty()) {
             return null;
@@ -66,6 +74,13 @@ final class PaginationTokenCodec {
         }
     }
 
+    /**
+     * Decodes an opaque pagination token back into a DynamoDB exclusive start key map.
+     *
+     * @param nextToken encoded token from a prior response, or blank for the first page
+     * @return decoded key map, or {@code null} when no token was supplied
+     * @throws InvalidPaginationTokenException when the token is malformed or empty after decoding
+     */
     static Map<String, AttributeValue> decode(String nextToken) {
         if (nextToken == null || nextToken.isBlank()) {
             return null;
@@ -94,7 +109,7 @@ final class PaginationTokenCodec {
      * expected attribute, which indicates the token was produced by a different GSI endpoint
      * (cross-endpoint token reuse).
      *
-     * @param decoded      result of {@link #decode(String)}; must not be {@code null}
+     * @param decoded      result of {@link #decode(String)}, must not be {@code null}
      * @param requiredKey  attribute name that must be present in the decoded key map
      * @param nextToken    original opaque token string (used in the exception)
      * @throws InvalidPaginationTokenException if {@code requiredKey} is absent from {@code decoded}
@@ -107,6 +122,12 @@ final class PaginationTokenCodec {
         }
     }
 
+    /**
+     * Converts one DynamoDB {@link AttributeValue} into a JSON-friendly encoded form.
+     *
+     * @param value attribute value from a {@code LastEvaluatedKey} entry
+     * @return encoded representation for the token payload
+     */
     private static EncodedAttributeValue encodeAttributeValue(AttributeValue value) {
         if (value.s() != null) {
             return new EncodedAttributeValue("S", value.s(), null, null);
@@ -140,6 +161,14 @@ final class PaginationTokenCodec {
         throw new IllegalArgumentException("Unsupported pagination key attribute value");
     }
 
+    /**
+     * Rebuilds a DynamoDB {@link AttributeValue} from its encoded token representation.
+     *
+     * @param value     encoded attribute from the token payload
+     * @param nextToken original opaque token string used in validation errors
+     * @return decoded attribute value
+     * @throws InvalidPaginationTokenException when the encoded shape is invalid
+     */
     private static AttributeValue decodeAttributeValue(EncodedAttributeValue value, String nextToken) {
         if (value == null || value.type() == null) {
             throw new InvalidPaginationTokenException(nextToken);
@@ -164,6 +193,14 @@ final class PaginationTokenCodec {
         };
     }
 
+    /**
+     * Returns the scalar string payload for string, number, or binary encoded values.
+     *
+     * @param value     encoded attribute from the token payload
+     * @param nextToken original opaque token string used in validation errors
+     * @return non-null scalar value
+     * @throws InvalidPaginationTokenException when the scalar payload is absent
+     */
     private static String requireScalar(EncodedAttributeValue value, String nextToken) {
         if (value.value() == null) {
             throw new InvalidPaginationTokenException(nextToken);
@@ -171,6 +208,14 @@ final class PaginationTokenCodec {
         return value.value();
     }
 
+    /**
+     * Returns the boolean payload for {@code BOOL} encoded values.
+     *
+     * @param value     encoded attribute from the token payload
+     * @param nextToken original opaque token string used in validation errors
+     * @return non-null boolean value
+     * @throws InvalidPaginationTokenException when the boolean payload is absent
+     */
     private static Boolean requireBoolean(EncodedAttributeValue value, String nextToken) {
         if (value.bool() == null) {
             throw new InvalidPaginationTokenException(nextToken);
@@ -178,6 +223,14 @@ final class PaginationTokenCodec {
         return value.bool();
     }
 
+    /**
+     * Returns the string list payload for set-typed encoded values.
+     *
+     * @param value     encoded attribute from the token payload
+     * @param nextToken original opaque token string used in validation errors
+     * @return non-null list of encoded set members
+     * @throws InvalidPaginationTokenException when the list payload is absent
+     */
     private static List<String> requireValues(EncodedAttributeValue value, String nextToken) {
         if (value.values() == null) {
             throw new InvalidPaginationTokenException(nextToken);
@@ -185,6 +238,14 @@ final class PaginationTokenCodec {
         return value.values();
     }
 
+    /**
+     * JSON-friendly representation of one DynamoDB attribute value inside a pagination token.
+     *
+     * @param type   DynamoDB type discriminator such as {@code S} or {@code N}
+     * @param value  scalar payload for string, number, or base64 binary values
+     * @param values list payload for string, number, or binary sets
+     * @param bool   boolean payload for {@code BOOL} values
+     */
     private record EncodedAttributeValue(String type, String value, List<String> values, Boolean bool) {
     }
 }

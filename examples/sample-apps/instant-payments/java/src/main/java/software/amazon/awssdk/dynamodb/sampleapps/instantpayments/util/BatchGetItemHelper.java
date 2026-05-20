@@ -120,7 +120,7 @@ public final class BatchGetItemHelper {
      * @param requestItems initial table key set for the first call
      * @param batchCallFn async service call implementation for one {@code BatchGetItem} round
      * @param responseMerger merges response rows into the shared accumulator map
-     * @param log logger used when retries are exhausted and a partial result is returned
+     * @param logger logger used when retries are exhausted and a partial result is returned
      * @param <T> mapped item type held in the accumulator
      * @return future completing with all mapped items obtained before completion or retry exhaustion
      */
@@ -128,8 +128,8 @@ public final class BatchGetItemHelper {
             Map<String, KeysAndAttributes> requestItems,
             Function<BatchGetItemRequest, CompletableFuture<BatchGetItemResponse>> batchCallFn,
             BiConsumer<BatchGetItemResponse, Map<String, T>> responseMerger,
-            Logger log) {
-        return accumulateWithRetry(requestItems, new HashMap<>(), 0, batchCallFn, responseMerger, log);
+            Logger logger) {
+        return accumulateWithRetry(requestItems, new HashMap<>(), 0, batchCallFn, responseMerger, logger);
     }
 
     /**
@@ -140,7 +140,7 @@ public final class BatchGetItemHelper {
      * @param attempt zero-based attempt index for the next service call
      * @param batchCallFn async service call implementation for one {@code BatchGetItem} round
      * @param responseMerger merges returned rows into {@code itemsByIdentifier}
-     * @param log logger used when retries are exhausted
+     * @param logger logger used when retries are exhausted
      * @param <T> mapped item type held in the accumulator
      * @return future completing with the shared accumulator after this attempt chain finishes
      */
@@ -150,10 +150,11 @@ public final class BatchGetItemHelper {
             int attempt,
             Function<BatchGetItemRequest, CompletableFuture<BatchGetItemResponse>> batchCallFn,
             BiConsumer<BatchGetItemResponse, Map<String, T>> responseMerger,
-            Logger log) {
-        return batchCallFn.apply(buildBatchGetItemRequest(requestItems))
+            Logger logger) {
+        CompletableFuture<Map<String, T>> result = batchCallFn.apply(buildBatchGetItemRequest(requestItems))
                 .thenCompose(response -> handleBatchGetResponse(
-                        response, itemsByIdentifier, attempt, batchCallFn, responseMerger, log));
+                        response, itemsByIdentifier, attempt, batchCallFn, responseMerger, logger));
+        return result;
     }
 
     /**
@@ -177,7 +178,7 @@ public final class BatchGetItemHelper {
      * @param attempt zero-based attempt index for the response that just completed
      * @param batchCallFn async service call implementation for one {@code BatchGetItem} round
      * @param responseMerger merges returned rows into {@code itemsByIdentifier}
-     * @param log logger used when retries are exhausted
+     * @param logger logger used when retries are exhausted
      * @param <T> mapped item type held in the accumulator
      * @return future completing with the shared accumulator once processing for this response is done
      */
@@ -187,7 +188,7 @@ public final class BatchGetItemHelper {
             int attempt,
             Function<BatchGetItemRequest, CompletableFuture<BatchGetItemResponse>> batchCallFn,
             BiConsumer<BatchGetItemResponse, Map<String, T>> responseMerger,
-            Logger log) {
+            Logger logger) {
         responseMerger.accept(response, itemsByIdentifier);
 
         Map<String, KeysAndAttributes> unprocessed = response.unprocessedKeys();
@@ -195,10 +196,10 @@ public final class BatchGetItemHelper {
             return completeAccumulator(itemsByIdentifier);
         }
         if (attempt >= MAX_UNPROCESSED_RETRIES) {
-            logRetryExhausted(log, unprocessed, attempt);
+            logRetryExhausted(logger, unprocessed, attempt);
             return completeAccumulator(itemsByIdentifier);
         }
-        return retryUnprocessedKeys(unprocessed, itemsByIdentifier, attempt, batchCallFn, responseMerger, log);
+        return retryUnprocessedKeys(unprocessed, itemsByIdentifier, attempt, batchCallFn, responseMerger, logger);
     }
 
     /**
@@ -209,7 +210,7 @@ public final class BatchGetItemHelper {
      * @param attempt zero-based attempt index that produced {@code unprocessed}
      * @param batchCallFn async service call implementation for one {@code BatchGetItem} round
      * @param responseMerger merges returned rows into {@code itemsByIdentifier}
-     * @param log logger used when retries are exhausted deeper in the recursion
+     * @param logger logger used when retries are exhausted deeper in the recursion
      * @param <T> mapped item type held in the accumulator
      * @return future completing with the shared accumulator after the retry chain finishes
      */
@@ -219,23 +220,24 @@ public final class BatchGetItemHelper {
             int attempt,
             Function<BatchGetItemRequest, CompletableFuture<BatchGetItemResponse>> batchCallFn,
             BiConsumer<BatchGetItemResponse, Map<String, T>> responseMerger,
-            Logger log) {
-        return delayAsync(unprocessedKeysDelay(attempt))
+            Logger logger) {
+        CompletableFuture<Map<String, T>> result = delayAsync(unprocessedKeysDelay(attempt))
                 .thenCompose(ignored -> accumulateWithRetry(
-                        unprocessed, itemsByIdentifier, attempt + 1, batchCallFn, responseMerger, log));
+                        unprocessed, itemsByIdentifier, attempt + 1, batchCallFn, responseMerger, logger));
+        return result;
     }
 
     /**
      * Logs the partial-success outcome after the retry cap is reached.
      *
-     * @param log logger receiving the warning
+     * @param logger logger receiving the warning
      * @param unprocessed key sets that still could not be processed
      * @param attempt zero-based retry index at which processing stopped
      */
-    private static void logRetryExhausted(Logger log,
+    private static void logRetryExhausted(Logger logger,
                                           Map<String, KeysAndAttributes> unprocessed,
                                           int attempt) {
-        log.warn("BatchGetItem still has {} unprocessed keys after {} retries, returning partial result",
+        logger.warn("BatchGetItem returning partial result after retry exhaustion: unprocessedKeyCount={}, attemptCount={}",
                 countUnprocessedKeys(unprocessed),
                 attempt);
     }

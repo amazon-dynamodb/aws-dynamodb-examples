@@ -72,6 +72,7 @@ import static org.mockito.Mockito.when;
 public class HighLevelDynamoDbPaymentRepositoryTest {
 
     private static final TableSchema<Account> ACCOUNT_SCHEMA = TableSchema.fromBean(Account.class);
+
     private static final TableSchema<Reservation> RESERVATION_SCHEMA = TableSchema.fromBean(Reservation.class);
 
     private static final String TABLE_NAME = "test-table";
@@ -83,18 +84,24 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     private DynamoDbAsyncClient dynamoDbAsyncClient;
 
     private DynamoDbAsyncTable<PaymentStreamHead> streamHeadTable;
+
     private DynamoDbAsyncTable<PaymentEvent> eventTable;
+
     private DynamoDbAsyncTable<IdempotencyRecord> idempotencyTable;
+
     private DynamoDbAsyncTable<Account> accountTable;
+
     private DynamoDbAsyncTable<Reservation> reservationTable;
+
     private DynamoDbAsyncTable<LedgerEntry> ledgerTable;
+
     private DynamoDbAsyncIndex<PaymentStreamHead> merchantIndex;
 
     private HighLevelDynamoDbPaymentRepository repository;
 
     /**
-     * Wires {@link HighLevelDynamoDbPaymentRepository} with one mock table per enhanced
-     * {@code table()} call and stubbed merchant GSIs on the stream-head table.
+     * Creates stub tables in constructor order, wires the merchant index, and instantiates the
+     * repository.
      */
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -121,10 +128,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         repository = new HighLevelDynamoDbPaymentRepository(enhancedClient, TABLE_NAME);
     }
 
-    /**
-     * Creates a mock {@link DynamoDbAsyncTable} whose {@code tableSchema()} and {@code tableName()}
-     * return real values, so that {@link TransactWriteItemsEnhancedRequest} builders can serialise items.
-     */
+    /** Returns a lenient mock async table with schema and name matching production wiring. */
     private static <T> DynamoDbAsyncTable<T> mockTable(Class<T> beanClass) {
         DynamoDbAsyncTable<T> table = mock(DynamoDbAsyncTable.class);
         lenient().when(table.tableSchema()).thenReturn(TableSchema.fromBean(beanClass));
@@ -132,12 +136,8 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         return table;
     }
 
-    /**
-     * Verifies {@link HighLevelDynamoDbPaymentRepository#getIdempotencyRecord} passes
-     * {@code consistentRead(true)} to the enhanced {@code GetItem} request.
-     */
     @Test
-    void getIdempotencyRecord_usesStronglyConsistentRead() {
+    void getIdempotencyRecord_whenRecordExists_shouldUseStronglyConsistentRead() {
         when(idempotencyTable.getItem(any(Consumer.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -152,7 +152,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void createPaymentTransaction_callsTransactWriteItems() {
+    void createPaymentTransaction_whenPaymentCreated_shouldCallTransactWriteItems() {
         when(enhancedClient.transactWriteItems(any(TransactWriteItemsEnhancedRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -166,7 +166,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryPaymentPartition_headNotFound_returnsNull() {
+    void queryPaymentPartition_whenHeadMissing_shouldReturnNull() {
         when(streamHeadTable.getItem(any(Consumer.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(eventTable.query(any(QueryEnhancedRequest.class)))
@@ -179,7 +179,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryPaymentPartition_headFound_combinesHeadAndSortedEvents() {
+    void queryPaymentPartition_whenHeadFound_shouldCombineHeadAndSortedEvents() {
         PaymentStreamHead head = buildStreamHead("pay_1", 2, "FUNDS_RESERVED");
         PaymentEvent event2 = buildEvent("pay_1", 2);
         PaymentEvent event1 = buildEvent("pay_1", 1);
@@ -198,7 +198,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryAccountPartition_accountNotFound_returnsNull() {
+    void queryAccountPartition_whenAccountMissing_shouldReturnNull() {
         when(accountTable.getItem(any(Consumer.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(reservationTable.query(any(QueryEnhancedRequest.class)))
@@ -211,7 +211,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryAccountPartition_accountFound_combinesAccountAndSortedReservations() {
+    void queryAccountPartition_whenAccountFound_shouldCombineAccountAndSortedReservations() {
         Account account = buildAccount("acc_1");
         Reservation resB = buildReservation("acc_1", "res_b");
         Reservation resA = buildReservation("acc_1", "res_a");
@@ -230,7 +230,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_allFound_returnsReservations() {
+    void batchGetReservations_whenAllFound_shouldReturnReservations() {
         Reservation resA = buildReservation("acc_a", "res_a");
         Reservation resB = buildReservation("acc_a", "res_b");
 
@@ -253,7 +253,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_partialMissing_returnsMissingIds() {
+    void batchGetReservations_whenPartialMissing_shouldReturnMissingIds() {
         Reservation resA = buildReservation("acc_a", "res_a");
 
         when(dynamoDbAsyncClient.batchGetItem(any(BatchGetItemRequest.class)))
@@ -272,7 +272,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_deduplicatesIds_beforeBatchGet() {
+    void batchGetReservations_whenDuplicateIdsProvided_shouldDeduplicateIdsBeforeBatchGet() {
         Reservation resA = buildReservation("acc_a", "res_a");
 
         when(dynamoDbAsyncClient.batchGetItem(any(BatchGetItemRequest.class)))
@@ -290,7 +290,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_emptyList_returnsImmediately() {
+    void batchGetReservations_whenReservationIdsEmpty_shouldReturnImmediately() {
         BatchGetReservationsResult result = repository.batchGetReservations("acc_a", List.of()).join();
 
         assertThat(result.reservations()).isEmpty();
@@ -299,7 +299,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_retriesUnprocessedKeys() {
+    void batchGetReservations_whenUnprocessedKeysRemain_shouldRetryUnprocessedKeys() {
         Reservation resA = buildReservation("acc_a", "res_a");
         Reservation resB = buildReservation("acc_a", "res_b");
 
@@ -333,7 +333,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_stopsRetryingAfterMaxAttempts() {
+    void batchGetReservations_whenMaxRetryAttemptsReached_shouldStopRetrying() {
         Reservation resA = buildReservation("acc_a", "res_a");
 
         String pk = Account.KEY_PREFIX + "acc_a";
@@ -363,7 +363,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void reserveFundsTransaction_callsTransactWriteItems() {
+    void reserveFundsTransaction_whenFundsReserved_shouldCallTransactWriteItems() {
         when(enhancedClient.transactWriteItems(any(TransactWriteItemsEnhancedRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -379,7 +379,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void reserveFundsTransaction_keepsOnlyBusinessConditionOnAccountUpdate() {
+    void reserveFundsTransaction_whenFundsReserved_shouldKeepOnlyBusinessConditionOnAccountUpdate() {
         when(enhancedClient.transactWriteItems(any(TransactWriteItemsEnhancedRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -404,7 +404,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void completeFundsTransaction_callsTransactWriteItems() {
+    void completeFundsTransaction_whenFundsCompleted_shouldCallTransactWriteItems() {
         when(enhancedClient.transactWriteItems(any(TransactWriteItemsEnhancedRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -421,7 +421,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void completeFundsTransaction_doesNotAddManualAccountVersionCondition() {
+    void completeFundsTransaction_whenFundsCompleted_shouldNotAddManualAccountVersionCondition() {
         when(enhancedClient.transactWriteItems(any(TransactWriteItemsEnhancedRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -444,7 +444,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryMerchantPayments_returnsNextTokenAndReusesItAsExclusiveStartKey() {
+    void queryMerchantPayments_whenPaginating_shouldReturnNextTokenAndReuseItAsExclusiveStartKey() {
         PaymentStreamHead head = buildStreamHead("pay_1", 1, "RECEIVED");
         Map<String, AttributeValue> lastEvaluatedKey = Map.of(
                 "merchantId", AttributeValue.builder().s("merch_1").build(),
@@ -472,7 +472,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryMerchantPaymentsByState_returnsNextTokenAndReusesItAsExclusiveStartKey() {
+    void queryMerchantPaymentsByState_whenPaginating_shouldReturnNextTokenAndReuseItAsExclusiveStartKey() {
         PaymentStreamHead head = buildStreamHead("pay_2", 2, "COMPLETED");
         Map<String, AttributeValue> lastEvaluatedKey = Map.of(
                 "merchantId", AttributeValue.builder().s("merch_1").build(),
@@ -501,14 +501,14 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryMerchantPayments_invalidNextToken_throws() {
+    void queryMerchantPayments_whenNextTokenInvalid_shouldThrow() {
         assertThatThrownBy(() -> repository.queryMerchantPayments("merch_1", 1, false, "bad-token").join())
                 .isInstanceOf(InvalidPaginationTokenException.class)
                 .hasMessage("Invalid pagination token");
     }
 
     @Test
-    void queryMerchantPaymentsByState_invalidNextToken_throws() {
+    void queryMerchantPaymentsByState_whenNextTokenInvalid_shouldThrow() {
         assertThatThrownBy(() -> repository.queryMerchantPaymentsByState(
                 "merch_1", "COMPLETED", 1, false, "bad-token").join())
                 .isInstanceOf(InvalidPaginationTokenException.class)
@@ -516,7 +516,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void rejectPaymentTransaction_callsTransactWriteItems() {
+    void rejectPaymentTransaction_whenPaymentRejected_shouldCallTransactWriteItems() {
         when(enhancedClient.transactWriteItems(any(TransactWriteItemsEnhancedRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -529,18 +529,17 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         verify(enhancedClient).transactWriteItems(any(TransactWriteItemsEnhancedRequest.class));
     }
 
-    /**
-     * Creates a {@link PagePublisher} that emits one {@link Page} with the given items, then completes.
-     * Used to mock {@link DynamoDbAsyncTable#query} return values.
-     */
+    /** Publishes a single page of items with no continuation key. */
     private static <T> PagePublisher<T> pagePublisherOf(List<T> items) {
         return PagePublisher.create(SdkPublisher.fromIterable(List.of(Page.create(items))));
     }
 
+    /** Publishes a single page of items with the given last evaluated key for pagination tests. */
     private static <T> PagePublisher<T> pagePublisherOf(List<T> items, Map<String, AttributeValue> lastEvaluatedKey) {
         return PagePublisher.create(SdkPublisher.fromIterable(List.of(Page.create(items, lastEvaluatedKey))));
     }
 
+    /** Builds a minimal payment stream head for transactional and query tests. */
     private static PaymentStreamHead buildStreamHead(String paymentId, long sequence, String state) {
         PaymentStreamHead head = new PaymentStreamHead();
         head.setPaymentKey(Payment.KEY_PREFIX + paymentId);
@@ -558,6 +557,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         return head;
     }
 
+    /** Builds a payment event with the given payment id and sequence number. */
     private static PaymentEvent buildEvent(String paymentId, long sequence) {
         PaymentEvent event = new PaymentEvent();
         event.setPaymentKey(Payment.KEY_PREFIX + paymentId);
@@ -569,6 +569,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         return event;
     }
 
+    /** Builds an idempotency record keyed by the given idempotency key suffix. */
     private static IdempotencyRecord buildIdempotencyRecord(String key) {
         IdempotencyRecord record = new IdempotencyRecord();
         record.setIdempotencyRecordKey(IdempotencyRecord.KEY_PREFIX + key);
@@ -579,6 +580,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         return record;
     }
 
+    /** Builds an active account with default USD balances for transaction tests. */
     private static Account buildAccount(String accountId) {
         String key = Account.KEY_PREFIX + accountId;
         Account account = new Account();
@@ -594,6 +596,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         return account;
     }
 
+    /** Builds an active reservation under the given account. */
     private static Reservation buildReservation(String accountId, String reservationId) {
         Reservation reservation = new Reservation();
         reservation.setAccountKey(Account.KEY_PREFIX + accountId);
@@ -607,6 +610,7 @@ public class HighLevelDynamoDbPaymentRepositoryTest {
         return reservation;
     }
 
+    /** Builds a debit ledger entry tied to the given account and payment. */
     private static LedgerEntry buildLedgerEntry(String accountId, String paymentId) {
         LedgerEntry entry = new LedgerEntry();
         entry.setAccountKey(Account.KEY_PREFIX + accountId);

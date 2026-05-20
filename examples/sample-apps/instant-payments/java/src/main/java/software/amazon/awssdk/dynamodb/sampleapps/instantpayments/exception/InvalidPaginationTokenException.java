@@ -3,11 +3,12 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception;
 /**
  * Thrown when a client-supplied pagination token cannot be decoded into a DynamoDB exclusive-start key.
  *
- * <p>Maps to HTTP 400 Bad Request with error code {@code INVALID_PAGINATION_TOKEN}; handled by
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.GlobalExceptionHandler}.
+ * <p>Maps to HTTP 400 Bad Request with error code {@code INVALID_PAGINATION_TOKEN}. Handled by
+ * {@link GlobalExceptionHandler}.
  */
 public class InvalidPaginationTokenException extends RuntimeException {
 
+    /** Opaque pagination token supplied by the client that could not be decoded. */
     private final String nextToken;
 
     /**

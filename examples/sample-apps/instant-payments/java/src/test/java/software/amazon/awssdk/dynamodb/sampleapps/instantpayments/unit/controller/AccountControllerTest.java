@@ -47,7 +47,7 @@ public class AccountControllerTest {
     private AccountQueryService accountQueryService;
 
     @Test
-    void batchGetReservations_success_returns200() throws Exception {
+    void batchGetReservations_whenValidRequest_shouldReturn200() throws Exception {
         Instant created = Instant.parse("2026-03-18T10:15:33Z");
         BatchGetReservationsResponse response = new BatchGetReservationsResponse(
                 List.of(new ReservationResponse("res_1", "pay_1", new BigDecimal("100"), "ACTIVE", created)),
@@ -69,7 +69,7 @@ public class AccountControllerTest {
     }
 
     @Test
-    void batchGetReservations_emptyList_returns400() throws Exception {
+    void batchGetReservations_whenReservationIdsEmpty_shouldReturn400() throws Exception {
         mvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reservationIds\":[]}"))
@@ -78,7 +78,7 @@ public class AccountControllerTest {
     }
 
     @Test
-    void batchGetReservations_tooManyIds_returns400() throws Exception {
+    void batchGetReservations_whenTooManyIds_shouldReturn400() throws Exception {
         String ids = IntStream.range(0, 101)
                 .mapToObj(i -> "\"res_" + i + "\"")
                 .reduce((a, b) -> a + "," + b)
@@ -91,7 +91,7 @@ public class AccountControllerTest {
     }
 
     @Test
-    void batchGetReservations_blankId_returns400() throws Exception {
+    void batchGetReservations_whenReservationIdBlank_shouldReturn400() throws Exception {
         mvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reservationIds\":[\"res_1\",\"  \"]}"))
@@ -100,7 +100,7 @@ public class AccountControllerTest {
     }
 
     @Test
-    void batchGetReservations_serviceRejectsRequest_returns400() throws Exception {
+    void batchGetReservations_whenServiceRejectsRequest_shouldReturn400() throws Exception {
         when(accountQueryService.batchGetReservations(eq("acc_usd_1"), any()))
                 .thenThrow(new InvalidBatchGetReservationsRequestException(
                         "reservationIds must contain at least one distinct reservation id"));
@@ -115,7 +115,7 @@ public class AccountControllerTest {
     }
 
     @Test
-    void getAccount_success_returns200() throws Exception {
+    void getAccount_whenAccountExists_shouldReturn200() throws Exception {
         Instant resCreated = Instant.parse("2026-03-18T10:15:33Z");
         GetAccountResponse response = new GetAccountResponse(
                 "acc_usd_1",
@@ -143,7 +143,7 @@ public class AccountControllerTest {
     }
 
     @Test
-    void getAccount_notFound_returns404() throws Exception {
+    void getAccount_whenAccountMissing_shouldReturn404() throws Exception {
         when(accountQueryService.getAccount("acc_nonexistent"))
                 .thenThrow(new AccountNotFoundException("acc_nonexistent"));
 
@@ -157,7 +157,7 @@ public class AccountControllerTest {
     }
 
     @Test
-    void getAccount_unexpectedError_returns500() throws Exception {
+    void getAccount_whenUnexpectedError_shouldReturn500() throws Exception {
         when(accountQueryService.getAccount("acc_boom"))
                 .thenThrow(new RuntimeException("downstream failure"));
 

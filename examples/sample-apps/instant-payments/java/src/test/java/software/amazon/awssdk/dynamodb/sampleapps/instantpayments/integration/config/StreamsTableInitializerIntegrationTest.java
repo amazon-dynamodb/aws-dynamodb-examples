@@ -24,7 +24,7 @@ public class StreamsTableInitializerIntegrationTest extends AbstractIntegrationT
     private String tableName;
 
     @Test
-    void table_shouldHaveStreamEnabled() {
+    void initializeTable_whenApplicationStarts_shouldEnableStream() {
         var response = dynamoDbAsyncClient.describeTable(
                 DescribeTableRequest.builder().tableName(tableName).build()).join();
 

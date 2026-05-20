@@ -47,7 +47,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     private String tableName;
 
     @Test
-    void createAndProcess_shouldCompletePayment() throws Exception {
+    void processPayment_whenCreatedAndProcessed_shouldCompletePayment() throws Exception {
         String paymentId = createPayment("acc_usd_1", "100");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -63,7 +63,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void createAndProcess_highLevelClientShouldIncrementAccountVersionExactlyTwice() throws Exception {
+    void processPayment_whenCreatedAndProcessedWithHighLevelClient_shouldIncrementAccountVersionExactlyTwice() throws Exception {
         String paymentId = createPayment("acc_usd_1", "100");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -78,7 +78,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void processInsufficientFunds_shouldReject() throws Exception {
+    void processPayment_whenInsufficientFunds_shouldReject() throws Exception {
         String paymentId = createPayment("acc_eur_1", "999999");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -91,7 +91,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void processInsufficientFunds_highLevelClientShouldNotIncrementAccountVersion() throws Exception {
+    void processPayment_whenInsufficientFundsWithHighLevelClient_shouldNotIncrementAccountVersion() throws Exception {
         String paymentId = createPayment("acc_eur_1", "999999");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -107,21 +107,21 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void processNonExistentPayment_shouldReturn404() throws Exception {
+    void processPayment_whenPaymentMissing_shouldReturn404() throws Exception {
         mockMvc.perform(post("/api/v1/payments/outbound/pay_nonexistent/process"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PAYMENT_NOT_FOUND"));
     }
 
     @Test
-    void getOutboundPayment_notFound_returns404() throws Exception {
+    void getOutboundPayment_whenPaymentMissing_shouldReturn404() throws Exception {
         mockMvc.perform(get("/api/v1/payments/outbound/pay_no_such_id"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PAYMENT_NOT_FOUND"));
     }
 
     @Test
-    void getOutboundPayment_afterCreate_returnsAggregate_consistentWithStateAndStream() throws Exception {
+    void getOutboundPayment_whenPaymentCreated_shouldReturnAggregateConsistentWithStateAndStream() throws Exception {
         String paymentId = createPayment("acc_usd_1", "10");
 
         MvcResult result = mockMvc.perform(get("/api/v1/payments/outbound/" + paymentId))
@@ -146,7 +146,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getOutboundPayment_afterProcess_returnsCompletedAndHistory() throws Exception {
+    void getOutboundPayment_whenPaymentProcessed_shouldReturnCompletedAndHistory() throws Exception {
         String paymentId = createPayment("acc_usd_4", "15");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -170,7 +170,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void processAlreadyCompletedPayment_shouldBeIdempotent() throws Exception {
+    void processPayment_whenAlreadyCompleted_shouldBeIdempotent() throws Exception {
         String paymentId = createPayment("acc_usd_2", "50");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -203,7 +203,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void processAlreadyRejectedPayment_shouldBeIdempotent() throws Exception {
+    void processPayment_whenAlreadyRejected_shouldBeIdempotent() throws Exception {
         String paymentId = createPayment("acc_eur_1", "999999");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -225,7 +225,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void processTwiceFromReceived_shouldCompleteOnceWithCorrectBalances() throws Exception {
+    void processPayment_whenProcessedTwiceFromReceived_shouldCompleteOnceWithCorrectBalances() throws Exception {
         String paymentId = createPayment("acc_usd_3", "100");
 
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
@@ -249,6 +249,14 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
                 .isEqualByComparingTo(new BigDecimal("400"));
     }
 
+    /**
+     * Creates an outbound payment via REST and returns its id.
+     *
+     * @param debtorAccountId seeded debtor account id
+     * @param amount payment amount as a numeric string
+     * @return created payment id from the response body
+     * @throws Exception when the HTTP request fails or returns a non-201 status
+     */
     private String createPayment(String debtorAccountId, String amount) throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = """
@@ -271,6 +279,12 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         return JsonPathSupport.read(result.getResponse().getContentAsString(), "$.paymentId");
     }
 
+    /**
+     * Asserts the payment stream head row has the expected aggregate state.
+     *
+     * @param paymentId payment id to load
+     * @param expectedState expected {@code aggregateState} value
+     */
     private void assertPaymentState(String paymentId, String expectedState) {
         GetItemResponse response = dynamoDbAsyncClient.getItem(GetItemRequest.builder()
                 .tableName(tableName)
@@ -283,6 +297,11 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         assertThat(response.item().get("aggregateState").s()).isEqualTo(expectedState);
     }
 
+    /**
+     * Asserts the account row version increased after a successful debit flow.
+     *
+     * @param accountId seeded account id without the {@code ACCOUNT#} prefix
+     */
     private void assertAccountBalanceDecremented(String accountId) {
         GetItemResponse response = dynamoDbAsyncClient.getItem(GetItemRequest.builder()
                 .tableName(tableName)
@@ -296,6 +315,12 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         assertThat(version).isGreaterThan(1);
     }
 
+    /**
+     * Asserts the reservation linked to a completed payment is marked {@code CONSUMED}.
+     *
+     * @param paymentId payment id whose reservation id follows {@code res_<paymentId>}
+     * @param accountId account partition that owns the reservation
+     */
     private void assertReservationConsumed(String paymentId, String accountId) {
         String reservationId = "res_" + paymentId;
         GetItemResponse response = dynamoDbAsyncClient.getItem(GetItemRequest.builder()
@@ -309,6 +334,12 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         assertThat(response.item().get("status").s()).isEqualTo("CONSUMED");
     }
 
+    /**
+     * Asserts at least one debit ledger entry exists for the payment.
+     *
+     * @param paymentId payment id embedded in the ledger entry id
+     * @param accountId expected account partition for the entry
+     */
     private void assertLedgerEntryExists(String paymentId, String accountId) {
         ScanResponse scanResult = scanLedgerEntries(paymentId);
         assertThat(scanResult.count()).isGreaterThanOrEqualTo(1);
@@ -318,6 +349,11 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         assertThat(item.get("paymentId").s()).isEqualTo(paymentId);
     }
 
+    /**
+     * Asserts exactly one ledger entry exists for the payment.
+     *
+     * @param paymentId payment id embedded in the ledger entry id
+     */
     private void assertSingleLedgerEntry(String paymentId) {
         ScanResponse scanResult = scanLedgerEntries(paymentId);
         assertThat(scanResult.count())
@@ -325,6 +361,12 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
                 .isEqualTo(1);
     }
 
+    /**
+     * Scans the table for ledger rows matching the derived entry id for a payment.
+     *
+     * @param paymentId payment id used to build {@code led_<paymentId>}
+     * @return scan response containing matching ledger items
+     */
     private ScanResponse scanLedgerEntries(String paymentId) {
         String ledgerEntryId = "led_" + paymentId;
         return dynamoDbAsyncClient.scan(r -> r
@@ -335,6 +377,12 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         ).join();
     }
 
+    /**
+     * Loads the account item and fails the test when the row is missing.
+     *
+     * @param accountId account id without the {@code ACCOUNT#} prefix
+     * @return DynamoDB item map for the account row
+     */
     private Map<String, AttributeValue> getAccount(String accountId) {
         GetItemResponse response = dynamoDbAsyncClient.getItem(GetItemRequest.builder()
                 .tableName(tableName)
@@ -346,6 +394,12 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         return response.item();
     }
 
+    /**
+     * Loads the payment stream head item and fails the test when the row is missing.
+     *
+     * @param paymentId payment id without the {@code PAYMENT#} prefix
+     * @return DynamoDB item map for the stream head row
+     */
     private Map<String, AttributeValue> getStreamHeadItem(String paymentId) {
         GetItemResponse response = dynamoDbAsyncClient.getItem(GetItemRequest.builder()
                 .tableName(tableName)

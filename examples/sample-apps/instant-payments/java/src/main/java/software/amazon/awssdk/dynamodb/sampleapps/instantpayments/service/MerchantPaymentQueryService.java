@@ -1,7 +1,5 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentProjection;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentsPage;
@@ -10,6 +8,8 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.mapper.Payment
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentState;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.MerchantPaymentQueryResult;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository;
+
+import java.util.List;
 
 /**
  * Read-model service for merchant-scoped payment list queries.
@@ -20,14 +20,14 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.Pay
 @Service
 public class MerchantPaymentQueryService {
 
-    private static final Logger log = LoggerFactory.getLogger(MerchantPaymentQueryService.class);
-
     /**
      * Page size when the client omits {@code limit} or sends a non-positive value.
      */
     static final int DEFAULT_LIMIT = 50;
 
+    /** Persistence for GSI-backed merchant payment queries. */
     private final PaymentRepository paymentRepository;
+    /** Maps stream-head rows to {@link MerchantPaymentProjection} DTOs. */
     private final PaymentMapper paymentMapper;
 
     /**
@@ -47,8 +47,8 @@ public class MerchantPaymentQueryService {
      * (DynamoDB {@code ScanIndexForward=false}). When {@code true}, oldest first.
      *
      * @param merchantId        merchant scope
-     * @param limit             page size; uses {@value DEFAULT_LIMIT} when {@code null}, zero, or negative
-     * @param scanIndexForward  optional; {@code true} for ascending index traversal per DynamoDB Query
+     * @param limit             page size, uses {@value DEFAULT_LIMIT} when {@code null}, zero, or negative
+     * @param scanIndexForward  optional. {@code true} for ascending index traversal per DynamoDB Query
      * @param nextToken         optional opaque pagination token from a previous page
      * @return ordered page of payment projections (may be empty)
      */
@@ -58,15 +58,14 @@ public class MerchantPaymentQueryService {
                                                      String nextToken) {
         int effectiveLimit = sanitizeLimit(limit);
         boolean forward = effectiveScanIndexForward(scanIndexForward);
-        log.debug("Listing merchant payments: merchantId={}, limit={}, scanIndexForward={}, nextTokenPresent={}",
-                merchantId, effectiveLimit, forward, nextToken != null && !nextToken.isBlank());
 
         MerchantPaymentQueryResult result = paymentRepository
                 .queryMerchantPayments(merchantId, effectiveLimit, forward, nextToken).join();
 
-        return new MerchantPaymentsPage(result.items().stream()
+        List<MerchantPaymentProjection> projections = result.items().stream()
                 .map(paymentMapper::toMerchantPaymentProjection)
-                .toList(), result.nextToken());
+                .toList();
+        return new MerchantPaymentsPage(projections, result.nextToken());
     }
 
     /**
@@ -75,9 +74,9 @@ public class MerchantPaymentQueryService {
      * <p>Ordering follows {@link #listMerchantPayments(String, Integer, Boolean, String)}.
      *
      * @param merchantId        merchant scope
-     * @param state             payment state (case-insensitive); validated against {@link PaymentState}
-     * @param limit             page size; uses {@value DEFAULT_LIMIT} when {@code null}, zero, or negative
-     * @param scanIndexForward  optional; {@code true} for ascending index traversal per DynamoDB Query
+     * @param state             payment state (case-insensitive), validated against {@link PaymentState}
+     * @param limit             page size, uses {@value DEFAULT_LIMIT} when {@code null}, zero, or negative
+     * @param scanIndexForward  optional. {@code true} for ascending index traversal per DynamoDB Query
      * @param nextToken         optional opaque pagination token from a previous page
      * @return ordered page of matching payment projections (may be empty)
      * @throws InvalidPaymentStateException if {@code state} is not a recognised value
@@ -90,20 +89,19 @@ public class MerchantPaymentQueryService {
         String normalizedState = validateAndNormalizeState(state);
         int effectiveLimit = sanitizeLimit(limit);
         boolean forward = effectiveScanIndexForward(scanIndexForward);
-        log.debug("Listing merchant payments by state: merchantId={}, state={}, limit={}, scanIndexForward={}, nextTokenPresent={}",
-                merchantId, normalizedState, effectiveLimit, forward, nextToken != null && !nextToken.isBlank());
 
         MerchantPaymentQueryResult result = paymentRepository
                 .queryMerchantPaymentsByState(merchantId, normalizedState, effectiveLimit, forward, nextToken).join();
 
-        return new MerchantPaymentsPage(result.items().stream()
+        List<MerchantPaymentProjection> projections = result.items().stream()
                 .map(paymentMapper::toMerchantPaymentProjection)
-                .toList(), result.nextToken());
+                .toList();
+        return new MerchantPaymentsPage(projections, result.nextToken());
     }
 
     /**
      * @param limit raw query parameter (may be {@code null})
-     * @return {@link #DEFAULT_LIMIT} when null or non-positive; otherwise {@code limit}
+     * @return {@link #DEFAULT_LIMIT} when null or non-positive, otherwise {@code limit}
      */
     private static int sanitizeLimit(Integer limit) {
         return (limit == null || limit <= 0) ? DEFAULT_LIMIT : limit;
@@ -111,7 +109,7 @@ public class MerchantPaymentQueryService {
 
     /**
      * @param scanIndexForward raw query parameter (may be {@code null})
-     * @return {@code true} only when the client sends {@code true}; otherwise {@code false} (newest first)
+     * @return {@code true} only when the client sends {@code true}, otherwise {@code false} (newest first)
      */
     private static boolean effectiveScanIndexForward(Boolean scanIndexForward) {
         return Boolean.TRUE.equals(scanIndexForward);

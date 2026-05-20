@@ -3,6 +3,7 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
 import java.util.List;
@@ -28,6 +29,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.SeedAccountsData;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.utils.JsonPathSupport;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -57,7 +59,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.ut
  *     private PaymentService paymentService;
  *
  *     @Test
- *     void shouldCreatePayment() {
+ *     void createPayment_whenValidRequest_shouldCreatePayment() {
  *         // test code using real DynamoDB Local
  *     }
  * }
@@ -68,11 +70,11 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.ut
  *
  * <p>Profile {@code test} enables {@link DynamoDbTableTestReset}: before each test method the
  * configured table is dropped, recreated with DynamoDB Streams, and re-seeded from
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.SeedAccountsData} (same
+ * {@link SeedAccountsData} (same
  * rows as application startup) so tests do not share mutated state.
  *
  * <p>{@link AutoConfigureMockMvc} is declared here next to {@link SpringBootTest} so the test
- * context registers {@link org.springframework.test.web.servlet.MockMvc}; keep it co-located for
+ * context registers {@link MockMvc}. Keep it co-located for
  * IDE tooling and framework ordering.
  *
  * <p>The DynamoDB Streams poller is enabled by default. Tests that need to keep payments in a
@@ -90,16 +92,18 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.ut
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class AbstractIntegrationTest {
 
-    private static final Logger log = LoggerFactory.getLogger(AbstractIntegrationTest.class);
+    private static final Logger logger = LoggerFactory.getLogger(AbstractIntegrationTest.class);
+
     private static final int DYNAMODB_PORT = 8000;
+
     private static final String DYNAMODB_LOCAL_IMAGE = "amazon/dynamodb-local:latest";
 
-    /** JVM-scoped DynamoDB Local; {@link #registerDynamoDbLocalShutdownHook(GenericContainer)} calls {@link GenericContainer#close()}. */
     private static final GenericContainer<?> dynamoDbLocalContainer = createDynamoDbLocalContainer();
 
     /**
-     * Creates and starts the shared container. Not try-with-resources: the instance must outlive all tests;
-     * {@link #registerDynamoDbLocalShutdownHook(GenericContainer)} closes it on JVM exit.
+     * Starts DynamoDB Local in shared-db in-memory mode when Docker is available.
+     *
+     * @return the container instance, running or not depending on Docker availability
      */
     @SuppressWarnings("resource")
     private static GenericContainer<?> createDynamoDbLocalContainer() {
@@ -111,17 +115,22 @@ public abstract class AbstractIntegrationTest {
             container.start();
             registerDynamoDbLocalShutdownHook(container);
         } catch (Exception e) {
-            log.warn("Could not start DynamoDB Local container — Docker may not be available. "
+            logger.warn("Could not start DynamoDB Local container — Docker may not be available. "
                     + "Integration and smoke tests will be skipped. Error: {}", e.getMessage());
             try {
                 container.close();
             } catch (RuntimeException closeEx) {
-                log.debug("DynamoDB Local container cleanup after failed start: {}", closeEx.getMessage());
+                logger.debug("DynamoDB Local container cleanup after failed start: {}", closeEx.getMessage());
             }
         }
         return container;
     }
 
+    /**
+     * Registers a JVM shutdown hook that stops the DynamoDB Local container.
+     *
+     * @param container the running Testcontainers instance to close on shutdown
+     */
     private static void registerDynamoDbLocalShutdownHook(GenericContainer<?> container) {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
@@ -129,7 +138,7 @@ public abstract class AbstractIntegrationTest {
                     container.close();
                 }
             } catch (RuntimeException ex) {
-                log.debug("DynamoDB Local shutdown hook: {}", ex.getMessage());
+                logger.debug("DynamoDB Local shutdown hook: {}", ex.getMessage());
             }
         }, "dynamodb-local-test-shutdown"));
     }
@@ -143,10 +152,12 @@ public abstract class AbstractIntegrationTest {
     @Value("${dynamodb.table-name}")
     private String tableName;
 
-    /** MockMvc instance for performing HTTP requests in smoke/integration tests. */
     @Autowired
     protected MockMvc mockMvc;
 
+    /**
+     * Skips the test class when the shared DynamoDB Local container failed to start.
+     */
     @BeforeAll
     static void ensureDockerAvailable() {
         assumeTrue(dynamoDbLocalContainer.isRunning(),
@@ -155,21 +166,16 @@ public abstract class AbstractIntegrationTest {
                         + "For Rancher Desktop, ensure DOCKER_HOST=unix://$HOME/.rd/docker.sock.");
     }
 
-    /**
-     * Isolates each test from shared DynamoDB state (including across test classes on the same container).
-     */
+    /** Drops, recreates, and re-seeds the table so tests do not share mutated state. */
     @BeforeEach
     void resetDynamoDbTable() {
         dynamoDbTableTestReset.deleteRecreateAndSeed();
     }
 
     /**
-     * Configures the Spring context to point to the Testcontainers DynamoDB Local instance.
+     * Points Spring at the Testcontainers DynamoDB Local endpoint and default test client settings.
      *
-     * <p>Uses lambdas for lazy evaluation so the mapped port is only resolved when
-     * Spring actually reads the property (after the container is confirmed running).
-     * Falls back to a dummy endpoint if the container did not start, allowing the
-     * context to load and tests to be skipped in {@link #ensureDockerAvailable()}.
+     * @param registry dynamic property registry for the test context
      */
     @DynamicPropertySource
     static void dynamoDbProperties(DynamicPropertyRegistry registry) {
@@ -182,14 +188,13 @@ public abstract class AbstractIntegrationTest {
     }
 
     /**
-     * Inserts a reservation row directly into DynamoDB Local so end-to-end tests can exercise mixed
-     * reservation states that are not all reachable through the public payment flow alone.
+     * Writes a reservation item under the account partition key for direct DynamoDB setup.
      *
-     * @param accountId business account id that owns the reservation partition
-     * @param reservationId business reservation id stored after {@code RESERVATION#}
-     * @param paymentId payment id associated with the reservation
-     * @param amount numeric amount stored on the reservation item
-     * @param status reservation status such as {@code ACTIVE}, {@code CONSUMED}, or {@code RELEASED}
+     * @param accountId account identifier without the {@code ACCOUNT#} prefix
+     * @param reservationId reservation identifier without the {@code RESERVATION#} prefix
+     * @param paymentId linked outbound payment id
+     * @param amount reservation amount as a numeric string
+     * @param status reservation status value to persist
      */
     protected void seedReservation(String accountId,
                                    String reservationId,
@@ -215,15 +220,15 @@ public abstract class AbstractIntegrationTest {
     }
 
     /**
-     * Asserts one reservation entry inside the JSON response returned by an account query endpoint.
+     * Asserts one reservation row in a batch-get-reservations JSON response.
      *
-     * @param actions result actions returned by {@code MockMvc.perform(...)}
-     * @param index zero-based index inside {@code $.reservations}
+     * @param actions MockMvc result actions containing the response body
+     * @param index zero-based index in {@code $.reservations}
      * @param reservationId expected reservation id
      * @param paymentId expected payment id
-     * @param amount expected numeric amount
-     * @param status expected reservation status string
-     * @throws Exception if one of the JSON-path assertions fails
+     * @param amount expected amount
+     * @param status expected reservation status
+     * @throws Exception when MockMvc JSON path assertions fail
      */
     protected void assertReservation(ResultActions actions,
                                      int index,
@@ -239,14 +244,14 @@ public abstract class AbstractIntegrationTest {
     }
 
     /**
-     * Asserts a whole reservation array in order using parallel lists for the expected fields.
+     * Asserts multiple reservation rows in order using {@link #assertReservation}.
      *
-     * @param actions result actions returned by {@code MockMvc.perform(...)}
-     * @param reservationIds expected reservation ids in array order
-     * @param paymentIds expected payment ids in array order
-     * @param amounts expected numeric amounts in array order
-     * @param statuses expected reservation status values in array order
-     * @throws Exception if any reservation assertion fails
+     * @param actions MockMvc result actions containing the response body
+     * @param reservationIds expected reservation ids in response order
+     * @param paymentIds expected payment ids aligned with {@code reservationIds}
+     * @param amounts expected amounts aligned with {@code reservationIds}
+     * @param statuses expected statuses aligned with {@code reservationIds}
+     * @throws Exception when list sizes differ or JSON path assertions fail
      */
     protected void assertReservations(ResultActions actions,
                                       List<String> reservationIds,
@@ -264,13 +269,13 @@ public abstract class AbstractIntegrationTest {
     }
 
     /**
-     * Creates an outbound payment through the public API and returns its generated payment id.
+     * Creates an outbound payment via {@code POST /api/v1/payments/outbound} and returns its id.
      *
-     * @param debtorAccountId business debtor account id used in the request body
-     * @param amount numeric payment amount serialized into the request body
-     * @param creditorName creditor name used to distinguish test scenarios in logs
-     * @return created payment id from the HTTP response body
-     * @throws Exception if the HTTP request fails or the response cannot be parsed
+     * @param debtorAccountId seeded debtor account id
+     * @param amount payment amount as a numeric string
+     * @param creditorName creditor display name in the request body
+     * @return created payment id from the response body
+     * @throws Exception when the HTTP request or JSON parsing fails
      */
     protected String createPayment(String debtorAccountId,
                                    String amount,
@@ -290,38 +295,38 @@ public abstract class AbstractIntegrationTest {
         MvcResult result = mockMvc.perform(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isCreated())
+                .andExpect(status().isCreated())
                 .andReturn();
 
         return JsonPathSupport.read(result.getResponse().getContentAsString(), "$.paymentId");
     }
 
     /**
-     * Triggers synchronous processing for an outbound payment through the public API.
+     * Drives synchronous payment processing via {@code POST .../process}.
      *
      * @param paymentId payment id to process
-     * @throws Exception if the HTTP request fails
+     * @throws Exception when the HTTP request fails or returns a non-200 status
      */
     protected void processPayment(String paymentId) throws Exception {
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+                .andExpect(status().isOk());
     }
 
     /**
-     * Derives the deterministic reservation id created by the outbound payment flow.
+     * Derives the reservation id convention used when funds are reserved for a payment.
      *
-     * @param paymentId payment id returned by the create-payment API
-     * @return reservation id in the form {@code res_<paymentId>}
+     * @param paymentId outbound payment id
+     * @return reservation id of the form {@code res_<paymentId>}
      */
     protected String reservationIdForPayment(String paymentId) {
         return "res_" + paymentId;
     }
 
     /**
-     * Builds the JSON body for {@code POST /batch-get-reservations} from the given identifiers.
+     * Builds a JSON request body for {@code POST /api/v1/accounts/{id}/batch-get-reservations}.
      *
-     * @param reservationIds reservation ids to serialize in request order
-     * @return compact JSON body containing {@code reservationIds}
+     * @param reservationIds reservation ids to include in {@code reservationIds}
+     * @return JSON string suitable for MockMvc request content
      */
     protected String batchGetReservationsRequestBody(List<String> reservationIds) {
         String quotedIds = String.join(",", reservationIds.stream().map(id -> "\"" + id + "\"").toList());

@@ -12,13 +12,13 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.BatchGetI
  *
  * <p>Two implementations exist, selectable via {@code dynamodb.client-type}:
  * <ul>
- *   <li>{@code low-level} - uses {@code DynamoDbAsyncClient} with raw attribute maps</li>
- *   <li>{@code high-level} - uses {@code DynamoDbEnhancedAsyncClient} with annotated beans</li>
+ *   <li>{@code low-level}: uses {@code DynamoDbAsyncClient} with raw attribute maps</li>
+ *   <li>{@code high-level}: uses {@code DynamoDbEnhancedAsyncClient} with annotated beans</li>
  * </ul>
  *
  * <p>The payment aggregate is <strong>event-sourced</strong>: {@link PaymentStreamHead} and
  * {@link PaymentEvent} rows live under {@code PAYMENT#}{@code id}. Merchant list APIs query GSIs that
- * project the stream head - see {@link #queryMerchantPayments} and {@link #queryMerchantPaymentsByState}.
+ * project the stream head. See {@link #queryMerchantPayments} and {@link #queryMerchantPaymentsByState}.
  */
 public interface PaymentRepository {
 
@@ -50,7 +50,7 @@ public interface PaymentRepository {
     CompletableFuture<IdempotencyRecord> getIdempotencyRecord(String idempotencyKey);
 
     /**
-     * Loads the stream head and all events in one {@code Query}; events are sorted by sequence.
+     * Loads the stream head and all events in one {@code Query}. Events are sorted by sequence.
      *
      * @return {@code null} if no stream head exists for the payment
      */
@@ -78,8 +78,8 @@ public interface PaymentRepository {
      * <p>Each key uses partition attribute {@code PK} set to {@code ACCOUNT#} plus the
      * {@code accountId} and sort attribute {@code SK} set to {@code RESERVATION#} plus each
      * reservation id. The number of distinct ids should stay within the DynamoDB batch limit (100).
-     * Callers normally pass the service-layer validated identifier list in first-seen distinct order;
-     * implementations still preserve that ordering contract when building keys.
+     * Callers normally pass the service-layer validated identifier list in first-seen distinct order.
+     * Both implementations still preserve that ordering contract when building keys.
      *
      * <p>If DynamoDB returns {@code UnprocessedKeys}, implementations retry with exponential backoff
      * from {@link BatchGetItemHelper} up to {@link BatchGetItemHelper#MAX_UNPROCESSED_RETRIES} extra
@@ -108,7 +108,7 @@ public interface PaymentRepository {
      *   <li>{@code Put} the {@link PaymentEvent} row (next sequence)</li>
      * </ul>
      *
-     * @param streamHead  head read before this call; supplies expected sequence and state for the update
+     * @param streamHead  head read before this call, supplies expected sequence and state for the update
      * @param account     debtor account as read before reserve (balances/version must still match at commit)
      * @param reservation new reservation item (idempotent with payment-derived id in implementations)
      * @param event       {@code FUNDS_RESERVED} with {@code sequenceNumber = lastSequence + 1}
@@ -152,7 +152,7 @@ public interface PaymentRepository {
      *
      * <p>Head must be {@link PaymentState#RECEIVED} or {@link PaymentState#FUNDS_RESERVED} at
      * {@link PaymentStreamHead#getLastSequence()} (implementations encode the allowed predecessor states in the
-     * condition expression). No account or reservation mutation occurs in this transaction; if the
+     * condition expression). No account or reservation mutation occurs in this transaction. If the
      * payment was reserved, separate operational compensation may be required in a fuller product.
      *
      * @param streamHead  head read before this call
@@ -167,7 +167,7 @@ public interface PaymentRepository {
      * Queries {@code GSI_MERCHANT_PAYMENTS} for payment projections belonging to a merchant.
      *
      * <p>Ordering follows DynamoDB {@code Query} {@code ScanIndexForward}: when {@code false},
-     * results are newest-first (descending by the composed sort key {@code createdAtUtc + paymentId});
+     * results are newest-first (descending by the composed sort key {@code createdAtUtc + paymentId}).
      * when {@code true}, oldest-first (ascending).
      *
      * @param merchantId        merchant partition key
@@ -185,7 +185,7 @@ public interface PaymentRepository {
      * Queries {@code GSI_MERCHANT_STATE_PAYMENTS} for payment projections matching a merchant and state.
      *
      * <p>Ordering follows DynamoDB {@code Query} {@code ScanIndexForward}: when {@code false},
-     * results are newest-first (descending by {@code createdAtUtc}); when {@code true}, oldest-first.
+     * results are newest-first (descending by {@code createdAtUtc}). When {@code true}, oldest-first.
      *
      * @param merchantId        merchant scope
      * @param state             payment state (must be upper-case {@link PaymentState} name)

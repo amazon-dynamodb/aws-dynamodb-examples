@@ -16,9 +16,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *
  * <p>Required configuration properties:
  * <ul>
- *   <li>{@code dynamodb.endpoint} — full endpoint URL (e.g. {@code http://localhost:8000} or AWS)</li>
- *   <li>{@code dynamodb.region} — AWS region (e.g. {@code eu-west-1})</li>
- *   <li>{@code dynamodb.client-type} — {@code high-level} or {@code low-level}</li>
+ *   <li>{@code dynamodb.endpoint}: full endpoint URL (e.g. {@code http://localhost:8000} or AWS)</li>
+ *   <li>{@code dynamodb.region}: AWS region (e.g. {@code eu-west-1})</li>
+ *   <li>{@code dynamodb.client-type}: {@code high-level} or {@code low-level}</li>
  * </ul>
  */
 @SpringBootApplication

@@ -3,10 +3,12 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model;
 import java.math.BigDecimal;
 import java.time.Instant;
 
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
+
 /**
- * In-memory view of an outbound payment produced by {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer}.
+ * In-memory view of an outbound payment produced by {@link PaymentEventReplayer}.
  *
- * <p>In-memory-only: built by {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer}
+ * <p>In-memory-only: built by {@link PaymentEventReplayer}
  * from the event stream under {@code PK=PAYMENT#{id}}. Field layout matches outbound payment APIs and DTOs.
  *
  * <p>{@link #KEY_PREFIX} prefixes partition keys. {@code createdAtUtc} and {@code updatedAtUtc} are UTC instants
@@ -19,20 +21,35 @@ public class Payment {
      */
     public static final String KEY_PREFIX = "PAYMENT#";
 
+    /** Payment partition key {@code PAYMENT#}{@code paymentId} from the event stream. */
     private String paymentKey;
+    /** Unique payment identifier. */
     private String paymentId;
+    /** Merchant that initiated the payment. */
     private String merchantId;
+    /** Aggregate payment state after replaying events. */
     private String state;
+    /** Debtor account debited for the payment. */
     private String debtorAccountId;
+    /** Creditor IBAN for the outbound transfer. */
     private String creditorIban;
+    /** Creditor display name. */
     private String creditorName;
+    /** Payment amount. */
     private BigDecimal amount;
+    /** ISO currency code for the amount. */
     private String currency;
+    /** Client idempotency key from the create request. */
     private String idempotencyKey;
+    /** Correlation identifier for tracing. */
     private String correlationId;
+    /** Rejection reason when the payment failed. */
     private String reasonCode;
+    /** UTC instant when the payment was created. */
     private Instant createdAtUtc;
+    /** UTC instant when the payment last changed state. */
     private Instant updatedAtUtc;
+    /** Latest applied event sequence number. */
     private int version;
 
     public String getPaymentKey() {

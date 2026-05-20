@@ -20,16 +20,16 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
  * legitimate retries (return stored response).
  *
  * <p>On outbound payment creation, this item is written inside {@code TransactWriteItems} with
- * {@code attribute_not_exists(PK)} so duplicate idempotency keys are rejected atomically;
- * the stream head and first event in that transaction are unconditional puts.
+ * {@code attribute_not_exists(PK)} so duplicate idempotency keys are rejected atomically.
+ * The stream head and first event in that transaction are unconditional puts.
  *
- * <p>The client idempotency key is only encoded in {@code PK} ({@link #KEY_PREFIX} + key);
- * payment id is available from {@link #getResponseSnapshot()} when needed.
+ * <p>The client idempotency key is only encoded in {@code PK} ({@link #KEY_PREFIX} + key).
+ * Payment id is available from {@link #getResponseSnapshot()} when needed.
  *
  * <p>{@link #getExpiresAtEpochSecond()} is written to the DynamoDB attribute {@code ttl}: Unix
  * epoch <strong>second</strong> (instant) when this item becomes eligible for TTL deletion. Deletion is
  * <strong>eventual</strong> (not immediate). After the item is removed, reusing the same client
- * idempotency key represents a <strong>new</strong> logical create—align
+ * idempotency key represents a <strong>new</strong> logical create. Align
  * {@code dynamodb.idempotency-ttl-seconds} with legal/operational retention policy.
  *
  * <p>{@code createdAtUtc} is when the idempotency binding was first stored. {@code expiresAtEpochSecond} maps to the DynamoDB
@@ -43,12 +43,19 @@ public class IdempotencyRecord {
     /** Prefix for partition key: {@code IDEMPOTENCY#}{@code clientKey}. */
     public static final String KEY_PREFIX = "IDEMPOTENCY#";
 
+    /** Partition key {@code PK} set to {@code IDEMPOTENCY#}{@code clientKey}. */
     private String idempotencyRecordKey;
+    /** Sort key {@code SK} fixed to {@code IDEMPOTENCY}. */
     private String entityKey;
+    /** Item discriminator stored in {@code entityType}. */
     private String entityType;
+    /** SHA-256 hash of the original create request body. */
     private String requestHash;
+    /** Stored create response returned on legitimate retries. */
     private CreateOutboundPaymentResponse responseSnapshot;
+    /** UTC instant when the idempotency binding was first stored. */
     private Instant createdAtUtc;
+    /** TTL attribute {@code ttl} as Unix epoch seconds for eventual deletion. */
     private Long expiresAtEpochSecond;
 
     @DynamoDbPartitionKey

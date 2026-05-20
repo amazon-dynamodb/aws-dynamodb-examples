@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbTableInitializer;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.AbstractIntegrationTest;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.MerchantGsiProjectionAttributes;
@@ -18,7 +19,7 @@ import software.amazon.awssdk.services.dynamodb.model.ProjectionType;
 
 /**
  * Contract test: the test table's merchant GSIs must match production projection choices so integration
- * tests exercise the same index materialization as {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbTableInitializer}.
+ * tests exercise the same index materialization as {@link DynamoDbTableInitializer}.
  */
 @Tag("integration")
 public class MerchantGsiProjectionSchemaIntegrationTest extends AbstractIntegrationTest {
@@ -29,11 +30,8 @@ public class MerchantGsiProjectionSchemaIntegrationTest extends AbstractIntegrat
     @Value("${dynamodb.table-name}")
     private String tableName;
 
-    /**
-     * {@code GSI_MERCHANT_PAYMENTS} uses full item projection so merchant-wide lists need no base-table fetch.
-     */
     @Test
-    void gsi_merchantPayments_shouldProjectAllAttributes() {
+    void verifyMerchantPaymentsGsi_whenTableInitialized_shouldProjectAllAttributes() {
         var table = dynamoDbAsyncClient
                 .describeTable(DescribeTableRequest.builder().tableName(tableName).build())
                 .join()
@@ -48,11 +46,8 @@ public class MerchantGsiProjectionSchemaIntegrationTest extends AbstractIntegrat
         assertThat(projection.projectionType()).isEqualTo(ProjectionType.ALL);
     }
 
-    /**
-     * {@code GSI_MERCHANT_STATE_PAYMENTS} must match the INCLUDE list shared with production table setup.
-     */
     @Test
-    void gsi_merchantStatePayments_shouldUseIncludeWithMerchantListNonKeys() {
+    void verifyMerchantStatePaymentsGsi_whenTableInitialized_shouldUseIncludeWithMerchantListNonKeys() {
         var table = dynamoDbAsyncClient
                 .describeTable(DescribeTableRequest.builder().tableName(tableName).build())
                 .join()

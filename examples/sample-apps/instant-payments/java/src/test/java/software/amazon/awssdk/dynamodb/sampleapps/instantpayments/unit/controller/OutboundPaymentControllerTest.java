@@ -62,7 +62,7 @@ public class OutboundPaymentControllerTest {
     private PaymentMapper paymentMapper;
 
     @Test
-    void createOutboundPayment_success_returns201() throws Exception {
+    void createOutboundPayment_whenValidRequest_shouldReturn201() throws Exception {
         when(paymentService.createOutboundPayment(any(CreateOutboundPaymentRequest.class)))
                 .thenReturn(new PaymentCreationResult(
                         new CreateOutboundPaymentResponse("pay_1", "RECEIVED", "corr_1", Instant.now()),
@@ -85,7 +85,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void createOutboundPayment_idempotentRetry_returns200() throws Exception {
+    void createOutboundPayment_whenIdempotentRetry_shouldReturn200() throws Exception {
         when(paymentService.createOutboundPayment(any(CreateOutboundPaymentRequest.class)))
                 .thenReturn(new PaymentCreationResult(
                         new CreateOutboundPaymentResponse("pay_retry", "RECEIVED", "corr_r", Instant.now()),
@@ -108,7 +108,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void createOutboundPayment_idempotencyConflict_returns409() throws Exception {
+    void createOutboundPayment_whenIdempotencyConflict_shouldReturn409() throws Exception {
         when(paymentService.createOutboundPayment(any(CreateOutboundPaymentRequest.class)))
                 .thenThrow(new IdempotencyConflictException("idem-clash"));
 
@@ -129,7 +129,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void createOutboundPayment_invalidRequest_returns400() throws Exception {
+    void createOutboundPayment_whenInvalidRequest_shouldReturn400() throws Exception {
         mvc.perform(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -148,7 +148,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void processPayment_notFound_returns404() throws Exception {
+    void processPayment_whenPaymentMissing_shouldReturn404() throws Exception {
         doThrow(new PaymentNotFoundException("missing"))
                 .when(paymentProcessor).processPayment("missing");
 
@@ -158,7 +158,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void processPayment_unexpectedError_returns500() throws Exception {
+    void processPayment_whenUnexpectedError_shouldReturn500() throws Exception {
         doThrow(new RuntimeException("downstream failure"))
                 .when(paymentProcessor).processPayment("pay_bad");
 
@@ -168,7 +168,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void processPayment_success_returns200() throws Exception {
+    void processPayment_whenValidRequest_shouldReturn200() throws Exception {
         Payment payment = new Payment();
         payment.setPaymentId("pay_ok");
         payment.setState(PaymentState.COMPLETED.name());
@@ -186,7 +186,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void getOutboundPayment_notFound_returns404() throws Exception {
+    void getOutboundPayment_whenPaymentMissing_shouldReturn404() throws Exception {
         when(paymentQueryService.getOutboundPayment("pay_missing"))
                 .thenThrow(new PaymentNotFoundException("pay_missing"));
 
@@ -196,7 +196,7 @@ public class OutboundPaymentControllerTest {
     }
 
     @Test
-    void getOutboundPayment_success_returns200WithEvents() throws Exception {
+    void getOutboundPayment_whenPaymentExists_shouldReturn200WithEvents() throws Exception {
         Instant t0 = Instant.parse("2025-01-01T12:00:00Z");
         Instant t1 = Instant.parse("2025-01-01T12:01:00Z");
         when(paymentQueryService.getOutboundPayment("pay_get")).thenReturn(new GetOutboundPaymentResponse(

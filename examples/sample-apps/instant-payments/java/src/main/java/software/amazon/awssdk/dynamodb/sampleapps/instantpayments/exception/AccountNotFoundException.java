@@ -7,6 +7,7 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception;
  */
 public class AccountNotFoundException extends RuntimeException {
 
+    /** Business account id that was not found (without {@code ACCOUNT#} prefix). */
     private final String accountId;
 
     /**

@@ -1,13 +1,17 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config;
 
+import java.util.List;
+
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Configures the OpenAPI 3.0 specification served by springdoc.
+ * Contributes API metadata merged into the OpenAPI document served by springdoc-openapi
+ * at {@code /api-docs}.
  *
  * <p>Swagger UI is available at {@code /swagger-ui.html}.
  * The raw OpenAPI JSON spec is at {@code /api-docs}.
@@ -23,6 +27,8 @@ public class OpenApiConfig {
     @Bean
     public OpenAPI instantPaymentsOpenAPI() {
         return new OpenAPI()
+                .servers(List.of(new Server()
+                        .url("http://localhost:8080")))
                 .info(new Info()
                         .title("Instant Payments DynamoDB Sample API")
                         .description("Sample application demonstrating DynamoDB patterns for instant payments "

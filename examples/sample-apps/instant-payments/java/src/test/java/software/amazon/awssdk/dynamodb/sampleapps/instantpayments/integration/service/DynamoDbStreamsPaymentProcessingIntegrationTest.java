@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MvcResult;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentProcessor;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.AbstractIntegrationTest;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.utils.JsonPathSupport;
@@ -27,7 +28,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 /**
  * End-to-end coverage for the DynamoDB Streams entry path: creating a payment via REST without
  * calling {@code /process} should still reach {@code COMPLETED} when the stream listener invokes
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentProcessor}.
+ * {@link OutboundPaymentProcessor}.
  *
  * <p>Polls DynamoDB with Awaitility (generous timeout) because the sample stream poller is
  * interval-based.
@@ -40,6 +41,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 public class DynamoDbStreamsPaymentProcessingIntegrationTest extends AbstractIntegrationTest {
 
     private static final Duration AWAIT_STATE = Duration.ofSeconds(25);
+
     private static final Duration POLL_INTERVAL = Duration.ofMillis(400);
 
     @Autowired
@@ -49,7 +51,7 @@ public class DynamoDbStreamsPaymentProcessingIntegrationTest extends AbstractInt
     private String tableName;
 
     @Test
-    void createPayment_withoutManualProcess_shouldBecomeCompletedViaStream() throws Exception {
+    void createPayment_whenManualProcessSkipped_shouldBecomeCompletedViaStream() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = """
                 {
@@ -85,10 +87,10 @@ public class DynamoDbStreamsPaymentProcessingIntegrationTest extends AbstractInt
     }
 
     /**
-     * Waits until the payment stream head row shows {@code aggregateState == expectedState}.
+     * Polls until the payment stream head reaches the expected aggregate state.
      *
-     * @param paymentId     payment id (without {@code PAYMENT#} prefix)
-     * @param expectedState e.g. {@code COMPLETED}
+     * @param paymentId payment id to observe
+     * @param expectedState target {@code aggregateState} value
      */
     private void awaitPaymentState(String paymentId, String expectedState) {
         await().atMost(AWAIT_STATE)
@@ -97,6 +99,13 @@ public class DynamoDbStreamsPaymentProcessingIntegrationTest extends AbstractInt
                 .until(() -> aggregateStateEquals(paymentId, expectedState));
     }
 
+    /**
+     * Reads the stream head row and compares its aggregate state to the expected value.
+     *
+     * @param paymentId payment id to load
+     * @param expectedState state value to match
+     * @return {@code true} when the item exists and {@code aggregateState} equals {@code expectedState}
+     */
     private boolean aggregateStateEquals(String paymentId, String expectedState) {
         GetItemResponse response = dynamoDbAsyncClient.getItem(GetItemRequest.builder()
                 .tableName(tableName)

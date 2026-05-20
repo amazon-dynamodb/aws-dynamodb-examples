@@ -10,12 +10,12 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model;
  * }</pre>
  */
 public enum PaymentState {
-    /** Payment accepted and persisted; funds not yet reserved. */
+    /** Payment accepted and persisted. Funds not yet reserved. */
     RECEIVED,
-    /** Funds reserved on the debtor account; ready to settle or reject with release. */
+    /** Funds reserved on the debtor account. Ready to settle or reject with release. */
     FUNDS_RESERVED,
     /** Funds moved to settled state (ledger debit applied, reservation consumed). */
     COMPLETED,
-    /** Validation or business rule failed; no success settlement (may follow RECEIVED or FUNDS_RESERVED). */
+    /** Validation or business rule failed. No success settlement (may follow RECEIVED or FUNDS_RESERVED). */
     REJECTED
 }

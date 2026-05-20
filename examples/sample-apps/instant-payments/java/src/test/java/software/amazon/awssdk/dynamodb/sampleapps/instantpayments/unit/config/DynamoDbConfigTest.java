@@ -19,7 +19,7 @@ public class DynamoDbConfigTest {
             .withUserConfiguration(DynamoDbConfig.class);
 
     @Test
-    void validProperties_shouldCreateClients() {
+    void dynamoDbClients_whenPropertiesValid_shouldCreateClients() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.endpoint=http://localhost:8000",
@@ -32,7 +32,7 @@ public class DynamoDbConfigTest {
     }
 
     @Test
-    void blankEndpoint_shouldFailContext() {
+    void dynamoDbClients_whenEndpointBlank_shouldFailContext() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.endpoint=",
@@ -42,7 +42,7 @@ public class DynamoDbConfigTest {
     }
 
     @Test
-    void blankRegion_shouldFailContext() {
+    void dynamoDbClients_whenRegionBlank_shouldFailContext() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.endpoint=http://localhost:8000",
@@ -52,7 +52,7 @@ public class DynamoDbConfigTest {
     }
 
     @Test
-    void blankClientType_shouldFailContext() {
+    void dynamoDbClients_whenClientTypeBlank_shouldFailContext() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.endpoint=http://localhost:8000",

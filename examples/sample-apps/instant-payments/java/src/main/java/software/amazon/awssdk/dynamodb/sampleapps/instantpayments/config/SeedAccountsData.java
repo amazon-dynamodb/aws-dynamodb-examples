@@ -3,19 +3,21 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config;
 import java.util.List;
 import java.util.Map;
 
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+
 /**
  * Single source of truth for seeded {@code ACCOUNT} items in the single-table design.
  *
  * <p>Used by {@link DynamoDbTableInitializer} at application startup when seeding the single-table store.
  *
- * <p>Each map uses DynamoDB attribute names as keys; values are strings or whole numbers. The table
- * initializer converts these to {@link software.amazon.awssdk.services.dynamodb.model.AttributeValue}
+ * <p>Each map uses DynamoDB attribute names as keys. Values are strings or whole numbers. The table
+ * initializer converts these to {@link AttributeValue}
  * maps for {@code PutItem}.
  */
 public final class SeedAccountsData {
 
     /**
-     * Not instantiable; use {@link #accountRowsAsMaps()}.
+     * Not instantiable. Use {@link #accountRowsAsMaps()}.
      */
     private SeedAccountsData() {
     }

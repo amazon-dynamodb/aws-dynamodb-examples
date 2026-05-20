@@ -26,14 +26,23 @@ public class LedgerEntry {
     /** Prefix for sort key segment: {@code LEDGER#}… */
     public static final String KEY_PREFIX = "LEDGER#";
 
+    /** Partition key {@code PK} set to {@code ACCOUNT#}{@code accountId}. */
     private String accountKey;
+    /** Sort key {@code SK} set to {@code LEDGER#}{@code timestamp#ledgerEntryId}. */
     private String ledgerKey;
+    /** Item discriminator stored in {@code entityType}. */
     private String entityType;
+    /** Business ledger entry identifier. */
     private String ledgerEntryId;
+    /** Payment that produced this ledger line. */
     private String paymentId;
+    /** Entry direction such as {@code DEBIT}. */
     private String entryType;
+    /** Posted amount for this ledger line. */
     private BigDecimal amount;
+    /** Account balance after applying this entry. */
     private BigDecimal balanceAfter;
+    /** UTC instant when the entry was written. */
     private Instant createdAtUtc;
 
     @DynamoDbPartitionKey

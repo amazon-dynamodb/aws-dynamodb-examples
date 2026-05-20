@@ -17,6 +17,7 @@ import org.springframework.stereotype.Repository;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Account;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.IdempotencyRecord;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.LedgerEntry;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Payment;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentState;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
@@ -27,6 +28,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.Reservati
 import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.BatchGetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.BatchGetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
@@ -40,7 +42,7 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
  * Low-level {@link PaymentRepository} implementation using {@link DynamoDbAsyncClient}.
  *
  * <p>Merchant GSI reads ({@link #queryMerchantPayments}, {@link #queryMerchantPaymentsByState}) use
- * raw {@link QueryRequest} with {@code KeyConditionExpression}; a single query call applies
+ * raw {@link QueryRequest} with {@code KeyConditionExpression}. A single query call applies
  * {@link QueryRequest#limit()} and propagates {@code LastEvaluatedKey} through an opaque API token.
  * Batch reservation reads ({@link #batchGetReservations}) use {@code BatchGetItem} for RESERVATION
  * keys with application-level retry for unprocessed keys.
@@ -49,8 +51,7 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
 @ConditionalOnProperty(name = "dynamodb.client-type", havingValue = "low-level")
 public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
 
-    /** Logger for this repository. */
-    private static final Logger log = LoggerFactory.getLogger(LowLevelDynamoDbPaymentRepository.class);
+    private static final Logger logger = LoggerFactory.getLogger(LowLevelDynamoDbPaymentRepository.class);
 
     /**
      * Enhanced table schema for mapping {@link PaymentStreamHead} attribute maps.
@@ -97,9 +98,10 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                                              @Value("${dynamodb.table-name}") String tableName) {
         this.client = client;
         this.tableName = tableName;
-        log.info("Initialized low-level DynamoDB payment repository for table '{}'", tableName);
+        logger.info("Initialized low-level DynamoDB payment repository: tableName={}", tableName);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> createPaymentTransaction(PaymentStreamHead streamHead,
                                                             PaymentEvent firstEvent,
@@ -125,6 +127,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
         return client.transactWriteItems(request).thenApply(r -> null);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<IdempotencyRecord> getIdempotencyRecord(String idempotencyKey) {
         String key = IdempotencyRecord.KEY_PREFIX + idempotencyKey;
@@ -146,9 +149,10 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                 });
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<PaymentPartitionQueryResult> queryPaymentPartition(String paymentId) {
-        String pk = software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Payment.KEY_PREFIX + paymentId;
+        String pk = Payment.KEY_PREFIX + paymentId;
         PartitionScan acc = new PartitionScan();
         return queryPaymentPartitionPage(pk, null, acc);
     }
@@ -203,10 +207,13 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
      * Mutable accumulator while scanning all pages of a payment partition query.
      */
     private static final class PartitionScan {
+        /** Stream head row mapped from the payment partition query. */
         private PaymentStreamHead streamHead;
+        /** Payment events collected across query pages. */
         private final List<PaymentEvent> events = new ArrayList<>();
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Account> getAccount(String accountId) {
         String key = Account.KEY_PREFIX + accountId;
@@ -222,6 +229,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                 .thenApply(response -> response.hasItem() ? ACCOUNT_SCHEMA.mapToItem(response.item()) : null);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<AccountPartitionQueryResult> queryAccountPartition(String accountId) {
         String pk = Account.KEY_PREFIX + accountId;
@@ -279,10 +287,10 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
      * {@inheritDoc}
      *
      * <p>Implements {@link PaymentRepository#batchGetReservations(String, List)} with raw
-     * {@link software.amazon.awssdk.services.dynamodb.model.BatchGetItemRequest} maps, keys from
-     * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.ReservationBatchGetItemHelper},
+     * {@link BatchGetItemRequest} maps, keys from
+     * {@link ReservationBatchGetItemHelper},
      * and the {@code RESERVATION_SCHEMA} static schema for item mapping.
-     * Callers normally provide the service-layer validated identifier list; this implementation keeps a
+     * Callers normally provide the service-layer validated identifier list. This implementation keeps a
      * small defensive deduplication/empty-input guard so repository behavior remains stable if reused elsewhere.
      */
     @Override
@@ -301,7 +309,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                         requestItems,
                         request -> client.batchGetItem(request),
                         this::mergeReservationBatchGetResponse,
-                        log)
+                        logger)
                 .thenApply(reservationsByReservationId -> BatchGetItemHelper.toOrderedBatchGetResult(
                         distinctReservationIds,
                         reservationsByReservationId,
@@ -324,10 +332,13 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
      * Mutable accumulator while scanning all pages of an account partition query.
      */
     private static final class AccountPartitionScan {
+        /** Account row mapped from the account partition query. */
         private Account account;
+        /** Reservations collected across query pages. */
         private final List<Reservation> reservations = new ArrayList<>();
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> reserveFundsTransaction(PaymentStreamHead streamHead,
                                                            Account account,
@@ -350,6 +361,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
         return client.transactWriteItems(request).thenApply(r -> null);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> completeFundsTransaction(PaymentStreamHead streamHead,
                                                             Account account,
@@ -449,6 +461,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                         PaginationTokenCodec.encode(response.lastEvaluatedKey())));
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> rejectPaymentTransaction(PaymentStreamHead streamHead,
                                                             PaymentEvent event,
@@ -581,7 +594,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
     }
 
     /**
-     * Decrements {@code currentBalance} on settlement (complete phase); requires matching optimistic {@code version}.
+     * Decrements {@code currentBalance} on settlement (complete phase). Requires matching optimistic {@code version}.
      */
     private TransactWriteItem updateAccountDecrementCurrent(Account account, BigDecimal amount) {
         return TransactWriteItem.builder()

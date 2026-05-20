@@ -31,20 +31,22 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
  * state checks, not on exactly-once delivery.
  *
  * <p><strong>Concurrency:</strong> Multiple invocations for the same {@code paymentId} are safe:
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository}
+ * {@link PaymentRepository}
  * uses {@code TransactWriteItems} with optimistic conditions on the stream head, account
  * balances/versions, and reservation state. Losers receive {@code ConditionalCheckFailed} and this
  * class reconciles via {@link #handleReserveConflict(String)} or logs-and-skips on complete/reject.
  *
  * @apiNote The folded aggregate is always derived from stored events plus an invariant check against
- *     {@link PaymentStreamHead}; callers never pass ad-hoc state that could diverge from DynamoDB.
+ *     {@link PaymentStreamHead}. Callers never pass ad-hoc state that could diverge from DynamoDB.
  */
 @Service
 public class OutboundPaymentProcessor {
 
-    private static final Logger log = LoggerFactory.getLogger(OutboundPaymentProcessor.class);
+    private static final Logger logger = LoggerFactory.getLogger(OutboundPaymentProcessor.class);
 
+    /** Persistence and transact operations for payments and accounts. */
     private final PaymentRepository paymentRepository;
+    /** Folds event streams into {@link Payment} aggregates. */
     private final PaymentEventReplayer paymentEventReplayer;
 
     /**
@@ -61,7 +63,7 @@ public class OutboundPaymentProcessor {
      * Processes a payment through validation, fund reservation, and completion/rejection.
      *
      * <p>Routing is by current aggregate state after replay: {@link PaymentState#RECEIVED} runs
-     * validation and reserve (then complete in the same call if reserve succeeds);
+     * validation and reserve (then complete in the same call if reserve succeeds).
      * {@link PaymentState#FUNDS_RESERVED} only runs completion (e.g. reserve succeeded elsewhere
      * or a prior call stopped after reserve). Terminal states short-circuit.
      *
@@ -74,7 +76,8 @@ public class OutboundPaymentProcessor {
         String correlationId = payment.getCorrelationId();
 
         if (isTerminal(state)) {
-            log.info("Payment {} already in terminal state {}, skipping", paymentId, state);
+            logger.debug("Outbound payment already terminal, skipping processing: paymentId={}, state={}",
+                    paymentId, state);
             return;
         }
 
@@ -148,7 +151,7 @@ public class OutboundPaymentProcessor {
 
         try {
             paymentRepository.reserveFundsTransaction(head, account, reservation, event, payment.getAmount()).join();
-            log.info("Funds reserved for payment {}", payment.getPaymentId());
+            logger.info("Funds reserved for outbound payment: paymentId={}", payment.getPaymentId());
             return true;
         } catch (CompletionException e) {
             // Any conditional failure on the transact (head, account, or duplicate reservation) is treated as a race.
@@ -166,13 +169,13 @@ public class OutboundPaymentProcessor {
      * preconditions (stream head, account balance, etc.). Re-loads the aggregate and:
      * <ul>
      *   <li><strong>Terminal</strong> ({@link PaymentState#COMPLETED} / {@link PaymentState#REJECTED}):
-     *       no-op — already settled.</li>
-     *   <li><strong>{@link PaymentState#FUNDS_RESERVED}</strong>: another path reserved first —
-     *       run {@link #completePayment} here (caller must not complete again).</li>
+     *       no-op, already settled.</li>
+     *   <li><strong>{@link PaymentState#FUNDS_RESERVED}</strong>: another path reserved first.
+     *       Run {@link #completePayment} here (caller must not complete again).</li>
      *   <li><strong>{@link PaymentState#RECEIVED}</strong>: reserve still lost and aggregate not
-     *       advanced (e.g. account-side condition failed while payment head unchanged) —
-     *       no-op at info; a later {@link #processPayment} or stream retry may succeed.</li>
-     *   <li><strong>Any other</strong> non-terminal state string: warn — data or replay bug.</li>
+     *       advanced (e.g. account-side condition failed while payment head unchanged).
+     *       No-op at info. A later {@link #processPayment} or stream retry may succeed.</li>
+     *   <li><strong>Any other</strong> non-terminal state string: warn, data or replay bug.</li>
      * </ul>
      */
     private void handleReserveConflict(String paymentId) {
@@ -181,7 +184,8 @@ public class OutboundPaymentProcessor {
         String state = fresh.getState();
 
         if (isTerminal(state)) {
-            log.info("Payment {} already processed ({}), skipping", paymentId, state);
+            logger.debug("Outbound payment already processed after reserve conflict, skipping: paymentId={}, state={}",
+                    paymentId, state);
             return;
         }
 
@@ -192,13 +196,15 @@ public class OutboundPaymentProcessor {
         }
 
         if (PaymentState.RECEIVED.name().equals(state)) {
-            log.info(
-                    "Payment {} still {} after reserve conflict; skipping (another writer or account precondition lost the race)",
+            logger.debug(
+                    "Outbound payment still in RECEIVED after reserve conflict; skipping until a later retry: "
+                            + "paymentId={}, state={}",
                     paymentId, state);
             return;
         }
 
-        log.warn("Payment {} in non-terminal unexpected state after reserve conflict: {}", paymentId, state);
+        logger.warn("Outbound payment in unexpected non-terminal state after reserve conflict: paymentId={}, state={}",
+                paymentId, state);
     }
 
     /**
@@ -220,11 +226,11 @@ public class OutboundPaymentProcessor {
         try {
             paymentRepository.completeFundsTransaction(
                     loaded.head(), account, reservationRef, ledgerEntry, event, payment.getAmount()).join();
-            log.info("Payment {} completed successfully", paymentId);
+            logger.info("Outbound payment completed: paymentId={}", paymentId);
         } catch (CompletionException e) {
             // Head sequence or reservation/account preconditions: another writer completed first.
             if (isConditionalCheckFailed(e)) {
-                log.info("Payment {} already completed by another processor", paymentId);
+                logger.debug("Outbound payment already completed by another processor: paymentId={}", paymentId);
                 return;
             }
             throw new RuntimeException("Complete transaction failed for payment " + paymentId, unwrap(e));
@@ -245,10 +251,10 @@ public class OutboundPaymentProcessor {
 
         try {
             paymentRepository.rejectPaymentTransaction(loaded.head(), event, reasonCode).join();
-            log.info("Payment {} rejected: {}", paymentId, reasonCode);
+            logger.info("Outbound payment rejected: paymentId={}, reasonCode={}", paymentId, reasonCode);
         } catch (CompletionException e) {
             if (isConditionalCheckFailed(e)) {
-                log.info("Payment {} already in terminal state, skipping rejection", paymentId);
+                logger.debug("Outbound payment already terminal, skipping rejection: paymentId={}", paymentId);
                 return;
             }
             throw new RuntimeException("Reject transaction failed for payment " + paymentId, unwrap(e));
@@ -324,7 +330,7 @@ public class OutboundPaymentProcessor {
      * Loads the payment partition, replays events, and checks head vs folded aggregate consistency.
      *
      * <p>The head row is the authoritative optimistic-lock and summary ({@code lastSequence},
-     * {@code aggregateState}); replay must agree or the item collection is corrupt or partially written.
+     * {@code aggregateState}). Replay must agree or the item collection is corrupt or partially written.
      *
      * @throws PaymentNotFoundException if the partition is absent
      */
@@ -385,7 +391,7 @@ public class OutboundPaymentProcessor {
     /**
      * Persisted stream head together with the payment aggregate produced by replaying that partition's events.
      *
-     * <p>The head supplies {@code expectedSeq} for the next {@code TransactWriteItems}; the fold supplies
+     * <p>The head supplies {@code expectedSeq} for the next {@code TransactWriteItems}. The fold supplies
      * business fields and must be consistent with the head ({@link #assertHeadMatchesFold}).
      *
      * @param head   optimistic-lock row for the payment partition ({@code PAYMENT#…})

@@ -24,22 +24,26 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEv
 public class PaymentEventReplayerTest {
 
     private static final String PAYMENT_ID = "pay_replay_1";
+
     private static final String PAYMENT_KEY = Payment.KEY_PREFIX + PAYMENT_ID;
+
     private static final Instant T0 = Instant.parse("2025-06-01T10:00:00Z");
+
     private static final Instant T1 = Instant.parse("2025-06-01T10:00:01Z");
+
     private static final Instant T2 = Instant.parse("2025-06-01T10:00:02Z");
 
     private final PaymentEventReplayer replayer = new PaymentEventReplayer();
 
     @Test
-    void fold_empty_throws() {
+    void fold_whenEventsEmpty_shouldThrow() {
         assertThatThrownBy(() -> replayer.fold(PAYMENT_ID, List.of()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Cannot fold empty event stream");
     }
 
     @Test
-    void fold_createdOnly_succeeds() {
+    void fold_whenCreatedOnly_shouldSucceed() {
         List<PaymentEvent> events = List.of(created(1, T0));
         Payment p = replayer.fold(PAYMENT_ID, events);
 
@@ -51,7 +55,7 @@ public class PaymentEventReplayerTest {
     }
 
     @Test
-    void fold_fullHappyPath_createdReservedCompleted() {
+    void fold_whenFullHappyPath_shouldReachCreatedReservedCompleted() {
         List<PaymentEvent> events = List.of(
                 created(1, T0),
                 fundsReserved(2, T1),
@@ -65,7 +69,7 @@ public class PaymentEventReplayerTest {
     }
 
     @Test
-    void fold_rejectedFromReceived() {
+    void fold_whenRejectedFromReceived_shouldReachRejected() {
         List<PaymentEvent> events = List.of(
                 created(1, T0),
                 rejected(2, T1, "INSUFFICIENT_FUNDS"));
@@ -78,7 +82,7 @@ public class PaymentEventReplayerTest {
     }
 
     @Test
-    void fold_rejectedFromFundsReserved() {
+    void fold_whenRejectedFromFundsReserved_shouldReachRejected() {
         List<PaymentEvent> events = List.of(
                 created(1, T0),
                 fundsReserved(2, T1),
@@ -92,7 +96,7 @@ public class PaymentEventReplayerTest {
     }
 
     @Test
-    void fold_sequenceGap_throws() {
+    void fold_whenSequenceGap_shouldThrow() {
         List<PaymentEvent> events = List.of(created(1, T0), fundsReserved(3, T1));
 
         assertThatThrownBy(() -> replayer.fold(PAYMENT_ID, events))
@@ -101,7 +105,7 @@ public class PaymentEventReplayerTest {
     }
 
     @Test
-    void fold_completedAfterReceived_skipsReserve_throws() {
+    void fold_whenCompletedAfterReceivedSkipsReserve_shouldThrow() {
         List<PaymentEvent> events = List.of(created(1, T0), completed(2, T1));
 
         assertThatThrownBy(() -> replayer.fold(PAYMENT_ID, events))
@@ -110,7 +114,7 @@ public class PaymentEventReplayerTest {
     }
 
     @Test
-    void fold_fundsReservedWithoutCreated_throws() {
+    void fold_whenFundsReservedWithoutCreated_shouldThrow() {
         List<PaymentEvent> events = List.of(fundsReserved(1, T0));
 
         assertThatThrownBy(() -> replayer.fold(PAYMENT_ID, events))
@@ -119,7 +123,7 @@ public class PaymentEventReplayerTest {
     }
 
     @Test
-    void fold_unorderedInputList_throws() {
+    void fold_whenInputListUnordered_shouldThrow() {
         List<PaymentEvent> events = new ArrayList<>(List.of(
                 created(1, T0),
                 fundsReserved(2, T1),
@@ -131,6 +135,7 @@ public class PaymentEventReplayerTest {
                 .hasMessageContaining("Expected sequence");
     }
 
+    /** Builds an OUTBOUND_PAYMENT_CREATED event at the given sequence and time. */
     private static PaymentEvent created(long seq, Instant at) {
         PaymentEvent e = new PaymentEvent();
         e.setPaymentKey(PAYMENT_KEY);
@@ -152,6 +157,7 @@ public class PaymentEventReplayerTest {
         return e;
     }
 
+    /** Builds a FUNDS_RESERVED event at the given sequence and time. */
     private static PaymentEvent fundsReserved(long seq, Instant at) {
         PaymentEvent e = new PaymentEvent();
         e.setPaymentKey(PAYMENT_KEY);
@@ -165,6 +171,7 @@ public class PaymentEventReplayerTest {
         return e;
     }
 
+    /** Builds a COMPLETED event at the given sequence and time. */
     private static PaymentEvent completed(long seq, Instant at) {
         PaymentEvent e = new PaymentEvent();
         e.setPaymentKey(PAYMENT_KEY);
@@ -178,6 +185,7 @@ public class PaymentEventReplayerTest {
         return e;
     }
 
+    /** Builds a REJECTED event with the given sequence, time, and reason code. */
     private static PaymentEvent rejected(long seq, Instant at, String reason) {
         PaymentEvent e = new PaymentEvent();
         e.setPaymentKey(PAYMENT_KEY);

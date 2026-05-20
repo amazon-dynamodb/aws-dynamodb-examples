@@ -16,6 +16,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.MerchantG
 import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BillingMode;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.GlobalSecondaryIndex;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
@@ -38,8 +39,8 @@ import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
  *
  * <p>The table uses a single-table design with composite keys:
  * <ul>
- *   <li>{@code PK} — partition key (String)</li>
- *   <li>{@code SK} — sort key (String)</li>
+ *   <li>{@code PK}: partition key (String)</li>
+ *   <li>{@code SK}: sort key (String)</li>
  * </ul>
  *
  * <p>New tables are created with DynamoDB Streams enabled ({@link StreamViewType#NEW_IMAGE})
@@ -52,8 +53,9 @@ import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
 @Configuration
 public class DynamoDbTableInitializer {
 
-    private static final Logger log = LoggerFactory.getLogger(DynamoDbTableInitializer.class);
+    private static final Logger logger = LoggerFactory.getLogger(DynamoDbTableInitializer.class);
 
+    /** Single-table name from {@code dynamodb.table-name}. */
     @Value("${dynamodb.table-name}")
     private String tableName;
 
@@ -104,10 +106,10 @@ public class DynamoDbTableInitializer {
         try {
             client.createTable(request).join();
             client.waiter().waitUntilTableExists(r -> r.tableName(tableName)).join();
-            log.info("Created DynamoDB table '{}' with Streams (NEW_IMAGE)", tableName);
+            logger.info("Created DynamoDB table with streams enabled: tableName={}, streamViewType=NEW_IMAGE", tableName);
         } catch (Exception e) {
             if (e.getCause() instanceof ResourceInUseException) {
-                log.info("Table '{}' already exists, skipping creation", tableName);
+                logger.info("DynamoDB table already exists, skipping creation: tableName={}", tableName);
             } else {
                 throw new RuntimeException("Failed to create DynamoDB table: " + tableName, e);
             }
@@ -117,7 +119,7 @@ public class DynamoDbTableInitializer {
     /**
      * Builds the two merchant GSI definitions using DynamoDB multi-attribute keys.
      *
-     * <p>{@code GSI_MERCHANT_PAYMENTS} uses {@link ProjectionType#ALL} — every base-table attribute is replicated
+     * <p>{@code GSI_MERCHANT_PAYMENTS} uses {@link ProjectionType#ALL}. Every base-table attribute is replicated
      * into the index. This is the simplest option: queries never need a follow-up table fetch, but every write to
      * a projected item copies the full attribute set into the index, increasing write amplification and storage.
      *
@@ -127,7 +129,7 @@ public class DynamoDbTableInitializer {
      * must fall back to a base-table fetch for the missing attributes).
      *
      * @see <a href="https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html#GSI.Projections">
-     *      DynamoDB Developer Guide — Global Secondary Index Projections</a>
+     *      DynamoDB Developer Guide, Global Secondary Index Projections</a>
      */
     private static List<GlobalSecondaryIndex> buildMerchantGsis() {
         Projection allProjection = Projection.builder().projectionType(ProjectionType.ALL).build();
@@ -175,11 +177,12 @@ public class DynamoDbTableInitializer {
                                             .build())
                             .build())
                     .join();
-            log.info("DynamoDB TTL enabled on table '{}' for attribute 'ttl'", tableName);
+            logger.info("DynamoDB TTL enabled: tableName={}, ttlAttribute=ttl", tableName);
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            log.warn(
-                    "Could not enable TTL on table '{}' (may already be enabled or in progress): {}",
+            logger.warn(
+                    "Could not enable DynamoDB TTL; table may already have TTL enabled or an update may be in progress: "
+                            + "tableName={}, reason={}",
                     tableName,
                     cause.getMessage());
         }
@@ -189,12 +192,12 @@ public class DynamoDbTableInitializer {
      * Seeds account data from {@link SeedAccountsData}.
      *
      * <p>Each account is written with a conditional check ({@code attribute_not_exists(PK)})
-     * so seeding is idempotent — re-running the application does not overwrite existing accounts.
+     * so seeding is idempotent. Re-running the application does not overwrite existing accounts.
      */
     private void seedAccountData(DynamoDbAsyncClient client) {
         List<Map<String, Object>> accounts = SeedAccountsData.accountRowsAsMaps();
         if (accounts.isEmpty()) {
-            log.warn("No seed account data found");
+            logger.warn("No seed account data configured for startup seeding");
             return;
         }
 
@@ -210,12 +213,12 @@ public class DynamoDbTableInitializer {
 
             try {
                 client.putItem(putRequest).join();
-                log.info("Seeded account: {}", pk);
+                logger.info("Seeded account: accountKey={}", pk);
             } catch (Exception e) {
-                if (e.getCause() instanceof software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException) {
-                    log.debug("Account {} already exists, skipping", pk);
+                if (e.getCause() instanceof ConditionalCheckFailedException) {
+                    logger.debug("Account already exists, skipping seed: accountKey={}", pk);
                 } else {
-                    log.error("Failed to seed account {}: {}", pk, e.getMessage());
+                    logger.error("Failed to seed account: accountKey={}", pk, e);
                 }
             }
         }

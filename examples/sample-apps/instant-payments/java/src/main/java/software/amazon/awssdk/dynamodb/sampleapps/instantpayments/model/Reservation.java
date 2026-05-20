@@ -13,8 +13,8 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
  *
  * <p>Key pattern: {@code PK=ACCOUNT#{accountId}, SK=RESERVATION#{reservationId}}
  *
- * <p>Lifecycle: {@code ACTIVE → CONSUMED} (payment completed) or {@code ACTIVE → RELEASED}
- * (payment rejected). Shares the same partition key as {@link Account} so both are
+ * <p>Lifecycle: {@code ACTIVE → CONSUMED} when the payment completes. A {@code RELEASED} transition
+ * is not implemented in this sample. Shares the same partition key as {@link Account} so both are
  * retrieved in a single Query (item collection pattern).
  *
  * <p>UTC instants such as {@code createdAtUtc} use ISO-8601 with {@code Z} when represented as string attributes in DynamoDB.
@@ -27,13 +27,21 @@ public class Reservation {
     /** Prefix for sort key: {@code RESERVATION#}{@code reservationId}. */
     public static final String KEY_PREFIX = "RESERVATION#";
 
+    /** Partition key {@code PK} set to {@code ACCOUNT#}{@code accountId}. */
     private String accountKey;
+    /** Sort key {@code SK} set to {@code RESERVATION#}{@code reservationId}. */
     private String reservationKey;
+    /** Item discriminator stored in {@code entityType}. */
     private String entityType;
+    /** Business reservation identifier. */
     private String reservationId;
+    /** Payment that holds these reserved funds. */
     private String paymentId;
+    /** Amount held against available balance. */
     private BigDecimal amount;
+    /** Reservation lifecycle status. */
     private String status;
+    /** UTC instant when the reservation was created. */
     private Instant createdAtUtc;
 
     @DynamoDbPartitionKey

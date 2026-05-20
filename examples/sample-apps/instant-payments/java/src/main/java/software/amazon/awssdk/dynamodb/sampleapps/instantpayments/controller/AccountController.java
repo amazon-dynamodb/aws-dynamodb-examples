@@ -36,10 +36,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Accoun
 @Tag(name = "Accounts", description = "Query account balances and reservations")
 public class AccountController {
 
-    /** Structured log for this controller. */
-    private static final Logger log = LoggerFactory.getLogger(AccountController.class);
+    private static final Logger logger = LoggerFactory.getLogger(AccountController.class);
 
-    /** Account read facade used by both endpoints. */
+    /** Read-model service for account and reservation queries. */
     private final AccountQueryService accountQueryService;
 
     /**
@@ -72,7 +71,7 @@ public class AccountController {
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/{accountId}")
     public ResponseEntity<GetAccountResponse> getAccount(@PathVariable String accountId) {
-        log.debug("Get account: accountId={}", accountId);
+        logger.debug("Get account: accountId={}", accountId);
         GetAccountResponse body = accountQueryService.getAccount(accountId);
         return ResponseEntity.ok(body);
     }
@@ -99,7 +98,10 @@ public class AccountController {
                     order from the request after deduplication.""")
     @ApiResponse(responseCode = "200", description = "Partial or full success",
             content = @Content(schema = @Schema(implementation = BatchGetReservationsResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (empty list, blank id, or too many ids)",
+    @ApiResponse(responseCode = "400", description = """
+            Bad request. ErrorResponse.error is usually VALIDATION_ERROR after Bean Validation (for example \
+            empty reservationIds, a blank id, or more than 100 ids) or INVALID_BATCH_GET_RESERVATIONS_REQUEST \
+            when no distinct reservation id remains after deduplication.""",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @ApiResponse(responseCode = "500", description = "Internal server error",
@@ -109,7 +111,7 @@ public class AccountController {
     public ResponseEntity<BatchGetReservationsResponse> batchGetReservations(
             @PathVariable String accountId,
             @Valid @RequestBody BatchGetReservationsRequest request) {
-        log.debug("Batch get reservations: accountId={}, count={}", accountId, request.reservationIds().size());
+        logger.debug("Batch get reservations: accountId={}, count={}", accountId, request.reservationIds().size());
         BatchGetReservationsResponse responseBody = accountQueryService.batchGetReservations(accountId, request);
         return ResponseEntity.ok(responseBody);
     }

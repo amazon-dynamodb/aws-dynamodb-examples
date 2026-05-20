@@ -1,8 +1,11 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.unit.exception;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.Map;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -10,9 +13,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.RestController;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.utils.JsonPathSupport;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.AccountNotFoundException;
@@ -34,7 +42,7 @@ public class GlobalExceptionHandlerTest {
     private MockMvc mockMvc;
 
     @Test
-    void paymentNotFound_returns404() throws Exception {
+    void handleException_whenPaymentNotFound_shouldReturn404() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/payment-not-found").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PAYMENT_NOT_FOUND"))
@@ -45,7 +53,7 @@ public class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void accountNotFound_returns404() throws Exception {
+    void handleException_whenAccountNotFound_shouldReturn404() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/account-not-found").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("ACCOUNT_NOT_FOUND"))
@@ -56,7 +64,7 @@ public class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void idempotencyConflict_returns409() throws Exception {
+    void handleException_whenIdempotencyConflict_shouldReturn409() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/idempotency-conflict").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("IDEMPOTENCY_CONFLICT"))
@@ -68,7 +76,7 @@ public class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void invalidBatchGetReservationsRequest_returns400() throws Exception {
+    void handleException_whenInvalidBatchGetReservationsRequest_shouldReturn400() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/invalid-batch-get-reservations")
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest())
@@ -81,7 +89,7 @@ public class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void unexpectedException_returns500() throws Exception {
+    void handleException_whenUnexpectedException_shouldReturn500() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/unexpected").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error").value("INTERNAL_ERROR"))
@@ -91,33 +99,84 @@ public class GlobalExceptionHandlerTest {
         JsonPathSupport.readInstantAssertingPlausibleNow(result.getResponse().getContentAsString(), "$.timestamp");
     }
 
+    @Test
+    void handleException_whenMalformedJson_shouldReturn400ErrorResponse() throws Exception {
+        MvcResult result = mockMvc.perform(post("/test/json-body")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ not json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value("Request body is not valid JSON"))
+                .andReturn();
+
+        JsonPathSupport.readInstantAssertingPlausibleNow(result.getResponse().getContentAsString(), "$.timestamp");
+    }
+
+    @Test
+    void handleException_whenRequestParamTypeMismatch_shouldReturn400ErrorResponse() throws Exception {
+        MvcResult result = mockMvc.perform(get("/test/integer-param?limit=abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value("Invalid value for 'limit': abc"))
+                .andReturn();
+
+        JsonPathSupport.readInstantAssertingPlausibleNow(result.getResponse().getContentAsString(), "$.timestamp");
+    }
+
+    /**
+     * Minimal REST controller that throws domain and framework exceptions so handler mappings can be
+     * asserted without production controllers.
+     */
     @RestController
     public static class ExceptionThrowingController {
 
+        /** Throws {@link PaymentNotFoundException} for 404 payment error mapping. */
         @GetMapping("/test/payment-not-found")
         void paymentNotFound() {
             throw new PaymentNotFoundException("pay_x");
         }
 
+        /** Throws {@link AccountNotFoundException} for 404 account error mapping. */
         @GetMapping("/test/account-not-found")
         void accountNotFound() {
             throw new AccountNotFoundException("acc_z");
         }
 
+        /** Throws {@link IdempotencyConflictException} for 409 conflict mapping. */
         @GetMapping("/test/idempotency-conflict")
         void idempotencyConflict() {
             throw new IdempotencyConflictException("idem_clash");
         }
 
+        /** Throws {@link InvalidBatchGetReservationsRequestException} for 400 batch validation mapping. */
         @GetMapping("/test/invalid-batch-get-reservations")
         void invalidBatchGetReservations() {
             throw new InvalidBatchGetReservationsRequestException(
                     "reservationIds must contain at least one distinct reservation id");
         }
 
+        /** Throws an unchecked exception for 500 internal error mapping. */
         @GetMapping("/test/unexpected")
         void unexpected() {
             throw new IllegalStateException("boom");
+        }
+
+        /**
+         * Accepts JSON so tests can post malformed bodies and trigger
+         * {@link HttpMessageNotReadableException}.
+         */
+        @PostMapping(path = "/test/json-body", consumes = MediaType.APPLICATION_JSON_VALUE)
+        void acceptJsonBody(@RequestBody Map<String, Object> body) {
+            // Unused — exercise HttpMessageNotReadableException via malformed JSON in tests.
+        }
+
+        /**
+         * Binds an integer query parameter so tests can pass a non-numeric value and trigger
+         * {@link MethodArgumentTypeMismatchException}.
+         */
+        @GetMapping("/test/integer-param")
+        void integerParam(@RequestParam int limit) {
+            // Unused — exercise MethodArgumentTypeMismatchException via ?limit=abc in tests.
         }
     }
 }

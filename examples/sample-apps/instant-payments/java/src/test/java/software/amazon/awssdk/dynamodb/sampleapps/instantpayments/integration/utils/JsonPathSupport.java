@@ -10,20 +10,22 @@ import java.util.UUID;
 import com.jayway.jsonpath.JsonPath;
 
 /**
- * Jayway {@link JsonPath} helpers for parsing {@link org.springframework.mock.web.MockHttpServletResponse}
- * bodies in integration, smoke, and controller unit tests (MockMvc), plus small API-contract assertions.
+ * Shared Jayway {@link JsonPath} utilities for reading and asserting on JSON response bodies
+ * produced by MockMvc-driven integration, smoke, and controller unit tests, including common
+ * instant-payments identifier and timestamp checks.
  */
 public final class JsonPathSupport {
 
+    /** Prevents instantiation of static helpers. */
     private JsonPathSupport() {
     }
 
     /**
-     * Reads a value using a JsonPath expression (e.g. {@code "$.paymentId"}).
+     * Reads a typed value from JSON using Jayway JsonPath.
      *
-     * @param json response body text
-     * @param path JsonPath query
-     * @param <T>  expected type of the matched value
+     * @param json response or request body as JSON text
+     * @param path JsonPath expression
+     * @param <T> expected result type inferred at the call site
      * @return value at {@code path}
      */
     public static <T> T read(String json, String path) {
@@ -31,11 +33,11 @@ public final class JsonPathSupport {
     }
 
     /**
-     * Returns the number of elements in a JSON array at {@code path}.
+     * Returns the size of a JSON array selected by JsonPath.
      *
-     * @param json response body text
-     * @param path JsonPath to an array (e.g. {@code "$.events"})
-     * @return array length
+     * @param json response body as JSON text
+     * @param path JsonPath to an array node
+     * @return number of elements in the selected array
      */
     public static int arraySize(String json, String path) {
         List<?> list = JsonPath.read(json, path);
@@ -43,13 +45,11 @@ public final class JsonPathSupport {
     }
 
     /**
-     * Reads an ISO-8601 instant at {@code path}, parses it, and asserts (via AssertJ) that it falls
-     * within a small window before and slightly after {@link Instant#now()} — rejects bogus or
-     * stale default timestamps while still allowing minor clock skew.
+     * Parses an ISO-8601 instant from JSON and asserts it is near the current clock time.
      *
-     * @param json JSON text
-     * @param path JsonPath to an instant serialized as a string (e.g. {@code "$.timestamp"})
-     * @return the parsed instant
+     * @param json response body as JSON text
+     * @param path JsonPath to the instant string field
+     * @return parsed instant that passed plausibility checks
      */
     public static Instant readInstantAssertingPlausibleNow(String json, String path) {
         String raw = read(json, path);
@@ -61,9 +61,9 @@ public final class JsonPathSupport {
     }
 
     /**
-     * Asserts {@code paymentId} matches the server format {@code pay_}{@link UUID}.
+     * Asserts a payment id uses the {@code pay_} prefix followed by a UUID.
      *
-     * @param paymentId value from create-payment responses or stream heads
+     * @param paymentId payment id from an API response
      */
     public static void assertLogicalPaymentId(String paymentId) {
         assertThat(paymentId).startsWith("pay_");
@@ -71,9 +71,9 @@ public final class JsonPathSupport {
     }
 
     /**
-     * Asserts {@code correlationId} matches the server format {@code corr_}{@link UUID}.
+     * Asserts a correlation id uses the {@code corr_} prefix followed by a UUID.
      *
-     * @param correlationId value from create-payment responses
+     * @param correlationId correlation id from an API response
      */
     public static void assertLogicalCorrelationId(String correlationId) {
         assertThat(correlationId).startsWith("corr_");

@@ -7,6 +7,7 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbAttri
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbBean;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbPartitionKey;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortKey;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
 
 /**
  * DynamoDB item: one append-only event in the payment stream.
@@ -16,10 +17,10 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
  * <p>Lifecycle and audit narrative are carried by {@link #getEventType()} ({@link PaymentEventType}):
  * {@code OUTBOUND_PAYMENT_CREATED}, {@code FUNDS_RESERVED}, {@code COMPLETED}, {@code REJECTED}.
  * Optional {@link #getReasonCode()} explains terminal failure for {@code REJECTED}. DynamoDB may
- * still return historical attributes (e.g. legacy transition columns); they are not mapped on this
- * bean and do not affect {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer}.
+ * still return historical attributes (e.g. legacy transition columns). They are not mapped on this
+ * bean and do not affect {@link PaymentEventReplayer}.
  *
- * <p>{@link PaymentEventType#OUTBOUND_PAYMENT_CREATED} carries payment shell attributes; later events
+ * <p>{@link PaymentEventType#OUTBOUND_PAYMENT_CREATED} carries payment shell attributes. Later events
  * may leave optional fields {@code null}.
  */
 @DynamoDbBean
@@ -32,23 +33,38 @@ public class PaymentEvent {
     /** Width for numeric suffix so lexicographic order matches numeric order. */
     public static final int SEQUENCE_PAD = 19;
 
+    /** Partition key {@code PK} set to {@code PAYMENT#}{@code paymentId}. */
     private String paymentKey;
+    /** Sort key {@code SK} set to {@code EVENT#} plus zero-padded sequence. */
     private String eventKey;
+    /** Item discriminator stored in {@code entityType}. */
     private String entityType;
+    /** Lifecycle event name such as {@code OUTBOUND_PAYMENT_CREATED}. */
     private String eventType;
+    /** Monotonic 1-based position in the payment event stream. */
     private long sequenceNumber;
+    /** Correlation identifier carried with the event. */
     private String correlationId;
+    /** Rejection reason when the event type is terminal failure. */
     private String reasonCode;
+    /** UTC instant when the event was recorded. */
     private Instant occurredAt;
 
-
+    /** Payment identifier copied on the creation event. */
     private String paymentId;
+    /** Merchant identifier copied on the creation event. */
     private String merchantId;
+    /** Debtor account identifier copied on the creation event. */
     private String debtorAccountId;
+    /** Creditor IBAN copied on the creation event. */
     private String creditorIban;
+    /** Creditor name copied on the creation event. */
     private String creditorName;
+    /** Payment amount copied on the creation event. */
     private BigDecimal amount;
+    /** Currency code copied on the creation event. */
     private String currency;
+    /** Client idempotency key copied on the creation event. */
     private String idempotencyKey;
 
     /**

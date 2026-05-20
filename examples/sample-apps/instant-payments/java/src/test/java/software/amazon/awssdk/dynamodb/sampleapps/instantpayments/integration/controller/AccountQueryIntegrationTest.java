@@ -27,7 +27,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.Ab
 public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
-    void getAccount_seededAccount_returnsBalances() throws Exception {
+    void getAccount_whenSeededAccount_shouldReturnBalances() throws Exception {
         mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value("acc_usd_1"))
@@ -40,14 +40,14 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getAccount_nonExistent_returns404() throws Exception {
+    void getAccount_whenAccountMissing_shouldReturn404() throws Exception {
         mockMvc.perform(get("/api/v1/accounts/acc_nonexistent"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("ACCOUNT_NOT_FOUND"));
     }
 
     @Test
-    void getAccount_afterCompletedPayment_reflectsDebitAndConsumedReservation() throws Exception {
+    void getAccount_whenPaymentCompleted_shouldReflectDebitAndConsumedReservation() throws Exception {
         String paymentId = createPayment("acc_usd_1", "100", "Integration Test");
         processPayment(paymentId);
 
@@ -62,7 +62,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getAccount_afterRejectedPayment_balanceUnchanged() throws Exception {
+    void getAccount_whenPaymentRejected_shouldLeaveBalanceUnchanged() throws Exception {
         String paymentId = createPayment("acc_eur_1", "999999", "Integration Test");
         processPayment(paymentId);
 
@@ -74,7 +74,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getAccount_afterCreate_beforeProcess_reservationsEmpty() throws Exception {
+    void getAccount_whenPaymentCreatedBeforeProcess_shouldReturnEmptyReservations() throws Exception {
         createPayment("acc_usd_1", "50", "Integration Test");
 
         mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
@@ -85,7 +85,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void batchGetReservations_afterCompletedPayment_returnsReservation() throws Exception {
+    void batchGetReservations_whenPaymentCompleted_shouldReturnReservation() throws Exception {
         String paymentId = createPayment("acc_usd_1", "100", "Integration Test");
         processPayment(paymentId);
         String reservationId = reservationIdForPayment(paymentId);
@@ -103,7 +103,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void batchGetReservations_partialMissing_listsMissingIds() throws Exception {
+    void batchGetReservations_whenSomeIdsMissing_shouldListMissingIds() throws Exception {
         List<String> paymentIds = List.of(
                 createPayment("acc_usd_1", "10", "Integration Test"),
                 createPayment("acc_usd_1", "20", "Integration Test"),
@@ -143,7 +143,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void batchGetReservations_sevenConsumedReservations_preserveRequestedOrder() throws Exception {
+    void batchGetReservations_whenSevenConsumedReservations_shouldPreserveRequestedOrder() throws Exception {
         List<String> paymentIds = List.of(
                 createPayment("acc_usd_1", "10", "Integration Test"),
                 createPayment("acc_usd_1", "20", "Integration Test"),
@@ -182,7 +182,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void batchGetReservations_mixedActiveAndConsumed_sevenIds_preserveRequestedOrder() throws Exception {
+    void batchGetReservations_whenMixedActiveAndConsumedIds_shouldPreserveRequestedOrder() throws Exception {
         List<String> consumedPaymentIds = List.of(
                 createPayment("acc_usd_1", "101", "Integration Test"),
                 createPayment("acc_usd_1", "102", "Integration Test"),
@@ -232,7 +232,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void batchGetReservations_deduplicatesRepeatedIds_andKeepsMissingIdsInOrder() throws Exception {
+    void batchGetReservations_whenRepeatedIdsProvided_shouldDeduplicateAndKeepMissingIdsInOrder() throws Exception {
         List<String> paymentIds = List.of(
                 createPayment("acc_usd_1", "11", "Integration Test"),
                 createPayment("acc_usd_1", "12", "Integration Test"),
@@ -280,7 +280,39 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void batchGetReservations_allMissing_returnsEmptyReservations() throws Exception {
+    void batchGetReservations_whenReservationIdsEmpty_shouldReturn400ValidationError() throws Exception {
+        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reservationIds\":[]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void batchGetReservations_whenReservationIdBlank_shouldReturn400ValidationError() throws Exception {
+        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reservationIds\":[\"res_ok\",\"  \"]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void batchGetReservations_whenMoreThan100Ids_shouldReturn400ValidationError() throws Exception {
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < 101; i++) {
+            ids.add("res_" + i);
+        }
+
+        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(batchGetReservationsRequestBody(ids)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void batchGetReservations_whenAllIdsMissing_shouldReturnEmptyReservations() throws Exception {
         List<String> missingIds = List.of(
                 "res_nonexistent_1",
                 "res_nonexistent_2",
@@ -299,7 +331,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getAccount_multiplePayments_showsAllReservations() throws Exception {
+    void getAccount_whenMultiplePaymentsExist_shouldShowAllReservations() throws Exception {
         String paymentId1 = createPayment("acc_usd_1", "100", "Integration Test");
         processPayment(paymentId1);
 

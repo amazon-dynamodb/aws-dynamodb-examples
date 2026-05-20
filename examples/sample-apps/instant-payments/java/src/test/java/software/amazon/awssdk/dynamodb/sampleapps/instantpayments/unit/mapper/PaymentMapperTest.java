@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -14,6 +15,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutb
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentProjection;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.mapper.PaymentMapper;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.IdempotencyRecord;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Payment;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentState;
@@ -29,6 +31,9 @@ public class PaymentMapperTest {
 
     private PaymentMapper mapper;
 
+    /**
+     * Instantiates the mapper and sets a fixed idempotency TTL so idempotency record tests stay deterministic.
+     */
     @BeforeEach
     void setUpMapper() {
         mapper = new PaymentMapper();
@@ -37,7 +42,7 @@ public class PaymentMapperTest {
     }
 
     @Test
-    void toInitialStreamHead_shouldSetConcurrencyFields() {
+    void toInitialStreamHead_whenPaymentCreated_shouldSetConcurrencyFields() {
         Instant now = Instant.parse("2026-03-18T10:15:30Z");
         var request = new CreateOutboundPaymentRequest(
                 "idem-key-1", "merch_1", "acc_usd_1", "RO49AAAA1B31007593840000",
@@ -60,7 +65,7 @@ public class PaymentMapperTest {
     }
 
     @Test
-    void toOutboundPaymentCreatedEvent_shouldRecordFullShell() {
+    void toOutboundPaymentCreatedEvent_whenPaymentCreated_shouldRecordFullShell() {
         var request = new CreateOutboundPaymentRequest(
                 "idem-key-1", "merch_1", "acc_usd_1", "RO49AAAA1B31007593840000",
                 "John Doe", new BigDecimal("100.50"), "USD");
@@ -85,11 +90,8 @@ public class PaymentMapperTest {
         assertThat(event.getIdempotencyKey()).isEqualTo("idem-key-1");
     }
 
-    /**
-     * Merchant list DTO fields must map one-to-one from a fully populated stream head (GSI query result shape).
-     */
     @Test
-    void toMerchantPaymentProjection_mapsAllMerchantListFields() {
+    void toMerchantPaymentProjection_whenPaymentProvided_shouldMapAllMerchantListFields() {
         Instant created = Instant.parse("2026-04-21T10:00:00Z");
         Instant updated = Instant.parse("2026-04-21T10:05:00Z");
         PaymentStreamHead head = new PaymentStreamHead();
@@ -118,11 +120,8 @@ public class PaymentMapperTest {
         assertThat(projection.reasonCode()).isNull();
     }
 
-    /**
-     * When {@code updatedAtUtc} is absent on a sparse index item, the API projection must surface null.
-     */
     @Test
-    void toMerchantPaymentProjection_allowsNullUpdatedAtUtc() {
+    void toMerchantPaymentProjection_whenUpdatedAtUtcNull_shouldAllowNullUpdatedAtUtc() {
         Instant created = Instant.parse("2026-04-21T10:00:00Z");
         PaymentStreamHead head = new PaymentStreamHead();
         head.setPaymentId("pay_sparse");
@@ -143,7 +142,7 @@ public class PaymentMapperTest {
     }
 
     @Test
-    void toReservationResponse_mapsAllReservationFields() {
+    void toReservationResponse_whenReservationProvided_shouldMapAllReservationFields() {
         Instant created = Instant.parse("2026-04-21T10:15:33Z");
         Reservation reservation = new Reservation();
         reservation.setReservationId("res_pay_123");
@@ -161,15 +160,12 @@ public class PaymentMapperTest {
         assertThat(response.createdAtUtc()).isEqualTo(created);
     }
 
-    /**
-     * Optional reason codes should remain null in both the folded payment DTO and nested event DTOs.
-     */
     @Test
-    void toGetOutboundPaymentResponse_preservesNullOptionalReasonCodes() {
+    void toGetOutboundPaymentResponse_whenReasonCodesNull_shouldPreserveNullOptionalReasonCodes() {
         Instant created = Instant.parse("2026-04-21T11:00:00Z");
         Instant updated = Instant.parse("2026-04-21T11:03:00Z");
 
-        var payment = new software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Payment();
+        var payment = new Payment();
         payment.setPaymentId("pay_optional");
         payment.setState(PaymentState.RECEIVED.name());
         payment.setCorrelationId("corr_optional");
@@ -190,7 +186,7 @@ public class PaymentMapperTest {
         event.setReasonCode(null);
         event.setCorrelationId("corr_optional");
 
-        var response = mapper.toGetOutboundPaymentResponse(payment, java.util.List.of(event));
+        var response = mapper.toGetOutboundPaymentResponse(payment, List.of(event));
 
         assertThat(response.reasonCode()).isNull();
         assertThat(response.events()).singleElement().satisfies(eventResponse -> {
@@ -201,7 +197,7 @@ public class PaymentMapperTest {
     }
 
     @Test
-    void toIdempotencyItem_shouldMapKeysRequestHashAndSnapshot() {
+    void toIdempotencyItem_whenIdempotencyRecordProvided_shouldMapKeysRequestHashAndSnapshot() {
         // Mapper requires expiresAt > Instant.now(); a fixed historical instant eventually falls past TTL.
         Instant createdAt = Instant.now();
         CreateOutboundPaymentResponse responseSnapshot = new CreateOutboundPaymentResponse(

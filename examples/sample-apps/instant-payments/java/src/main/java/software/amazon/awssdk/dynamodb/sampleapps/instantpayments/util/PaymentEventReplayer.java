@@ -7,21 +7,22 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Payment;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentState;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
 
 /**
  * Pure fold over ordered {@link PaymentEvent} records into an in-memory {@link Payment} view.
  *
- * <p>Used for command decisions and read models; DynamoDB persistence uses the same events
- * plus {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead}
+ * <p>Used for command decisions and read models. DynamoDB persistence uses the same events
+ * plus {@link PaymentStreamHead}
  * for compare-and-append.
  *
  * <p><strong>State machine:</strong> {@link PaymentEventType#OUTBOUND_PAYMENT_CREATED} seeds
- * {@link PaymentState#RECEIVED}; {@link PaymentEventType#FUNDS_RESERVED} requires {@code RECEIVED};
- * {@link PaymentEventType#COMPLETED} requires {@code FUNDS_RESERVED}; {@link PaymentEventType#REJECTED}
+ * {@link PaymentState#RECEIVED}. {@link PaymentEventType#FUNDS_RESERVED} requires {@code RECEIVED}.
+ * {@link PaymentEventType#COMPLETED} requires {@code FUNDS_RESERVED}. {@link PaymentEventType#REJECTED}
  * is allowed from {@code RECEIVED} or {@code FUNDS_RESERVED}. Invalid pairs throw {@link IllegalStateException}.
  *
  * <p><strong>Version:</strong> After each applied event, {@link Payment#getVersion()} equals that event's
- * {@link PaymentEvent#getSequenceNumber()}, matching {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead#getLastSequence()}.
+ * {@link PaymentEvent#getSequenceNumber()}, matching {@link PaymentStreamHead#getLastSequence()}.
  */
 @Component
 public class PaymentEventReplayer {

@@ -14,17 +14,21 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.Ab
 @Tag("smoke")
 public class ApplicationSmokeTest extends AbstractIntegrationTest {
 
-    /** Verifies the actuator health endpoint returns 200. */
     @Test
-    void healthEndpointShouldReturn200() throws Exception {
+    void healthEndpoint_whenRequested_shouldReturn200() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
     }
 
-    /** Verifies the OpenAPI spec is accessible and contains the expected API title. */
     @Test
-    void openApiSpecShouldBeAccessible() throws Exception {
+    void faviconRequest_whenRequested_shouldReturn204() throws Exception {
+        mockMvc.perform(get("/favicon.ico"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void openApiSpec_whenRequested_shouldBeAccessible() throws Exception {
         mockMvc.perform(get("/api-docs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.info.title").value("Instant Payments DynamoDB Sample API"));

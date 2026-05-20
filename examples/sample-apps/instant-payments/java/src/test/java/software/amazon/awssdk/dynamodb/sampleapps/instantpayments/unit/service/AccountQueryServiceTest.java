@@ -50,7 +50,7 @@ public class AccountQueryServiceTest {
     private AccountQueryService accountQueryService;
 
     @Test
-    void getAccount_partitionMissing_throwsAccountNotFound() {
+    void getAccount_whenPartitionMissing_shouldThrowAccountNotFound() {
         when(paymentRepository.queryAccountPartition(eq("acc_missing")))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -60,7 +60,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void getAccount_mapsAccountAndReservations() {
+    void getAccount_whenAccountAndReservationsExist_shouldMapAccountAndReservations() {
         Instant resCreated = Instant.parse("2026-03-18T10:15:33Z");
 
         Account account = buildAccount("acc_usd_1", "ACTIVE", "USD",
@@ -96,7 +96,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void getAccount_noReservations_returnsEmptyList() {
+    void getAccount_whenNoReservationsExist_shouldReturnEmptyList() {
         Account account = buildAccount("acc_eur_1", "ACTIVE", "EUR",
                 new BigDecimal("5000"), new BigDecimal("5000"), 1);
 
@@ -114,7 +114,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void batchGetReservations_mapsFoundAndMissing() {
+    void batchGetReservations_whenMixedFoundAndMissing_shouldMapFoundAndMissing() {
         Instant resCreated = Instant.parse("2026-03-18T10:15:33Z");
         Reservation r1 = buildReservation("acc_usd_1", "res_pay_1", "pay_1",
                 new BigDecimal("50"), ReservationStatus.ACTIVE.name(), resCreated);
@@ -141,7 +141,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void batchGetReservations_allFound_emptyMissing() {
+    void batchGetReservations_whenAllFound_shouldReturnEmptyMissingList() {
         Instant now = Instant.now();
         Reservation r1 = buildReservation("acc_usd_1", "res_a", "pay_a",
                 new BigDecimal("100"), ReservationStatus.ACTIVE.name(), now);
@@ -158,7 +158,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void batchGetReservations_allMissing_emptyReservations() {
+    void batchGetReservations_whenAllMissing_shouldReturnEmptyReservations() {
         when(paymentRepository.batchGetReservations(eq("acc_usd_1"), eq(List.of("res_x", "res_y"))))
                 .thenReturn(CompletableFuture.completedFuture(
                         new BatchGetReservationsResult(List.of(), List.of("res_x", "res_y"))));
@@ -171,7 +171,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void batchGetReservations_deduplicatesBeforeRepositoryCall() {
+    void batchGetReservations_whenDuplicateIdsProvided_shouldDeduplicateBeforeRepositoryCall() {
         Instant now = Instant.now();
         Reservation reservation = buildReservation("acc_usd_1", "res_a", "pay_a",
                 new BigDecimal("100"), ReservationStatus.ACTIVE.name(), now);
@@ -189,7 +189,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void batchGetReservations_emptyDistinctIds_throwsBeforeRepositoryCall() {
+    void batchGetReservations_whenDistinctIdsEmpty_shouldThrowBeforeRepositoryCall() {
         assertThatThrownBy(() -> accountQueryService.batchGetReservations(
                 "acc_usd_1", new BatchGetReservationsRequest(List.of())))
                 .isInstanceOf(InvalidBatchGetReservationsRequestException.class)
@@ -199,7 +199,7 @@ public class AccountQueryServiceTest {
     }
 
     @Test
-    void getAccount_multipleReservationStatuses() {
+    void getAccount_whenMultipleReservationStatusesExist_shouldMapAllStatuses() {
         Instant now = Instant.now();
         Account account = buildAccount("acc_usd_2", "ACTIVE", "USD",
                 new BigDecimal("3000"), new BigDecimal("2800"), 4);
@@ -208,21 +208,19 @@ public class AccountQueryServiceTest {
                 new BigDecimal("100"), ReservationStatus.ACTIVE.name(), now);
         Reservation consumed = buildReservation("acc_usd_2", "res_b", "pay_b",
                 new BigDecimal("50"), ReservationStatus.CONSUMED.name(), now);
-        Reservation released = buildReservation("acc_usd_2", "res_c", "pay_c",
-                new BigDecimal("50"), ReservationStatus.RELEASED.name(), now);
 
         when(paymentRepository.queryAccountPartition(eq("acc_usd_2")))
                 .thenReturn(CompletableFuture.completedFuture(
-                        new AccountPartitionQueryResult(account, List.of(active, consumed, released))));
+                        new AccountPartitionQueryResult(account, List.of(active, consumed))));
 
         GetAccountResponse response = accountQueryService.getAccount("acc_usd_2");
 
-        assertThat(response.reservations()).hasSize(3);
+        assertThat(response.reservations()).hasSize(2);
         assertThat(response.reservations().get(0).status()).isEqualTo("ACTIVE");
         assertThat(response.reservations().get(1).status()).isEqualTo("CONSUMED");
-        assertThat(response.reservations().get(2).status()).isEqualTo("RELEASED");
     }
 
+    /** Builds an {@link Account} bean with balances and version for repository stubs. */
     private static Account buildAccount(String accountId, String status, String currency,
                                          BigDecimal currentBalance, BigDecimal availableBalance,
                                          int version) {
@@ -239,6 +237,7 @@ public class AccountQueryServiceTest {
         return account;
     }
 
+    /** Builds a {@link Reservation} bean keyed under the given account. */
     private static Reservation buildReservation(String accountId, String reservationId,
                                                  String paymentId, BigDecimal amount,
                                                  String status, Instant createdAtUtc) {

@@ -18,7 +18,7 @@ import java.time.Instant;
  * @param currency      ISO currency code
  * @param createdAtUtc  creation time (UTC)
  * @param updatedAtUtc  last update time (UTC)
- * @param reasonCode    failure reason when state is terminal failure; otherwise often {@code null}
+ * @param reasonCode    failure reason when state is terminal failure, otherwise often {@code null}
  */
 public record MerchantPaymentProjection(
         String paymentId,

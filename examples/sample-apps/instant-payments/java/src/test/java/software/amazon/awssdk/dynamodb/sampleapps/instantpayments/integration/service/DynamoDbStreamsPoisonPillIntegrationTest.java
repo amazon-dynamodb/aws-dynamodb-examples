@@ -53,7 +53,7 @@ public class DynamoDbStreamsPoisonPillIntegrationTest extends AbstractIntegratio
     private String tableName;
 
     @Test
-    void createPayment_streamProcessorAlwaysFails_shouldStayReceivedAfterPoisonPill() throws Exception {
+    void createPayment_whenStreamProcessorAlwaysFails_shouldStayReceivedAfterPoisonPill() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = """
                 {
@@ -90,13 +90,17 @@ public class DynamoDbStreamsPoisonPillIntegrationTest extends AbstractIntegratio
     }
 
     /**
-     * Registers a {@link org.springframework.context.annotation.Primary} spy around the real
-     * {@link OutboundPaymentProcessor} service bean so stream processing can be forced to fail
-     * without replacing the bean type in the context.
+     * Test configuration that wraps the real {@link OutboundPaymentProcessor} with a failing spy.
      */
     @TestConfiguration
     static class PoisonProcessorTestConfig {
 
+        /**
+         * Primary bean that delegates to the real processor but throws on every {@code processPayment} call.
+         *
+         * @param real production {@code OutboundPaymentProcessor} bean to spy and delegate non-stubbed calls
+         * @return spy that simulates repeated stream processing failures
+         */
         @Bean
         @Primary
         OutboundPaymentProcessor poisonOutboundPaymentProcessor(

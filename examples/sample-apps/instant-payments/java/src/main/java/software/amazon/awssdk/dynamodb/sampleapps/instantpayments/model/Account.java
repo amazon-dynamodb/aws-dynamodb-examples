@@ -24,14 +24,23 @@ public class Account {
     /** Prefix for keys: {@code ACCOUNT#}{@code accountId}. */
     public static final String KEY_PREFIX = "ACCOUNT#";
 
+    /** Partition key {@code PK} set to {@code ACCOUNT#}{@code accountId}. */
     private String accountKey;
+    /** Sort key {@code SK} set to {@code ACCOUNT#}{@code accountId}. */
     private String entityKey;
+    /** Item discriminator stored in {@code entityType}. */
     private String entityType;
+    /** Business account identifier. */
     private String accountId;
+    /** Account lifecycle status. */
     private String status;
+    /** Posted balance after settled debits. */
     private BigDecimal currentBalance;
+    /** Spendable balance after active reservations. */
     private BigDecimal availableBalance;
+    /** ISO currency code for balances. */
     private String currency;
+    /** Optimistic locking version for conditional updates. */
     private int version;
 
     @DynamoDbPartitionKey

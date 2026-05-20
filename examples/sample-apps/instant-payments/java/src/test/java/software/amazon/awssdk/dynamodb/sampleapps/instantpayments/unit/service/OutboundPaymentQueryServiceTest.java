@@ -45,17 +45,13 @@ public class OutboundPaymentQueryServiceTest {
     @Spy
     private final PaymentMapper paymentMapper = new PaymentMapper();
 
-    /**
-     * Real instance wired into {@link OutboundPaymentQueryService} via {@link InjectMocks} (Mockito
-     * only injects {@code @Mock}/{@code @Spy} fields). Required so {@code getOutboundPayment} exercises
-     * {@link PaymentEventReplayer#fold}.
-     */
     @Spy
     private PaymentEventReplayer paymentEventReplayer = new PaymentEventReplayer();
 
     @InjectMocks
     private OutboundPaymentQueryService queryService;
 
+    /** Sets idempotency TTL on the spy mapper so injected configuration matches production defaults. */
     @BeforeEach
     void wirePaymentMapperTtl() {
         ReflectionTestUtils.setField(paymentMapper, "idempotencyTtlSeconds", 2_592_000L);
@@ -63,7 +59,7 @@ public class OutboundPaymentQueryServiceTest {
     }
 
     @Test
-    void getOutboundPayment_partitionMissing_throwsNotFound() {
+    void getOutboundPayment_whenPartitionMissing_shouldThrowNotFound() {
         when(paymentRepository.queryPaymentPartition(eq("pay_x")))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -73,7 +69,7 @@ public class OutboundPaymentQueryServiceTest {
     }
 
     @Test
-    void getOutboundPayment_mapsAggregateAndEvents() {
+    void getOutboundPayment_whenPartitionExists_shouldMapAggregateAndEvents() {
         Instant created = Instant.parse("2025-06-01T10:00:00Z");
 
         PaymentStreamHead head = new PaymentStreamHead();
@@ -137,7 +133,7 @@ public class OutboundPaymentQueryServiceTest {
     }
 
     @Test
-    void getOutboundPayment_emptyEvents_throwsFromReplayer() {
+    void getOutboundPayment_whenEventsEmpty_shouldThrowFromReplayer() {
         PaymentStreamHead head = new PaymentStreamHead();
         head.setPaymentKey("PAYMENT#pay_empty");
         head.setStreamKey(PaymentStreamHead.SORT_KEY);
@@ -156,7 +152,7 @@ public class OutboundPaymentQueryServiceTest {
     }
 
     @Test
-    void getOutboundPayment_headLastSequenceDisagreesWithFold_throws() {
+    void getOutboundPayment_whenHeadLastSequenceDisagreesWithFold_shouldThrow() {
         Instant created = Instant.parse("2025-06-01T10:00:00Z");
 
         PaymentStreamHead head = new PaymentStreamHead();
@@ -201,7 +197,7 @@ public class OutboundPaymentQueryServiceTest {
     }
 
     @Test
-    void getOutboundPayment_headAggregateStateDisagreesWithFold_throws() {
+    void getOutboundPayment_whenHeadAggregateStateDisagreesWithFold_shouldThrow() {
         Instant created = Instant.parse("2025-06-01T10:00:00Z");
 
         PaymentStreamHead head = new PaymentStreamHead();

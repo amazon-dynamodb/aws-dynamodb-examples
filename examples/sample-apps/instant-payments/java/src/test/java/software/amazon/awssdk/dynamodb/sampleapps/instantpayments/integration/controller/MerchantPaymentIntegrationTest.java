@@ -22,14 +22,14 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.ut
 /**
  * Integration tests for merchant payment list queries.
  *
- * <p>{@code GET /api/v1/merchants/{merchantId}/payments} — list payments by merchant via
+ * <p>{@code GET /api/v1/merchants/{merchantId}/payments}: list payments by merchant via
  * {@code GSI_MERCHANT_PAYMENTS}, newest first.
  *
- * <p>{@code GET /api/v1/merchants/{merchantId}/payments/state/{state}} — list payments filtered by
+ * <p>{@code GET /api/v1/merchants/{merchantId}/payments/state/{state}}: list payments filtered by
  * merchant and state via {@code GSI_MERCHANT_STATE_PAYMENTS}.
  *
  * <p>Uses the high-level client by default (inherited from
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.AbstractIntegrationTest}).
+ * {@link AbstractIntegrationTest}).
  * Low-level tests override the client type via {@link MerchantPaymentLowLevelIntegrationTest}.
  *
  * <p>Assertions poll the read model instead of fixed sleeps: GSIs are eventually consistent and
@@ -40,10 +40,11 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.ut
 public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
 
     private static final Duration READ_MODEL_TIMEOUT = Duration.ofSeconds(20);
+
     private static final Duration READ_MODEL_POLL = Duration.ofMillis(200);
 
     @Test
-    void listMerchantPayments_returnsOnlyRequestedMerchant() throws Exception {
+    void listMerchantPayments_whenMultipleMerchantsExist_shouldReturnOnlyRequestedMerchant() throws Exception {
         String merchant1 = "merch_" + UUID.randomUUID();
         String merchant2 = "merch_" + UUID.randomUUID();
 
@@ -60,7 +61,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_newestFirst() throws Exception {
+    void listMerchantPayments_whenMultiplePaymentsExist_shouldReturnNewestFirst() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -83,7 +84,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_oldestFirst_whenScanIndexForwardTrue() throws Exception {
+    void listMerchantPayments_whenScanIndexForwardTrue_shouldReturnOldestFirst() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -107,7 +108,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_respectsLimit() throws Exception {
+    void listMerchantPayments_whenLimitProvided_shouldRespectLimit() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -122,7 +123,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_supportsNextTokenPagination() throws Exception {
+    void listMerchantPayments_whenUsingNextToken_shouldPaginate() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -147,14 +148,51 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_invalidNextToken_returns400() throws Exception {
+    void listMerchantPayments_whenNextTokenInvalid_shouldReturn400() throws Exception {
         mockMvc.perform(get("/api/v1/merchants/merch_1/payments?nextToken=not-base64"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
 
     @Test
-    void listMerchantPayments_defaultLimitWhenOmitted() throws Exception {
+    void listMerchantPayments_whenStateRouteNextTokenOnMerchantRoute_shouldReturn400() throws Exception {
+        String merchantId = "merch_" + UUID.randomUUID();
+
+        createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
+        createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "20");
+
+        String firstPageJson = awaitFirstMerchantStatePageWithNextToken(merchantId, "RECEIVED");
+        String wrongRouteToken = JsonPathSupport.read(firstPageJson, "$.nextToken");
+
+        mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments?limit=1&nextToken=" + wrongRouteToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
+    }
+
+    @Test
+    void listMerchantPaymentsByState_whenMerchantRouteNextTokenOnStateRoute_shouldReturn400() throws Exception {
+        String merchantId = "merch_" + UUID.randomUUID();
+
+        createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
+        createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "20");
+
+        await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
+                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments?limit=1"))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.nextToken").isString()));
+
+        String firstPageJson = awaitFirstMerchantPageWithNextToken(merchantId);
+        String wrongRouteToken = JsonPathSupport.read(firstPageJson, "$.nextToken");
+
+        mockMvc.perform(get(
+                        "/api/v1/merchants/" + merchantId + "/payments/state/RECEIVED?limit=1&nextToken="
+                                + wrongRouteToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
+    }
+
+    @Test
+    void listMerchantPayments_whenLimitOmitted_shouldUseDefaultLimit() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -166,7 +204,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_noPayments_returnsEmptyArray() throws Exception {
+    void listMerchantPayments_whenNoPaymentsExist_shouldReturnEmptyArray() throws Exception {
         mockMvc.perform(get("/api/v1/merchants/merch_nonexistent/payments"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items").isArray())
@@ -175,7 +213,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_filtersCorrectly() throws Exception {
+    void listMerchantPaymentsByState_whenStateMatches_shouldFilterCorrectly() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         MvcResult created1 = createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -203,7 +241,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_oldestFirst_whenScanIndexForwardTrue() throws Exception {
+    void listMerchantPaymentsByState_whenScanIndexForwardTrue_shouldReturnOldestFirst() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         MvcResult created1 = createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -238,7 +276,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_supportsNextTokenPagination() throws Exception {
+    void listMerchantPaymentsByState_whenUsingNextToken_shouldPaginate() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         String paymentId1 = JsonPathSupport.read(
@@ -271,14 +309,14 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_invalidNextToken_returns400() throws Exception {
+    void listMerchantPaymentsByState_whenNextTokenInvalid_shouldReturn400() throws Exception {
         mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=not-base64"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
 
     @Test
-    void listMerchantPaymentsByState_caseInsensitive() throws Exception {
+    void listMerchantPaymentsByState_whenStateCaseDiffers_shouldMatchCaseInsensitively() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         MvcResult created = createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -293,14 +331,14 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_invalidState_returns400() throws Exception {
+    void listMerchantPaymentsByState_whenStateInvalid_shouldReturn400() throws Exception {
         mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAYMENT_STATE"));
     }
 
     @Test
-    void listMerchantPaymentsByState_noMatches_returnsEmptyArray() throws Exception {
+    void listMerchantPaymentsByState_whenNoMatchesExist_shouldReturnEmptyArray() throws Exception {
         String merchantId = "merch_" + UUID.randomUUID();
 
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
@@ -313,6 +351,12 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
                         .andExpect(jsonPath("$.nextToken").doesNotExist()));
     }
 
+    /**
+     * Polls until the merchant payments list returns a first page with a {@code nextToken}.
+     *
+     * @param merchantId merchant id for the list route
+     * @return JSON body of the first page that includes {@code nextToken}
+     */
     private String awaitFirstMerchantPageWithNextToken(String merchantId) {
         final String[] firstPageJson = new String[1];
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
@@ -326,6 +370,13 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         return firstPageJson[0];
     }
 
+    /**
+     * Polls until the merchant state list returns a first page with a {@code nextToken}.
+     *
+     * @param merchantId merchant id for the state list route
+     * @param state aggregate state filter for the route
+     * @return JSON body of the first page that includes {@code nextToken}
+     */
     private String awaitFirstMerchantStatePageWithNextToken(String merchantId, String state) {
         final String[] firstPageJson = new String[1];
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
@@ -340,6 +391,16 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         return firstPageJson[0];
     }
 
+    /**
+     * Creates an outbound payment for merchant list tests and returns the MockMvc result.
+     *
+     * @param idempotencyKey idempotency key for the create request
+     * @param merchantId merchant id in the request body
+     * @param accountId debtor account id in the request body
+     * @param amount payment amount as a numeric string
+     * @return MockMvc result from a successful create response
+     * @throws Exception when the HTTP request fails or returns a non-201 status
+     */
     private MvcResult createPayment(String idempotencyKey, String merchantId, String accountId,
                                     String amount) throws Exception {
         String json = """

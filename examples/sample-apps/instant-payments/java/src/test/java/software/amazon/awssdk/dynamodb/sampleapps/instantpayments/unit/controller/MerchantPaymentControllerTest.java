@@ -47,7 +47,7 @@ public class MerchantPaymentControllerTest {
     private MerchantPaymentQueryService merchantPaymentQueryService;
 
     @Test
-    void listMerchantPayments_success_returns200WithPageEnvelope() throws Exception {
+    void listMerchantPayments_whenPaymentsExist_shouldReturn200WithPageEnvelope() throws Exception {
         MerchantPaymentProjection p1 = new MerchantPaymentProjection(
                 "pay_1", "COMPLETED", 3, "merch_1", "corr_1",
                 new BigDecimal("100.00"), "USD",
@@ -81,7 +81,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPayments_scanIndexForwardAndNextToken_delegateToService() throws Exception {
+    void listMerchantPayments_whenScanIndexForwardAndNextTokenProvided_shouldDelegateToService() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), eq(true), eq("token-1")))
                 .thenReturn(new MerchantPaymentsPage(List.of(), null));
 
@@ -94,7 +94,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPayments_empty_returns200WithEmptyItems() throws Exception {
+    void listMerchantPayments_whenNoPaymentsExist_shouldReturn200WithEmptyItems() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), isNull(), isNull()))
                 .thenReturn(new MerchantPaymentsPage(List.of(), null));
 
@@ -105,7 +105,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPayments_invalidNextToken_returns400() throws Exception {
+    void listMerchantPayments_whenNextTokenInvalid_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), isNull(), eq("bad-token")))
                 .thenThrow(new InvalidPaginationTokenException("bad-token"));
 
@@ -119,7 +119,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPayments_crossGsiToken_returns400() throws Exception {
+    void listMerchantPayments_whenCrossGsiTokenProvided_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), isNull(), eq("gsi-merchant-state-payments-token")))
                 .thenThrow(new InvalidPaginationTokenException("gsi-merchant-state-payments-token"));
 
@@ -129,7 +129,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_success_returns200() throws Exception {
+    void listMerchantPaymentsByState_whenPaymentsExist_shouldReturn200() throws Exception {
         MerchantPaymentProjection p1 = new MerchantPaymentProjection(
                 "pay_1", "COMPLETED", 3, "merch_1", "corr_1",
                 new BigDecimal("100.00"), "USD",
@@ -157,7 +157,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_nextToken_delegatesToService() throws Exception {
+    void listMerchantPaymentsByState_whenNextTokenProvided_shouldDelegateToService() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("COMPLETED"), isNull(), eq(true), eq("token-2")))
                 .thenReturn(new MerchantPaymentsPage(List.of(), null));
@@ -172,7 +172,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_invalidNextToken_returns400() throws Exception {
+    void listMerchantPaymentsByState_whenNextTokenInvalid_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("COMPLETED"), isNull(), isNull(), eq("bad-token")))
                 .thenThrow(new InvalidPaginationTokenException("bad-token"));
@@ -187,7 +187,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_crossGsiToken_returns400() throws Exception {
+    void listMerchantPaymentsByState_whenCrossGsiTokenProvided_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("COMPLETED"), isNull(), isNull(), eq("gsi-merchant-payments-token")))
                 .thenThrow(new InvalidPaginationTokenException("gsi-merchant-payments-token"));
@@ -198,7 +198,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_invalidState_returns400() throws Exception {
+    void listMerchantPaymentsByState_whenStateInvalid_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("BOGUS"), isNull(), isNull(), isNull()))
                 .thenThrow(new InvalidPaymentStateException("BOGUS"));
@@ -213,7 +213,7 @@ public class MerchantPaymentControllerTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_empty_returns200WithEmptyItems() throws Exception {
+    void listMerchantPaymentsByState_whenNoPaymentsExist_shouldReturn200WithEmptyItems() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("RECEIVED"), isNull(), isNull(), isNull()))
                 .thenReturn(new MerchantPaymentsPage(List.of(), null));

@@ -19,6 +19,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.controller.MerchantPaymentIntegrationTest;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.controller.MerchantPaymentLowLevelIntegrationTest;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.smoke.controller.MerchantPaymentSmokeTest;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentProjection;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentsPage;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.InvalidPaymentStateException;
@@ -31,9 +34,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Mercha
 /**
  * Unit tests for {@link MerchantPaymentQueryService}.
  *
- * <p>Repository implementations are exercised by {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.controller.MerchantPaymentIntegrationTest},
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.controller.MerchantPaymentLowLevelIntegrationTest},
- * and {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.smoke.controller.MerchantPaymentSmokeTest}.
+ * <p>Repository implementations are exercised by {@link MerchantPaymentIntegrationTest},
+ * {@link MerchantPaymentLowLevelIntegrationTest},
+ * and {@link MerchantPaymentSmokeTest}.
  *
  * <p>Verifies limit sanitization, {@code scanIndexForward} handling, next-token pass-through,
  * state validation/normalization, and correct delegation to the repository and mapper layers.
@@ -52,7 +55,7 @@ public class MerchantPaymentQueryServiceTest {
     private MerchantPaymentQueryService merchantPaymentQueryService;
 
     @Test
-    void listMerchantPayments_returnsPagedProjections() {
+    void listMerchantPayments_whenPaymentsExist_shouldReturnPagedProjections() {
         Instant created1 = Instant.parse("2026-03-18T10:15:30Z");
         Instant created2 = Instant.parse("2026-03-18T10:16:00Z");
 
@@ -85,7 +88,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_emptyResult_returnsEmptyPage() {
+    void listMerchantPayments_whenNoPaymentsExist_shouldReturnEmptyPage() {
         when(paymentRepository.queryMerchantPayments(eq("merch_empty"), eq(50), eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -97,7 +100,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_nullLimit_usesDefault50() {
+    void listMerchantPayments_whenLimitNull_shouldUseDefault50() {
         when(paymentRepository.queryMerchantPayments(eq("merch_1"), eq(50), eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -107,7 +110,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_zeroLimit_usesDefault50() {
+    void listMerchantPayments_whenLimitZero_shouldUseDefault50() {
         when(paymentRepository.queryMerchantPayments(eq("merch_1"), eq(50), eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -117,7 +120,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_negativeLimit_usesDefault50() {
+    void listMerchantPayments_whenLimitNegative_shouldUseDefault50() {
         when(paymentRepository.queryMerchantPayments(eq("merch_1"), eq(50), eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -127,7 +130,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_validLimit_respectsExplicitLimit() {
+    void listMerchantPayments_whenValidLimitProvided_shouldRespectExplicitLimit() {
         when(paymentRepository.queryMerchantPayments(eq("merch_1"), eq(10), eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -137,7 +140,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_nextToken_passesToRepository() {
+    void listMerchantPayments_whenNextTokenProvided_shouldPassToRepository() {
         when(paymentRepository.queryMerchantPayments(eq("merch_1"), eq(50), eq(false), eq("token-1")))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -147,7 +150,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_scanIndexForwardTrue_passesTrueToRepository() {
+    void listMerchantPayments_whenScanIndexForwardTrue_shouldPassTrueToRepository() {
         when(paymentRepository.queryMerchantPayments(eq("merch_1"), eq(50), eq(true), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -157,7 +160,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPayments_scanIndexForwardFalse_passesFalseToRepository() {
+    void listMerchantPayments_whenScanIndexForwardFalse_shouldPassFalseToRepository() {
         when(paymentRepository.queryMerchantPayments(eq("merch_1"), eq(50), eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
@@ -167,7 +170,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_validState_returnsFilteredPage() {
+    void listMerchantPaymentsByState_whenValidStateProvided_shouldReturnFilteredPage() {
         Instant created = Instant.parse("2026-03-18T10:15:30Z");
         PaymentStreamHead head = buildHead("pay_1", "merch_1", "COMPLETED", created);
 
@@ -186,7 +189,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_caseInsensitive() {
+    void listMerchantPaymentsByState_whenStateCaseDiffers_shouldMatchCaseInsensitively() {
         when(paymentRepository.queryMerchantPaymentsByState(eq("merch_1"), eq("COMPLETED"), eq(50),
                 eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
@@ -198,7 +201,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_invalidState_throws() {
+    void listMerchantPaymentsByState_whenStateInvalid_shouldThrow() {
         assertThatThrownBy(() ->
                 merchantPaymentQueryService.listMerchantPaymentsByState("merch_1", "BOGUS", null, null, null))
                 .isInstanceOf(InvalidPaymentStateException.class)
@@ -206,7 +209,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_emptyResult_returnsEmptyPage() {
+    void listMerchantPaymentsByState_whenNoPaymentsExist_shouldReturnEmptyPage() {
         when(paymentRepository.queryMerchantPaymentsByState(eq("merch_1"), eq("RECEIVED"), eq(50),
                 eq(false), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
@@ -219,7 +222,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_nextToken_passesToRepository() {
+    void listMerchantPaymentsByState_whenNextTokenProvided_shouldPassToRepository() {
         when(paymentRepository.queryMerchantPaymentsByState(eq("merch_1"), eq("COMPLETED"), eq(50),
                 eq(false), eq("token-2")))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
@@ -231,7 +234,7 @@ public class MerchantPaymentQueryServiceTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_scanIndexForwardTrue_passesTrueToRepository() {
+    void listMerchantPaymentsByState_whenScanIndexForwardTrue_shouldPassTrueToRepository() {
         when(paymentRepository.queryMerchantPaymentsByState(eq("merch_1"), eq("COMPLETED"), eq(50),
                 eq(true), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
@@ -242,6 +245,7 @@ public class MerchantPaymentQueryServiceTest {
                 eq(true), isNull());
     }
 
+    /** Builds a {@link PaymentStreamHead} suitable for merchant list projection tests. */
     private static PaymentStreamHead buildHead(String paymentId, String merchantId,
                                                String state, Instant createdAtUtc) {
         PaymentStreamHead head = new PaymentStreamHead();

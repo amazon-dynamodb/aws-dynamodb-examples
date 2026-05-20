@@ -70,8 +70,8 @@ public class DynamoDbConfig {
     /**
      * Creates the low-level async DynamoDB client with an explicit retry strategy.
      *
-     * <p>Uses a custom endpoint and fake credentials when connecting to local DynamoDB;
-     * otherwise uses the default AWS credential chain.
+     * <p>Uses a custom endpoint and fake credentials when connecting to local DynamoDB.
+     * Otherwise, uses the default AWS credential chain.
      *
      * <p><strong>Retry strategy.</strong> DynamoDB's SDK-level retry handles transient failures such as
      * {@code ProvisionedThroughputExceededException} (total request failure), 5xx service errors,

@@ -26,10 +26,10 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.BatchGetI
 @Service
 public class AccountQueryService {
 
-    /** Persistence port for account and reservation reads. */
+    /** Persistence for account partition and batch-get reservation queries. */
     private final PaymentRepository paymentRepository;
 
-    /** Maps domain models to HTTP DTOs. */
+    /** Maps account and reservation models to API DTOs. */
     private final PaymentMapper paymentMapper;
 
     /**

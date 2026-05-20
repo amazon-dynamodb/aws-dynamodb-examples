@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbTableInitializer;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
@@ -28,6 +29,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetShardIteratorRequest;
 import software.amazon.awssdk.services.dynamodb.model.Record;
 import software.amazon.awssdk.services.dynamodb.model.Shard;
 import software.amazon.awssdk.services.dynamodb.model.ShardIteratorType;
+import software.amazon.awssdk.services.dynamodb.model.StreamRecord;
 import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException;
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClient;
 
@@ -36,8 +38,8 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
  * triggers the payment processor.
  *
  * <p>In a production “event-driven” shape, an {@code OutboundPaymentInitiated} message might
- * invoke AWS Lambda; here, the first domain event produces stream records, and this component
- * calls {@link OutboundPaymentProcessor#processPayment(String)} — the same method as the manual
+ * invoke AWS Lambda. Here, the first domain event produces stream records, and this component
+ * calls {@link OutboundPaymentProcessor#processPayment(String)}, the same method as the manual
  * REST trigger. Idempotency and safe retries are implemented in the processor and repositories,
  * not in stream delivery guarantees.
  *
@@ -57,8 +59,8 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
  * {@code GetRecords(nextShardIterator)} instead of reopening {@link ShardIteratorType#TRIM_HORIZON}
  * / {@link ShardIteratorType#LATEST}, which avoids both missing records and replaying the whole
  * retention window every second. Expired iterators are renewed with
- * {@link ShardIteratorType#AFTER_SEQUENCE_NUMBER}; if data was trimmed, it falls back to the
- * configured iterator type. Checkpoints are not persisted — process restart may re-read the stream
+ * {@link ShardIteratorType#AFTER_SEQUENCE_NUMBER}. If data was trimmed, it falls back to the
+ * configured iterator type. Checkpoints are not persisted. Process restart may re-read the stream
  * from the configured starting position.
  *
  * <p><strong>Poison-pill protection:</strong> If a record fails processing {@link #MAX_PROCESS_RETRIES}
@@ -73,7 +75,7 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
 @ConditionalOnProperty(name = "dynamodb.streams.enabled", havingValue = "true", matchIfMissing = true)
 public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
 
-    private static final Logger log = LoggerFactory.getLogger(DynamoDbStreamsPaymentEventListener.class);
+    private static final Logger logger = LoggerFactory.getLogger(DynamoDbStreamsPaymentEventListener.class);
 
     /**
      * Delay between poll loop iterations when the previous pass completed normally.
@@ -95,15 +97,24 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
      */
     public static final int MAX_PROCESS_RETRIES = 3;
 
+    /** Resolves table to stream ARN via {@code DescribeTable}. */
     private final DynamoDbAsyncClient dynamoDbClient;
+    /** Opens shard iterators and reads stream records. */
     private final DynamoDbStreamsAsyncClient streamsClient;
+    /** Runs {@link OutboundPaymentProcessor#processPayment(String)} for new outbound payments. */
     private final OutboundPaymentProcessor processor;
+    /** Configured single-table name ({@code dynamodb.table-name}). */
     private final String tableName;
+    /** Starting position for new shard iterators when no checkpoint exists. */
     private final ShardIteratorType shardIteratorType;
 
+    /** Whether the poller lifecycle is active. */
     private final AtomicBoolean running = new AtomicBoolean(false);
+    /** Per-shard in-memory iterator and sequence checkpoints. */
     private final ConcurrentHashMap<String, ShardCheckpoint> checkpoints = new ConcurrentHashMap<>();
+    /** Processing failure counts per payment id for poison-pill handling. */
     private final ConcurrentHashMap<String, Integer> retryCounts = new ConcurrentHashMap<>();
+    /** Single-thread scheduler that drives {@link #pollLoop}. */
     private ScheduledExecutorService scheduler;
 
     /**
@@ -123,12 +134,12 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
         this.processor = processor;
         this.tableName = tableName;
         this.shardIteratorType = parseShardIteratorType(iteratorTypeRaw);
-        log.info("DynamoDB Streams payment event listener created for table '{}' (iteratorType={})",
+        logger.info("DynamoDB Streams payment event listener created: tableName={}, iteratorType={}",
                 tableName, this.shardIteratorType);
     }
 
     /**
-     * @param raw spring property value (case-insensitive); unknown values fall back to {@link ShardIteratorType#LATEST}
+     * @param raw spring property value (case-insensitive). Unknown values fall back to {@link ShardIteratorType#LATEST}
      */
     private static ShardIteratorType parseShardIteratorType(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -146,12 +157,12 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
     /**
      * {@inheritDoc}
      *
-     * <p>Starts a daemon single-thread scheduler; first poll is delayed so the table and seed data exist.
+     * <p>Starts a daemon single-thread scheduler. First poll is delayed so the table and seed data exist.
      */
     @Override
     public void start() {
         if (running.compareAndSet(false, true)) {
-            log.info("Starting DynamoDB Streams poller for table '{}'", tableName);
+            logger.info("Starting DynamoDB Streams poller: tableName={}", tableName);
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "streams-poller");
                 t.setDaemon(true);
@@ -169,7 +180,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
     @Override
     public void stop() {
         if (running.compareAndSet(true, false)) {
-            log.info("Stopping DynamoDB Streams poller");
+            logger.info("Stopping DynamoDB Streams poller: tableName={}", tableName);
             if (scheduler != null) {
                 scheduler.shutdownNow();
             }
@@ -185,7 +196,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
     }
 
     /**
-     * Runs after most other beans: ensures {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbTableInitializer}
+     * Runs after most other beans: ensures {@link DynamoDbTableInitializer}
      * and repositories are ready before polling.
      *
      * @return {@link Integer#MAX_VALUE} so start happens late in the context lifecycle
@@ -200,7 +211,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
         try {
             String streamArn = discoverStreamArn();
             if (streamArn == null) {
-                log.warn("No stream ARN found for table '{}'. Is DynamoDB Streams enabled?", tableName);
+                logger.warn("No stream ARN found for table; verify DynamoDB Streams is enabled: tableName={}", tableName);
                 scheduleNextPoll();
                 return;
             }
@@ -211,7 +222,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
                 pollShard(streamArn, shard);
             }
         } catch (Exception e) {
-            log.error("Error in streams poller: {}", e.getMessage(), e);
+            logger.error("DynamoDB Streams poller error: tableName={}", tableName, e);
         }
 
         scheduleNextPoll();
@@ -231,7 +242,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
                     DescribeTableRequest.builder().tableName(tableName).build()).join();
             return tableDesc.table().latestStreamArn();
         } catch (Exception e) {
-            log.error("Failed to describe table '{}': {}", tableName, e.getMessage());
+            logger.error("Failed to describe table for stream discovery: tableName={}", tableName, e);
             return null;
         }
     }
@@ -243,7 +254,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
                     DescribeStreamRequest.builder().streamArn(streamArn).build()).join();
             return response.streamDescription().shards();
         } catch (Exception e) {
-            log.error("Failed to describe stream: {}", e.getMessage());
+            logger.error("Failed to describe stream: streamArn={}", streamArn, e);
             return List.of();
         }
     }
@@ -251,7 +262,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
     /**
      * Reads new records for one shard, advancing the in-memory checkpoint.
      *
-     * <p>Cold start uses {@link #shardIteratorType}; steady state uses {@code GetRecords} with the
+     * <p>Cold start uses {@link #shardIteratorType}. Steady state uses {@code GetRecords} with the
      * saved {@code nextShardIterator}. Iterator expiry and trim are handled in
      * {@link #getRecordsWithRenewal}.
      */
@@ -289,14 +300,14 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
                 cp.nextIterator = iterator;
             }
         } catch (Exception e) {
-            log.error("Error polling shard {}: {}", shardId, e.getMessage());
+            logger.error("Error polling stream shard: tableName={}, shardId={}", tableName, shardId, e);
         }
     }
 
     /**
-     * Calls {@code GetRecords}; on {@link ExpiredIteratorException}, clears the iterator and obtains
+     * Calls {@code GetRecords}. On {@link ExpiredIteratorException}, clears the iterator and obtains
      * a new one via {@link ShardIteratorType#AFTER_SEQUENCE_NUMBER} when possible, then retries
-     * once (single retry path — further expiry is handled on the next poll round).
+     * once (single retry path, further expiry is handled on the next poll round).
      */
     private GetRecordsResponse getRecordsWithRenewal(String streamArn,
                                                      String shardId,
@@ -311,7 +322,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
                     .join();
         } catch (CompletionException e) {
             if (e.getCause() instanceof ExpiredIteratorException) {
-                log.info("Shard iterator expired for shard {}, renewing after sequence {}",
+                logger.debug("Shard iterator expired, renewing: shardId={}, lastSequenceNumber={}",
                         shardId, cp.lastSequenceNumber != null ? cp.lastSequenceNumber : "(none)");
                 cp.nextIterator = null;
                 String fresh = openShardIterator(streamArn, shardId, cp);
@@ -355,10 +366,12 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
             return iterator;
         } catch (CompletionException e) {
             if (useAfterSequence && e.getCause() instanceof TrimmedDataAccessException) {
-                log.warn(
-                        "Stream trim before sequence {} for shard {}; reopening with {}",
-                        cp.lastSequenceNumber,
+                logger.warn(
+                        "Stream data trimmed before checkpoint; reopening shard iterator: tableName={}, shardId={}, "
+                                + "lastSequenceNumber={}, iteratorType={}",
+                        tableName,
                         shardId,
+                        cp.lastSequenceNumber,
                         shardIteratorType);
                 cp.lastSequenceNumber = null;
                 String iterator = streamsClient.getShardIterator(
@@ -379,12 +392,14 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
     /**
      * In-memory checkpoint for one stream shard (not persisted across process restarts).
      *
-     * <p>{@code nextIterator} holds the latest {@link GetRecordsResponse#nextShardIterator()} for the next poll;
-     * {@code lastSequenceNumber} is the last processed {@link software.amazon.awssdk.services.dynamodb.model.StreamRecord}
+     * <p>{@code nextIterator} holds the latest {@link GetRecordsResponse#nextShardIterator()} for the next poll.
+     * {@code lastSequenceNumber} is the last processed {@link StreamRecord}
      * sequence and is used when renewing iterators with {@link ShardIteratorType#AFTER_SEQUENCE_NUMBER}.
      */
     private static final class ShardCheckpoint {
+        /** Latest {@link GetRecordsResponse#nextShardIterator()} for the next poll on this shard. */
         volatile String nextIterator;
+        /** Last successfully processed stream record sequence for iterator renewal. */
         volatile String lastSequenceNumber;
     }
 
@@ -395,8 +410,8 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
      * <p><strong>Bounded retry:</strong> Processing failures are retried up to
      * {@link #MAX_PROCESS_RETRIES} times. While under the limit the exception is re-thrown,
      * causing {@link #pollShard} to stop iterating the current batch without advancing the
-     * in-memory checkpoint; the next poll cycle resumes from the last successfully processed
-     * sequence number. Once the limit is reached the record is treated as a poison pill — the
+     * in-memory checkpoint. The next poll cycle resumes from the last successfully processed
+     * sequence number. Once the limit is reached the record is treated as a poison pill. The
      * failure is logged at {@code ERROR} and the method returns normally so the checkpoint can
      * advance and the shard is unblocked.
      */
@@ -423,7 +438,7 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
         if (paymentIdAttr == null) return;
 
         String paymentId = paymentIdAttr.s();
-        log.info("Stream record: OUTBOUND_PAYMENT_CREATED detected, paymentId={}", paymentId);
+        logger.info("Outbound payment created event detected on stream: paymentId={}", paymentId);
 
         try {
             processor.processPayment(paymentId);
@@ -431,12 +446,13 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
         } catch (Exception e) {
             int attempt = retryCounts.merge(paymentId, 1, Integer::sum);
             if (attempt >= MAX_PROCESS_RETRIES) {
-                log.error("Payment {} failed after {} attempts, skipping (poison pill): {}",
-                        paymentId, attempt, e.getMessage(), e);
+                logger.error("Outbound payment processing exhausted retries, skipping poison pill: "
+                                + "paymentId={}, attemptCount={}",
+                        paymentId, attempt, e);
                 retryCounts.remove(paymentId);
             } else {
-                log.warn("Payment {} processing failed (attempt {}/{}), will retry: {}",
-                        paymentId, attempt, MAX_PROCESS_RETRIES, e.getMessage());
+                logger.warn("Outbound payment processing failed, will retry: paymentId={}, attempt={}/{}",
+                        paymentId, attempt, MAX_PROCESS_RETRIES, e);
                 throw e;
             }
         }

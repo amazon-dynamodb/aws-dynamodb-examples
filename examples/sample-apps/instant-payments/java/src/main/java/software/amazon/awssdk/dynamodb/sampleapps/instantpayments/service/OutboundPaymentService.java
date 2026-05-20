@@ -26,7 +26,7 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
  *
  * <p>Uses {@code TransactWriteItems} to atomically create the stream head, first domain event,
  * and an idempotency record. The idempotency item is the only conditional put
- * ({@code attribute_not_exists(PK)}); duplicate idempotency keys fail the transaction so retries
+ * ({@code attribute_not_exists(PK)}). Duplicate idempotency keys fail the transaction so retries
  * resolve via the stored idempotency row. DynamoDB Streams ({@code INSERT} of
  * {@code OUTBOUND_PAYMENT_CREATED})
  * and {@code POST .../process} both invoke {@link OutboundPaymentProcessor}.
@@ -37,9 +37,11 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
 @Service
 public class OutboundPaymentService {
 
-    private static final Logger log = LoggerFactory.getLogger(OutboundPaymentService.class);
+    private static final Logger logger = LoggerFactory.getLogger(OutboundPaymentService.class);
 
+    /** Persistence for transactional create and idempotency reads. */
     private final PaymentRepository paymentRepository;
+    /** Maps requests and snapshots to persistence items. */
     private final PaymentMapper paymentMapper;
 
     /**
@@ -64,7 +66,7 @@ public class OutboundPaymentService {
         Instant createdAtUtc = Instant.now();
         String requestHash = computeRequestHash(request);
 
-        log.info("Creating outbound payment: paymentId={}, correlationId={}, idempotencyKey={}",
+        logger.info("Creating outbound payment: paymentId={}, correlationId={}, idempotencyKey={}",
                 paymentId, correlationId, request.idempotencyKey());
 
         CreateOutboundPaymentResponse response = new CreateOutboundPaymentResponse(
@@ -78,7 +80,7 @@ public class OutboundPaymentService {
 
         try {
             paymentRepository.createPaymentTransaction(streamHead, createdEvent, idempotency).join();
-            log.info("Payment created successfully: paymentId={}", paymentId);
+            logger.info("Payment created successfully: paymentId={}", paymentId);
             return new PaymentCreationResult(response, true);
         } catch (CompletionException ex) {
             return handleTransactionFailure(ex, request.idempotencyKey(), requestHash);
@@ -86,7 +88,7 @@ public class OutboundPaymentService {
     }
 
     /**
-     * Interprets a failed create transact: idempotency conditional failure is handled as retry; other causes propagate.
+     * Interprets a failed create transact. Idempotency conditional failure is handled as retry, other causes propagate.
      *
      * @param ex              wrapper from {@code join()} on the transact future
      * @param idempotencyKey  client key from the request
@@ -100,7 +102,7 @@ public class OutboundPaymentService {
         Throwable cause = ex.getCause();
 
         if (cause instanceof TransactionCanceledException tce && isIdempotencyConflict(tce)) {
-            log.info("Idempotency key already exists, checking for retry: key={}", idempotencyKey);
+            logger.info("Idempotency key already exists, checking for retry: idempotencyKey={}", idempotencyKey);
             return handleIdempotencyRetry(idempotencyKey, requestHash);
         }
 
@@ -125,7 +127,7 @@ public class OutboundPaymentService {
         }
 
         if (requestHash.equals(existing.getRequestHash())) {
-            log.info("Idempotent retry detected, returning stored response: key={}, paymentId={}",
+            logger.info("Idempotent retry detected, returning stored response: idempotencyKey={}, paymentId={}",
                     idempotencyKey, existing.getResponseSnapshot().paymentId());
             return new PaymentCreationResult(existing.getResponseSnapshot(), false);
         }
@@ -138,7 +140,7 @@ public class OutboundPaymentService {
      *
      * @implNote {@link #createOutboundPayment} builds {@code TransactWriteItems} in a fixed order:
      *     stream head put, first event put, idempotency conditional put. DynamoDB reports per-item
-     *     cancellation reasons in that same order; index {@code 2} is therefore the idempotency row's
+     *     cancellation reasons in that same order. Index {@code 2} is therefore the idempotency row's
      *     {@code attribute_not_exists(PK)} check. Other conditional failures would surface at indices
      *     {@code 0} or {@code 1} and are not treated as idempotent replay.
      */

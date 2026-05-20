@@ -31,7 +31,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Reservat
  *
  * <p>Spring injects {@code dynamodb.idempotency-ttl-seconds} into {@code idempotencyTtlSeconds} (default {@code 2592000}
  * seconds in the property placeholder). {@link #validateIdempotencyTtlConfiguration()} enforces the inclusive range
- * {@link #MIN_IDEMPOTENCY_TTL_SECONDS}–{@link #MAX_IDEMPOTENCY_TTL_SECONDS}.
+ * {@link #MIN_IDEMPOTENCY_TTL_SECONDS}-{@link #MAX_IDEMPOTENCY_TTL_SECONDS}.
  */
 @Component
 public class PaymentMapper {
@@ -46,6 +46,7 @@ public class PaymentMapper {
      */
     private static final long MAX_IDEMPOTENCY_TTL_SECONDS = 31_536_000L;
 
+    /** TTL in seconds for idempotency items, from {@code dynamodb.idempotency-ttl-seconds}. */
     @Value("${dynamodb.idempotency-ttl-seconds:2592000}")
     private final long idempotencyTtlSeconds = 2_592_000L;
 

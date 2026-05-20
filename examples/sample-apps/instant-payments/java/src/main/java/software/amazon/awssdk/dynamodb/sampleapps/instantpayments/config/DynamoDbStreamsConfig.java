@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.DynamoDbStreamsPaymentEventListener;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.DynamoDbEndpointUtils;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClient;
@@ -19,18 +20,20 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
 @Configuration
 public class DynamoDbStreamsConfig {
 
-    private static final Logger log = LoggerFactory.getLogger(DynamoDbStreamsConfig.class);
+    private static final Logger logger = LoggerFactory.getLogger(DynamoDbStreamsConfig.class);
 
+    /** DynamoDB API endpoint URL from {@code dynamodb.endpoint}. */
     @Value("${dynamodb.endpoint}")
     private String endpoint;
 
+    /** AWS region string from {@code dynamodb.region}. */
     @Value("${dynamodb.region}")
     private String region;
 
     /**
-     * Async client for stream describe/getRecords; mirrors {@link DynamoDbConfig} endpoint/region and local credentials.
+     * Async client for stream describe and getRecords. Mirrors {@link DynamoDbConfig} endpoint, region, and local credentials.
      *
-     * @return client consumed by {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.DynamoDbStreamsPaymentEventListener}
+     * @return client consumed by {@link DynamoDbStreamsPaymentEventListener}
      */
     @Bean
     public DynamoDbStreamsAsyncClient dynamoDbStreamsAsyncClient() {
@@ -43,7 +46,7 @@ public class DynamoDbStreamsConfig {
                     AwsBasicCredentials.create("fakeAccessKey", "fakeSecretKey")));
         }
 
-        log.info("Created DynamoDB Streams async client for endpoint '{}' in region '{}'", endpoint, region);
+        logger.info("Created DynamoDB Streams async client: endpoint={}, region={}", endpoint, region);
         return builder.build();
     }
 }

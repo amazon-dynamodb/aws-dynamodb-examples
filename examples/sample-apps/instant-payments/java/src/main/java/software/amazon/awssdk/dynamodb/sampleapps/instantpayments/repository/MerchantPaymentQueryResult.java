@@ -8,7 +8,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentS
  * Paged merchant payment query result returned by repository implementations.
  *
  * @param items     stream-head items for the requested page
- * @param nextToken opaque pagination token for the next page; {@code null} when no further page exists
+ * @param nextToken opaque pagination token for the next page, or {@code null} when no further page exists
  */
 public record MerchantPaymentQueryResult(List<PaymentStreamHead> items, String nextToken) {
 

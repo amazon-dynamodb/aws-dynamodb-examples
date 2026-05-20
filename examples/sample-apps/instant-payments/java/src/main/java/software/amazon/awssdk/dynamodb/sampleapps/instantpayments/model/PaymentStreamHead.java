@@ -10,6 +10,8 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbParti
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSecondaryPartitionKey;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSecondarySortKey;
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortKey;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.MerchantGsiProjectionAttributes;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
 
 /**
  * DynamoDB item used for optimistic concurrency on the payment event stream.
@@ -26,11 +28,11 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
  * {@link #GSI_MERCHANT_STATE_PAYMENTS} without a second read. Secondary key annotations on getters
  * map these attributes to multi-attribute GSI keys. INCLUDE non-key attribute names for
  * {@link #GSI_MERCHANT_STATE_PAYMENTS} live in
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.MerchantGsiProjectionAttributes#GSI_MERCHANT_STATE_PAYMENTS_PROJECTED_NON_KEYS}.
+ * {@link MerchantGsiProjectionAttributes#GSI_MERCHANT_STATE_PAYMENTS_PROJECTED_NON_KEYS}.
  *
- * <p>{@code lastSequence} is the highest applied {@link PaymentEvent} sequence; {@code aggregateState} is the
+ * <p>{@code lastSequence} is the highest applied {@link PaymentEvent} sequence. {@code aggregateState} is the
  * corresponding aggregate state name ({@link PaymentState}) and must stay aligned with replay of events through
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer} for correct reads and GSI keys.
+ * {@link PaymentEventReplayer} for correct reads and GSI keys.
  */
 @DynamoDbBean
 public class PaymentStreamHead {
@@ -41,7 +43,7 @@ public class PaymentStreamHead {
     public static final String ENTITY_TYPE = "PAYMENT_STREAM_HEAD";
 
     /**
-     * Fixed {@code SK} for the concurrency row; payment events use {@code EVENT#…} sort keys instead.
+     * Fixed {@code SK} for the concurrency row. Payment events use {@code EVENT#…} sort keys instead.
      */
     public static final String SORT_KEY = "#HEAD";
 
@@ -56,19 +58,32 @@ public class PaymentStreamHead {
      */
     public static final String GSI_MERCHANT_STATE_PAYMENTS = "GSI_MERCHANT_STATE_PAYMENTS";
 
+    /** Partition key {@code PK} set to {@code PAYMENT#}{@code paymentId}. */
     private String paymentKey;
+    /** Sort key {@code SK} fixed to {@code #HEAD} for the concurrency row. */
     private String streamKey;
+    /** Item discriminator stored in {@code entityType}. */
     private String entityType;
+    /** Highest applied {@link PaymentEvent} sequence number. */
     private long lastSequence;
+    /** Aggregate payment state used for GSI keys and conditional transitions. */
     private String aggregateState;
+    /** UTC instant when the stream head was last updated. */
     private Instant updatedAtUtc;
 
+    /** Payment identifier projected for merchant GSI sort keys. */
     private String paymentId;
+    /** Merchant identifier projected as GSI partition key. */
     private String merchantId;
+    /** Payment creation time projected as GSI sort key. */
     private Instant createdAtUtc;
+    /** Correlation identifier projected for merchant list responses. */
     private String correlationId;
+    /** Payment amount projected for merchant list responses. */
     private BigDecimal amount;
+    /** Currency code projected for merchant list responses. */
     private String currency;
+    /** Rejection reason projected when the payment is rejected. */
     private String reasonCode;
 
     @DynamoDbPartitionKey

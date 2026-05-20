@@ -18,6 +18,9 @@ dynamodb:
 springdoc:
   api-docs:
     path: /api-docs
+  # springdoc-openapi defaults to */*; set application/json so /api-docs matches this JSON API.
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method

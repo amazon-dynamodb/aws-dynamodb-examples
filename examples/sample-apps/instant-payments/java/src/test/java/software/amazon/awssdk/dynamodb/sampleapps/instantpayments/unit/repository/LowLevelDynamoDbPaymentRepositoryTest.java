@@ -63,8 +63,11 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
 
     private static final TableSchema<PaymentStreamHead> STREAM_HEAD_SCHEMA =
             TableSchema.fromBean(PaymentStreamHead.class);
+
     private static final TableSchema<PaymentEvent> EVENT_SCHEMA = TableSchema.fromBean(PaymentEvent.class);
+
     private static final TableSchema<Account> ACCOUNT_SCHEMA = TableSchema.fromBean(Account.class);
+
     private static final TableSchema<Reservation> RESERVATION_SCHEMA = TableSchema.fromBean(Reservation.class);
 
     private static final String TABLE_NAME = "test-table";
@@ -74,17 +77,14 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
 
     private LowLevelDynamoDbPaymentRepository repository;
 
+    /** Instantiates the repository with the mock client and test table name. */
     @BeforeEach
     void setUp() {
         repository = new LowLevelDynamoDbPaymentRepository(client, TABLE_NAME);
     }
 
-    /**
-     * Verifies {@link LowLevelDynamoDbPaymentRepository#getIdempotencyRecord} wires DynamoDB
-     * {@code GetItem} with strongly consistent reads.
-     */
     @Test
-    void getIdempotencyRecord_usesStronglyConsistentRead() {
+    void getIdempotencyRecord_whenRecordExists_shouldUseStronglyConsistentRead() {
         when(client.getItem(any(GetItemRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(GetItemResponse.builder().build()));
 
@@ -96,7 +96,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void createPaymentTransaction_callsTransactWriteItems() {
+    void createPaymentTransaction_whenPaymentCreated_shouldCallTransactWriteItems() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
@@ -110,7 +110,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void createPaymentTransaction_onlyIdempotencyPutUsesAttributeNotExistsCondition() {
+    void createPaymentTransaction_whenPaymentCreated_shouldApplyAttributeNotExistsOnlyOnIdempotencyPut() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
@@ -130,7 +130,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryPaymentPartition_headNotFound_returnsNull() {
+    void queryPaymentPartition_whenHeadMissing_shouldReturnNull() {
         when(client.query(any(QueryRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(
                         QueryResponse.builder().items(List.of()).build()));
@@ -142,7 +142,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryPaymentPartition_headFound_combinesHeadAndSortedEvents() {
+    void queryPaymentPartition_whenHeadFound_shouldCombineHeadAndSortedEvents() {
         PaymentStreamHead head = buildStreamHead("pay_1", 2, "FUNDS_RESERVED");
         PaymentEvent event2 = buildEvent("pay_1", 2);
         PaymentEvent event1 = buildEvent("pay_1", 1);
@@ -166,7 +166,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryAccountPartition_accountNotFound_returnsNull() {
+    void queryAccountPartition_whenAccountMissing_shouldReturnNull() {
         when(client.query(any(QueryRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(
                         QueryResponse.builder().items(List.of()).build()));
@@ -178,7 +178,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryAccountPartition_accountFound_combinesAccountAndSortedReservations() {
+    void queryAccountPartition_whenAccountFound_shouldCombineAccountAndSortedReservations() {
         Account account = buildAccount("acc_1");
         Reservation resB = buildReservation("acc_1", "res_b");
         Reservation resA = buildReservation("acc_1", "res_a");
@@ -201,7 +201,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_allFound_returnsReservations() {
+    void batchGetReservations_whenAllFound_shouldReturnReservations() {
         Reservation resA = buildReservation("acc_a", "res_a");
         Reservation resB = buildReservation("acc_a", "res_b");
 
@@ -224,7 +224,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_partialMissing_returnsMissingIds() {
+    void batchGetReservations_whenPartialMissing_shouldReturnMissingIds() {
         Reservation resA = buildReservation("acc_a", "res_a");
 
         when(client.batchGetItem(any(BatchGetItemRequest.class)))
@@ -243,7 +243,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_deduplicatesIds_beforeBatchGet() {
+    void batchGetReservations_whenDuplicateIdsProvided_shouldDeduplicateIdsBeforeBatchGet() {
         Reservation resA = buildReservation("acc_a", "res_a");
 
         when(client.batchGetItem(any(BatchGetItemRequest.class)))
@@ -261,7 +261,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_emptyList_returnsImmediately() {
+    void batchGetReservations_whenReservationIdsEmpty_shouldReturnImmediately() {
         BatchGetReservationsResult result = repository.batchGetReservations("acc_a", List.of()).join();
 
         assertThat(result.reservations()).isEmpty();
@@ -270,7 +270,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_retriesUnprocessedKeys() {
+    void batchGetReservations_whenUnprocessedKeysRemain_shouldRetryUnprocessedKeys() {
         Reservation resA = buildReservation("acc_a", "res_a");
         Reservation resB = buildReservation("acc_a", "res_b");
 
@@ -302,7 +302,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void batchGetReservations_stopsRetryingAfterMaxAttempts() {
+    void batchGetReservations_whenMaxRetryAttemptsReached_shouldStopRetrying() {
         Reservation resA = buildReservation("acc_a", "res_a");
 
         String pk = Account.KEY_PREFIX + "acc_a";
@@ -331,7 +331,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void reserveFundsTransaction_callsTransactWriteItems() {
+    void reserveFundsTransaction_whenFundsReserved_shouldCallTransactWriteItems() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
@@ -347,7 +347,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void completeFundsTransaction_callsTransactWriteItems() {
+    void completeFundsTransaction_whenFundsCompleted_shouldCallTransactWriteItems() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
@@ -364,7 +364,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void completeFundsTransaction_addsAccountVersionCondition() {
+    void completeFundsTransaction_whenFundsCompleted_shouldAddAccountVersionCondition() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
@@ -388,7 +388,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryMerchantPayments_returnsNextTokenAndReusesItAsExclusiveStartKey() {
+    void queryMerchantPayments_whenPaginating_shouldReturnNextTokenAndReuseItAsExclusiveStartKey() {
         PaymentStreamHead head = buildStreamHead("pay_1", 1, "RECEIVED");
         Map<String, AttributeValue> lastEvaluatedKey = Map.of(
                 "merchantId", AttributeValue.builder().s("merch_1").build(),
@@ -419,7 +419,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryMerchantPaymentsByState_returnsNextTokenAndReusesItAsExclusiveStartKey() {
+    void queryMerchantPaymentsByState_whenPaginating_shouldReturnNextTokenAndReuseItAsExclusiveStartKey() {
         PaymentStreamHead head = buildStreamHead("pay_2", 2, "COMPLETED");
         Map<String, AttributeValue> lastEvaluatedKey = Map.of(
                 "merchantId", AttributeValue.builder().s("merch_1").build(),
@@ -451,14 +451,14 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void queryMerchantPayments_invalidNextToken_throws() {
+    void queryMerchantPayments_whenNextTokenInvalid_shouldThrow() {
         assertThatThrownBy(() -> repository.queryMerchantPayments("merch_1", 1, false, "bad-token").join())
                 .isInstanceOf(InvalidPaginationTokenException.class)
                 .hasMessage("Invalid pagination token");
     }
 
     @Test
-    void queryMerchantPaymentsByState_invalidNextToken_throws() {
+    void queryMerchantPaymentsByState_whenNextTokenInvalid_shouldThrow() {
         assertThatThrownBy(() -> repository.queryMerchantPaymentsByState(
                 "merch_1", "COMPLETED", 1, false, "bad-token").join())
                 .isInstanceOf(InvalidPaginationTokenException.class)
@@ -466,7 +466,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void rejectPaymentTransaction_callsTransactWriteItems() {
+    void rejectPaymentTransaction_whenPaymentRejected_shouldCallTransactWriteItems() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
@@ -479,6 +479,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         verify(client).transactWriteItems(any(TransactWriteItemsRequest.class));
     }
 
+    /** Builds a minimal payment stream head for transactional and query tests. */
     private static PaymentStreamHead buildStreamHead(String paymentId, long sequence, String state) {
         PaymentStreamHead head = new PaymentStreamHead();
         head.setPaymentKey(Payment.KEY_PREFIX + paymentId);
@@ -496,6 +497,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         return head;
     }
 
+    /** Builds a payment event with the given payment id and sequence number. */
     private static PaymentEvent buildEvent(String paymentId, long sequence) {
         PaymentEvent event = new PaymentEvent();
         event.setPaymentKey(Payment.KEY_PREFIX + paymentId);
@@ -507,6 +509,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         return event;
     }
 
+    /** Builds an idempotency record keyed by the given idempotency key suffix. */
     private static IdempotencyRecord buildIdempotencyRecord(String key) {
         IdempotencyRecord record = new IdempotencyRecord();
         record.setIdempotencyRecordKey(IdempotencyRecord.KEY_PREFIX + key);
@@ -517,6 +520,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         return record;
     }
 
+    /** Builds an active account with default USD balances for transaction tests. */
     private static Account buildAccount(String accountId) {
         String key = Account.KEY_PREFIX + accountId;
         Account account = new Account();
@@ -532,6 +536,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         return account;
     }
 
+    /** Builds an active reservation under the given account. */
     private static Reservation buildReservation(String accountId, String reservationId) {
         Reservation reservation = new Reservation();
         reservation.setAccountKey(Account.KEY_PREFIX + accountId);
@@ -545,6 +550,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         return reservation;
     }
 
+    /** Builds a debit ledger entry tied to the given account and payment. */
     private static LedgerEntry buildLedgerEntry(String accountId, String paymentId) {
         LedgerEntry entry = new LedgerEntry();
         entry.setAccountKey(Account.KEY_PREFIX + accountId);

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util;
 
+import java.math.BigDecimal;
+
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutboundPaymentRequest;
 
 /**
@@ -12,7 +14,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutb
 public final class IdempotencyCanonicalizer {
 
     /**
-     * ASCII unit separator ({@code U+001F}) between canonicalised fields; not expected in IBANs, names, or currency codes.
+     * ASCII unit separator ({@code U+001F}) between canonicalised fields, not expected in IBANs, names, or currency codes.
      */
     private static final String SEP = "\u001F";
 
@@ -28,7 +30,7 @@ public final class IdempotencyCanonicalizer {
      * @param request inbound create request
      * @return joined fields in fixed order
      *
-     * @implNote {@link java.math.BigDecimal#stripTrailingZeros()} with {@link java.math.BigDecimal#toPlainString()}
+     * @implNote {@link BigDecimal#stripTrailingZeros()} with {@link BigDecimal#toPlainString()}
      *     avoids hash drift between {@code 10.0} and {@code 10.00} and avoids scientific notation for the amount field.
      */
     public static String canonicalForm(CreateOutboundPaymentRequest request) {

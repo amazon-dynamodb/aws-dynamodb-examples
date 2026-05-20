@@ -7,6 +7,7 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception;
  */
 public class PaymentNotFoundException extends RuntimeException {
 
+    /** Business payment id that was not found (without {@code PAYMENT#} prefix). */
     private final String paymentId;
 
     /**

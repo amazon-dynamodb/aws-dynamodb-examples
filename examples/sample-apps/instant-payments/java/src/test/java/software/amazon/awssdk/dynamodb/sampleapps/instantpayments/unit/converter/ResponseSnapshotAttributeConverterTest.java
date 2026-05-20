@@ -22,7 +22,7 @@ public class ResponseSnapshotAttributeConverterTest {
     private final ResponseSnapshotAttributeConverter converter = ResponseSnapshotAttributeConverter.create();
 
     @Test
-    void transformFromAndTransformTo_shouldRoundTrip() {
+    void transformFromAndTransformTo_whenValidSnapshot_shouldRoundTrip() {
         CreateOutboundPaymentResponse original = new CreateOutboundPaymentResponse(
                 "pay_123", "RECEIVED", "corr_456", Instant.parse("2026-03-18T10:15:30Z"));
 
@@ -37,7 +37,7 @@ public class ResponseSnapshotAttributeConverterTest {
     }
 
     @Test
-    void transformTo_shouldParseMinimalMap() {
+    void transformTo_whenMinimalMapProvided_shouldParse() {
         AttributeValue attributeValue = AttributeValue.builder()
                 .m(Map.of(
                         "paymentId", AttributeValue.builder().s("pay_min").build(),
@@ -55,7 +55,7 @@ public class ResponseSnapshotAttributeConverterTest {
     }
 
     @Test
-    void transformTo_missingKeys_shouldThrow() {
+    void transformTo_whenRequiredKeysMissing_shouldThrow() {
         AttributeValue attributeValue = AttributeValue.builder()
                 .m(Map.of("paymentId", AttributeValue.builder().s("only").build()))
                 .build();

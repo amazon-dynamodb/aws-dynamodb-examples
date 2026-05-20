@@ -37,7 +37,7 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
  * {@code paymentId}, {@code state}, {@code correlationId}, and {@code createdAtUtc}
  * (Instant as ISO-8601 string, same encoding as {@link InstantAsStringAttributeConverter}).
  *
- * <p>The type is stateless; {@link #create()} is equivalent to {@code new ResponseSnapshotAttributeConverter()} for readability.
+ * <p>The type is stateless. {@link #create()} is equivalent to {@code new ResponseSnapshotAttributeConverter()} for readability.
  */
 @ThreadSafe
 @Immutable
@@ -66,20 +66,20 @@ public final class ResponseSnapshotAttributeConverter implements AttributeConver
     /** Map key for {@link CreateOutboundPaymentResponse#createdAtUtc()}. */
     private static final String CREATED_AT = "createdAtUtc";
 
-    /** Public no-arg constructor for {@code @DynamoDbConvertedBy} and tooling; prefer {@link #create()}. */
+    /** Public no-arg constructor for {@code @DynamoDbConvertedBy} and tooling. Prefer {@link #create()}. */
     public ResponseSnapshotAttributeConverter() {}
 
     /**
      * Factory for a new converter instance (same as the public no-arg constructor).
      *
-     * @return new stateless converter; safe to use concurrently across threads
+     * @return new stateless converter, safe to use concurrently across threads
      */
     public static ResponseSnapshotAttributeConverter create() {
         return new ResponseSnapshotAttributeConverter();
     }
 
     /**
-     * @param input non-null response snapshot; all record components must be present
+     * @param input non-null response snapshot. All record components must be present
      * @return DynamoDB map attribute {@code M}
      */
     @Override
@@ -93,12 +93,12 @@ public final class ResponseSnapshotAttributeConverter implements AttributeConver
     }
 
     /**
-     * @param input map attribute produced by {@link #transformFrom}; invalid or incomplete maps yield
+     * @param input map attribute produced by {@link #transformFrom}. Invalid or incomplete maps yield
      *     {@link IllegalArgumentException}
      * @return reconstructed record
      *
      * @apiNote The enhanced client may invoke converters with either a top-level {@code M} value or a
-     *     map extracted elsewhere; both paths are handled so round-trips stay consistent regardless of
+     *     map extracted elsewhere. Both paths are handled so round-trips stay consistent regardless of
      *     nesting context.
      */
     @Override

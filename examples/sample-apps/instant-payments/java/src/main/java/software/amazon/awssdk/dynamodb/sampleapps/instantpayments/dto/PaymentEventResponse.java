@@ -1,14 +1,16 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto;
 
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType;
+
 /**
  * One append-only domain event from stored history ({@code SK=EVENT#…}).
  *
  * <p>Consumers infer what happened using {@code eventType} (see
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType}) and,
- * for rejections, optional {@code reasonCode}; lifecycle context comes from event order and types, not extra transition fields.
+ * {@link PaymentEventType}) and,
+ * for rejections, optional {@code reasonCode}. Lifecycle context comes from event order and types, not extra transition fields.
  *
  * @param eventKey      stable DynamoDB sort key for this event
- * @param eventType     {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType} name
+ * @param eventType     {@link PaymentEventType} name
  * @param reasonCode    rejection reason when applicable
  * @param correlationId tracing id attached to the event
  */

@@ -6,14 +6,13 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model;
  * <p>Progression:
  * <pre>{@code
  * ACTIVE -> CONSUMED   (payment completed)
- *       \-> RELEASED (payment rejected after reserve)
  * }</pre>
+ *
+ * <p>A {@code RELEASED} state (hold removed after payment rejection) is not implemented in this sample.
  */
 public enum ReservationStatus {
-    /** Hold is in force; {@link Account#getAvailableBalance()} was reduced. */
+    /** Hold is in force. {@link Account#getAvailableBalance()} was reduced. */
     ACTIVE,
-    /** Payment completed; hold converted to a final ledger debit. */
-    CONSUMED,
-    /** Payment rejected; hold removed and available balance restored. */
-    RELEASED
+    /** Payment completed. Hold converted to a final ledger debit. */
+    CONSUMED
 }

@@ -8,6 +8,7 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception;
  */
 public class IdempotencyConflictException extends RuntimeException {
 
+    /** Client idempotency key that already exists with a different payload hash. */
     private final String idempotencyKey;
 
     /**

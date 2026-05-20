@@ -10,7 +10,7 @@ import java.util.HexFormat;
  */
 public final class HashUtils {
 
-    /** Utility class; not instantiated. */
+    /** Utility class, not instantiated. */
     private HashUtils() {
     }
 

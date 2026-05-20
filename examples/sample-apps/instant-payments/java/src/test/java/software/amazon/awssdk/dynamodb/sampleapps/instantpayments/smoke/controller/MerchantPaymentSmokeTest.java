@@ -16,21 +16,22 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MvcResult;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.AbstractIntegrationTest;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.controller.MerchantPaymentIntegrationTest;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.utils.JsonPathSupport;
 
 /**
- * Smoke tests for merchant payment list endpoints — each scenario creates real outbound payments for
+ * Smoke tests for merchant payment list endpoints. Each scenario creates real outbound payments for
  * {@code merch_1}, then asserts the merchant APIs return the created payments and usable pagination
  * metadata (not only HTTP 200).
  *
  * <p>For ordering and broader GSI behaviour, see
- * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.controller.MerchantPaymentIntegrationTest}.
+ * {@link MerchantPaymentIntegrationTest}.
  */
 @Tag("smoke")
 public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
 
     @Test
-    void listMerchantPayments_includesCreatedPayment() throws Exception {
+    void listMerchantPayments_whenPaymentCreated_shouldIncludeCreatedPayment() throws Exception {
         String paymentId = createOutboundPaymentForMerchant("acc_usd_1", 77);
 
         MvcResult listResult = mockMvc.perform(get("/api/v1/merchants/merch_1/payments"))
@@ -48,7 +49,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_supportsPagination() throws Exception {
+    void listMerchantPayments_whenMultiplePaymentsExist_shouldSupportPagination() throws Exception {
         createOutboundPaymentForMerchant("acc_usd_1", 11);
         createOutboundPaymentForMerchant("acc_usd_1", 12);
 
@@ -74,7 +75,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_matchesCurrentAggregateState() throws Exception {
+    void listMerchantPaymentsByState_whenPaymentCreated_shouldMatchCurrentAggregateState() throws Exception {
         int amountUsd = 88;
         String paymentId = createOutboundPaymentForMerchant("acc_usd_2", amountUsd);
 
@@ -93,7 +94,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_supportsPagination() throws Exception {
+    void listMerchantPaymentsByState_whenMultiplePaymentsExist_shouldSupportPagination() throws Exception {
         String paymentId1 = createOutboundPaymentForMerchant("acc_usd_1", 13);
         processPayment(paymentId1);
         String paymentId2 = createOutboundPaymentForMerchant("acc_usd_1", 14);
@@ -122,7 +123,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_invalidState_returns400() throws Exception {
+    void listMerchantPaymentsByState_whenStateInvalid_shouldReturn400() throws Exception {
         MvcResult result = mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAYMENT_STATE"))
@@ -133,7 +134,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPayments_invalidToken_returns400() throws Exception {
+    void listMerchantPayments_whenNextTokenInvalid_shouldReturn400() throws Exception {
         MvcResult result = mockMvc.perform(get("/api/v1/merchants/merch_1/payments?nextToken=bad-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"))
@@ -144,7 +145,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void listMerchantPaymentsByState_invalidToken_returns400() throws Exception {
+    void listMerchantPaymentsByState_whenNextTokenInvalid_shouldReturn400() throws Exception {
         MvcResult result = mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=bad-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"))
@@ -155,11 +156,12 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     /**
-     * Creates one outbound payment for {@code merch_1} and returns its logical payment id.
+     * Creates an outbound payment for {@code merch_1} and returns its payment id.
      *
-     * @param debtorAccountId seeded account to debit
-     * @param amount          positive amount in USD minor units (integer dollars in sample requests)
-     * @return server-issued payment id ({@code pay_}{@link UUID})
+     * @param debtorAccountId seeded debtor account id
+     * @param amount payment amount in USD
+     * @return created payment id from the response body
+     * @throws Exception when the HTTP request fails or returns a non-201 status
      */
     protected String createOutboundPaymentForMerchant(String debtorAccountId, int amount) throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
@@ -187,16 +189,22 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
         return paymentId;
     }
 
+    /**
+     * Drives synchronous payment processing for merchant smoke scenarios.
+     *
+     * @param paymentId payment id to process
+     * @throws Exception when the HTTP request fails or returns a non-200 status
+     */
     protected void processPayment(String paymentId) throws Exception {
         mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk());
     }
 
     /**
-     * Asserts the merchant list JSON page contains a row with the given {@code paymentId}.
+     * Asserts a merchant list JSON body contains a row with the given payment id.
      *
-     * @param listJson  {@code GET} merchant payments response body
-     * @param paymentId id to match
+     * @param listJson merchant list response body
+     * @param paymentId payment id expected in {@code $.items}
      */
     private static void assertListContainsPaymentId(String listJson, String paymentId) {
         List<Map<String, Object>> rows = JsonPathSupport.read(listJson, "$.items");
@@ -206,8 +214,11 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     }
 
     /**
-     * Asserts the row for {@code paymentId} carries fields projected from {@code GSI_MERCHANT_STATE_PAYMENTS}
-     * (INCLUDE non-keys), so smoke fails if the index projection drifts from the merchant list DTO.
+     * Asserts a state-filtered merchant list row includes GSI-projected amount and timestamp fields.
+     *
+     * @param listJson merchant state list response body
+     * @param paymentId payment id of the row to inspect
+     * @param amountUsd expected amount from the create request
      */
     private static void assertStateListRowIncludesProjectionFromGsi(String listJson, String paymentId, int amountUsd) {
         List<Map<String, Object>> rows = JsonPathSupport.read(listJson, "$.items");

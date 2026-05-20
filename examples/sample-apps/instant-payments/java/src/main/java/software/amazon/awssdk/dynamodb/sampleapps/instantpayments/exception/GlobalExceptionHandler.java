@@ -7,18 +7,22 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.ErrorResponse;
 
 /**
- * Centralized exception handler that maps domain exceptions to HTTP error responses.
+ * Centralized exception handler that maps domain and common web-layer failures to HTTP error
+ * responses using {@link ErrorResponse}.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
      * {@link PaymentNotFoundException} → HTTP 404 with {@code PAYMENT_NOT_FOUND}.
@@ -28,7 +32,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(PaymentNotFoundException.class)
     public ResponseEntity<ErrorResponse> handlePaymentNotFound(PaymentNotFoundException ex) {
-        log.warn("Payment not found: {}", ex.getPaymentId());
+        logger.warn("Payment not found: paymentId={}", ex.getPaymentId());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorResponse("PAYMENT_NOT_FOUND", ex.getMessage(), Instant.now()));
     }
@@ -41,7 +45,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(AccountNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleAccountNotFound(AccountNotFoundException ex) {
-        log.warn("Account not found: {}", ex.getAccountId());
+        logger.warn("Account not found: accountId={}", ex.getAccountId());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorResponse("ACCOUNT_NOT_FOUND", ex.getMessage(), Instant.now()));
     }
@@ -54,7 +58,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(IdempotencyConflictException.class)
     public ResponseEntity<ErrorResponse> handleIdempotencyConflict(IdempotencyConflictException ex) {
-        log.warn("Idempotency conflict: {}", ex.getMessage());
+        logger.warn("Idempotency conflict: idempotencyKey={}", ex.getIdempotencyKey());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(new ErrorResponse("IDEMPOTENCY_CONFLICT", ex.getMessage(), Instant.now()));
     }
@@ -67,7 +71,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(InvalidPaymentStateException.class)
     public ResponseEntity<ErrorResponse> handleInvalidPaymentState(InvalidPaymentStateException ex) {
-        log.warn("Invalid payment state: {}", ex.getInvalidState());
+        logger.warn("Invalid payment state: state={}", ex.getInvalidState());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse("INVALID_PAYMENT_STATE", ex.getMessage(), Instant.now()));
     }
@@ -80,7 +84,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(InvalidPaginationTokenException.class)
     public ResponseEntity<ErrorResponse> handleInvalidPaginationToken(InvalidPaginationTokenException ex) {
-        log.warn("Invalid pagination token supplied");
+        logger.warn("Invalid pagination token supplied");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse("INVALID_PAGINATION_TOKEN", ex.getMessage(), Instant.now()));
     }
@@ -95,7 +99,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidBatchGetReservationsRequestException.class)
     public ResponseEntity<ErrorResponse> handleInvalidBatchGetReservationsRequest(
             InvalidBatchGetReservationsRequestException ex) {
-        log.warn("Invalid batch-get reservations request: {}", ex.getMessage());
+        logger.warn("Invalid batch-get reservations request: reason={}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse("INVALID_BATCH_GET_RESERVATIONS_REQUEST", ex.getMessage(), Instant.now()));
     }
@@ -111,9 +115,56 @@ public class GlobalExceptionHandler {
         String message = ex.getBindingResult().getFieldErrors().stream()
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .collect(Collectors.joining(", "));
-        log.warn("Validation error: {}", message);
+        logger.warn("Validation error: details={}", message);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse("VALIDATION_ERROR", message, Instant.now()));
+    }
+
+    /**
+     * Malformed JSON or incompatible request body → HTTP 400 {@code VALIDATION_ERROR}.
+     *
+     * @param ex message conversion could not deserialize the body
+     * @return error envelope matching other client error responses
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleUnreadableHttpMessage(HttpMessageNotReadableException ex) {
+        logger.warn("Unreadable HTTP request body: reason={}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("VALIDATION_ERROR", "Request body is not valid JSON", Instant.now()));
+    }
+
+    /**
+     * Query or path variable type mismatch (for example non-numeric {@code limit}) → HTTP 400
+     * {@code VALIDATION_ERROR}.
+     *
+     * @param ex binding failed for a single request value
+     * @return error envelope with parameter name and rejected value
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String valuePart = ex.getValue() != null ? String.valueOf(ex.getValue()) : "null";
+        String message = "Invalid value for '%s': %s".formatted(ex.getName(), valuePart);
+        logger.warn("Request parameter type mismatch: details={}", message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("VALIDATION_ERROR", message, Instant.now()));
+    }
+
+    /**
+     * Browsers request {@code /favicon.ico} even when the app does not ship a favicon. Without this
+     * handler, the static-resource handler throws and pollutes logs. Returns HTTP 204 for that path only.
+     *
+     * @param ex resource path was not found under configured static locations
+     * @return empty 204 for favicon, otherwise HTTP 404 with {@link ErrorResponse}
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<?> handleNoResourceFound(NoResourceFoundException ex) {
+        String path = ex.getResourcePath();
+        if (path != null && path.endsWith("favicon.ico")) {
+            return ResponseEntity.noContent().build();
+        }
+        logger.debug("Static resource not found: path={}", path);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("NOT_FOUND", "Resource not found", Instant.now()));
     }
 
     /**
@@ -124,7 +175,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnexpectedException(Exception ex) {
-        log.error("Unexpected error: {}", ex.getMessage(), ex);
+        logger.error("Unexpected server error", ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponse("INTERNAL_ERROR", "An unexpected error occurred", Instant.now()));
     }

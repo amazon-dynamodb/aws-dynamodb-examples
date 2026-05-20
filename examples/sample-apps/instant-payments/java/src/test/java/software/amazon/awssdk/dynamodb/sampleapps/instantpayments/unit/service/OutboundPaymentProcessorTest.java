@@ -47,15 +47,17 @@ public class OutboundPaymentProcessorTest {
     private PaymentRepository paymentRepository;
 
     private OutboundPaymentProcessor processor;
+
     private final PaymentEventReplayer replayer = new PaymentEventReplayer();
 
+    /** Constructs the processor with repository and replayer collaborators. */
     @BeforeEach
     void setUp() {
         processor = new OutboundPaymentProcessor(paymentRepository, replayer);
     }
 
     @Test
-    void processPayment_happyPath_shouldReserveAndComplete() {
+    void processPayment_whenHappyPath_shouldReserveAndComplete() {
         Payment payment = buildPayment("pay_1", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
         Account accountAfterReserve = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
@@ -87,7 +89,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_accountNotFound_shouldReject() {
+    void processPayment_whenAccountNotFound_shouldReject() {
         Payment payment = buildPayment("pay_2", "acc_unknown", new BigDecimal("100"), PaymentState.RECEIVED, 1);
 
         when(paymentRepository.queryPaymentPartition("pay_2"))
@@ -106,7 +108,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_insufficientFunds_shouldReject() {
+    void processPayment_whenInsufficientFunds_shouldReject() {
         Payment payment = buildPayment("pay_3", "acc_usd_1", new BigDecimal("50000"), PaymentState.RECEIVED, 1);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
 
@@ -126,7 +128,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_alreadyCompleted_shouldBeNoOp() {
+    void processPayment_whenAlreadyCompleted_shouldBeNoOp() {
         Payment payment = buildPayment("pay_4", "acc_usd_1", new BigDecimal("100"), PaymentState.COMPLETED, 3);
 
         when(paymentRepository.queryPaymentPartition("pay_4"))
@@ -141,7 +143,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_alreadyRejected_shouldBeNoOp() {
+    void processPayment_whenAlreadyRejected_shouldBeNoOp() {
         Payment payment = buildPayment("pay_5", "acc_usd_1", new BigDecimal("100"), PaymentState.REJECTED, 2);
 
         when(paymentRepository.queryPaymentPartition("pay_5"))
@@ -156,7 +158,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_fundsReserved_shouldResumeToComplete() {
+    void processPayment_whenFundsReserved_shouldResumeToComplete() {
         Payment payment = buildPayment("pay_6", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
 
@@ -179,7 +181,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_notFound_shouldThrow() {
+    void processPayment_whenPaymentNotFound_shouldThrow() {
         when(paymentRepository.queryPaymentPartition("pay_unknown"))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -189,7 +191,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_reserveConflict_paymentAlreadyCompleted_shouldBeNoOp() {
+    void processPayment_whenReserveConflictAndPaymentAlreadyCompleted_shouldBeNoOp() {
         Payment received = buildPayment("pay_7", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
         Payment completedPayment = buildPayment("pay_7", "acc_usd_1", new BigDecimal("100"), PaymentState.COMPLETED, 3);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
@@ -210,7 +212,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_reserveConflict_reReadFundsReserved_shouldComplete() {
+    void processPayment_whenReserveConflictAndReReadFundsReserved_shouldComplete() {
         Payment received = buildPayment("pay_8", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
         Payment fundsReserved = buildPayment("pay_8", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
@@ -236,7 +238,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_completeConflict_shouldSwallowConditionalFailure() {
+    void processPayment_whenCompleteConflict_shouldSwallowConditionalFailure() {
         Payment payment = buildPayment("pay_9", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
 
@@ -254,7 +256,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_completeConflictOnAccountVersion_shouldAlsoSwallowConditionalFailure() {
+    void processPayment_whenCompleteConflictOnAccountVersion_shouldAlsoSwallowConditionalFailure() {
         Payment payment = buildPayment("pay_9b", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
 
@@ -272,7 +274,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_rejectConflict_shouldSwallowConditionalFailure() {
+    void processPayment_whenRejectConflict_shouldSwallowConditionalFailure() {
         Payment payment = buildPayment("pay_10", "acc_unknown", new BigDecimal("100"), PaymentState.RECEIVED, 1);
 
         when(paymentRepository.queryPaymentPartition("pay_10"))
@@ -289,7 +291,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_reserveConflict_unexpectedState_shouldNotComplete() {
+    void processPayment_whenReserveConflictAndUnexpectedState_shouldNotComplete() {
         Payment received = buildPayment("pay_11", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
 
@@ -307,7 +309,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_reserveNonConditionalFailure_shouldThrow() {
+    void processPayment_whenReserveNonConditionalFailure_shouldThrow() {
         Payment payment = buildPayment("pay_12", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
 
@@ -324,7 +326,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_completeNonConditionalFailure_shouldThrow() {
+    void processPayment_whenCompleteNonConditionalFailure_shouldThrow() {
         Payment payment = buildPayment("pay_13", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
 
@@ -341,7 +343,7 @@ public class OutboundPaymentProcessorTest {
     }
 
     @Test
-    void processPayment_rejectNonConditionalFailure_shouldThrow() {
+    void processPayment_whenRejectNonConditionalFailure_shouldThrow() {
         Payment payment = buildPayment("pay_14", "acc_unknown", new BigDecimal("100"), PaymentState.RECEIVED, 1);
 
         when(paymentRepository.queryPaymentPartition("pay_14"))
@@ -357,6 +359,10 @@ public class OutboundPaymentProcessorTest {
                 .hasMessageContaining("Reject transaction failed");
     }
 
+    /**
+     * Builds a {@link TransactionCanceledException} with a conditional check failure at the given
+     * cancellation reason index.
+     */
     private static TransactionCanceledException cancellationFailedAtIndex(int failedIndex, int size) {
         List<CancellationReason> reasons = new ArrayList<>();
         for (int i = 0; i < size; i++) {
@@ -370,6 +376,7 @@ public class OutboundPaymentProcessorTest {
                 .build();
     }
 
+    /** Builds a folded {@link Payment} aggregate in the requested state and version. */
     private Payment buildPayment(String paymentId, String debtorAccountId, BigDecimal amount, PaymentState state, int version) {
         Instant createdAt = Instant.parse("2024-01-15T10:00:00Z");
         Payment p = new Payment();
@@ -393,6 +400,7 @@ public class OutboundPaymentProcessorTest {
         return p;
     }
 
+    /** Copies {@code template} and overrides state and version for successive query stubs. */
     private static Payment adjustPaymentState(Payment template, PaymentState state, int version) {
         Payment p = new Payment();
         p.setPaymentKey(template.getPaymentKey());
@@ -412,6 +420,7 @@ public class OutboundPaymentProcessorTest {
         return p;
     }
 
+    /** Partition stub with stream head and a single OUTBOUND_PAYMENT_CREATED event. */
     private PaymentPartitionQueryResult createdOnlyPartition(Payment foldedFromReplay) {
         String paymentId = foldedFromReplay.getPaymentId();
         Instant t = foldedFromReplay.getCreatedAtUtc();
@@ -420,6 +429,7 @@ public class OutboundPaymentProcessorTest {
         return new PaymentPartitionQueryResult(head, List.of(e1));
     }
 
+    /** Partition stub after funds reservation with matching head and two events. */
     private PaymentPartitionQueryResult fundsReservedPartition(Payment folded) {
         String paymentId = folded.getPaymentId();
         Instant t0 = folded.getCreatedAtUtc();
@@ -437,6 +447,7 @@ public class OutboundPaymentProcessorTest {
         return new PaymentPartitionQueryResult(head, List.of(e1, e2));
     }
 
+    /** Partition stub for a completed payment with head and three events. */
     private PaymentPartitionQueryResult completedPartition(Payment folded) {
         String paymentId = folded.getPaymentId();
         Instant t0 = folded.getCreatedAtUtc();
@@ -456,6 +467,7 @@ public class OutboundPaymentProcessorTest {
         return new PaymentPartitionQueryResult(head, List.of(e1, e2, e3));
     }
 
+    /** Partition stub for a rejected payment with head and created plus rejected events. */
     private PaymentPartitionQueryResult rejectedPartition(Payment folded) {
         String paymentId = folded.getPaymentId();
         Instant t0 = folded.getCreatedAtUtc();
@@ -474,6 +486,7 @@ public class OutboundPaymentProcessorTest {
         return new PaymentPartitionQueryResult(head, List.of(e1, e2));
     }
 
+    /** Builds a stream head aligned with the given sequence, aggregate state, and timestamp. */
     private static PaymentStreamHead baseHead(String paymentId, long seq, String state, Instant updated) {
         PaymentStreamHead head = new PaymentStreamHead();
         head.setPaymentKey(Payment.KEY_PREFIX + paymentId);
@@ -491,6 +504,7 @@ public class OutboundPaymentProcessorTest {
         return head;
     }
 
+    /** Builds sequence-1 OUTBOUND_PAYMENT_CREATED event from a folded payment template. */
     private static PaymentEvent createdEvent(Payment folded, Instant t) {
         String paymentId = folded.getPaymentId();
         PaymentEvent e1 = new PaymentEvent();
@@ -512,6 +526,7 @@ public class OutboundPaymentProcessorTest {
         return e1;
     }
 
+    /** Builds sequence-2 FUNDS_RESERVED event for the given payment and timestamp. */
     private static PaymentEvent reserveEvent(Payment folded, Instant t) {
         String paymentId = folded.getPaymentId();
         PaymentEvent e2 = new PaymentEvent();
@@ -525,6 +540,7 @@ public class OutboundPaymentProcessorTest {
         return e2;
     }
 
+    /** Builds an active USD {@link Account} with the given balances and optimistic version. */
     private Account buildAccount(String accountId, BigDecimal currentBalance, BigDecimal availableBalance, int version) {
         String key = "ACCOUNT#" + accountId;
         Account a = new Account();

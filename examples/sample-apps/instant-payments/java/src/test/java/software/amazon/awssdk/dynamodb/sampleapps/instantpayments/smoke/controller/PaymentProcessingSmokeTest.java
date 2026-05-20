@@ -21,7 +21,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.ut
 public class PaymentProcessingSmokeTest extends AbstractIntegrationTest {
 
     @Test
-    void createAndProcess_shouldComplete() throws Exception {
+    void processPayment_whenCreatedAndProcessed_shouldComplete() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = """
                 {
@@ -55,7 +55,7 @@ public class PaymentProcessingSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void createAndProcess_insufficientFunds_shouldReject() throws Exception {
+    void processPayment_whenInsufficientFunds_shouldReject() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = """
                 {

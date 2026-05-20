@@ -22,7 +22,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.ut
 public class OutboundPaymentSmokeTest extends AbstractIntegrationTest {
 
     @Test
-    void createOutboundPayment_smokeTest() throws Exception {
+    void createOutboundPayment_whenValidRequest_shouldReturn201() throws Exception {
         String requestBody = """
                 {
                   "idempotencyKey": "%s",
@@ -47,12 +47,8 @@ public class OutboundPaymentSmokeTest extends AbstractIntegrationTest {
         JsonPathSupport.readInstantAssertingPlausibleNow(body, "$.createdAtUtc");
     }
 
-    /**
-     * {@code GET /api/v1/payments/outbound/{paymentId}} returns aggregate + events.
-     * Assertions allow DynamoDB Streams to have already advanced the payment past {@code RECEIVED}.
-     */
     @Test
-    void getOutboundPayment_afterCreate_smokeTest() throws Exception {
+    void getOutboundPayment_whenPaymentCreated_shouldReturnAggregate() throws Exception {
         String requestBody = """
                 {
                   "idempotencyKey": "%s",

@@ -48,14 +48,14 @@ import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
 /**
  * High-level {@link PaymentRepository} implementation using {@link DynamoDbEnhancedAsyncClient}.
  *
- * <p>Most DynamoDB operations go through the enhanced async client - typed tables for queries and
+ * <p>Most DynamoDB operations go through the enhanced async client: typed tables for queries and
  * gets, {@link TransactWriteItemsEnhancedRequest} for transactional writes. Batch reservation reads
  * ({@link #batchGetReservations}) use {@code BatchGetItem} on the underlying
  * {@link DynamoDbAsyncClient} from {@link DynamoDbEnhancedAsyncClient#dynamoDbAsyncClient()} so the
  * call shape stays {@code CompletableFuture}-based.
  *
  * <p>Merchant GSI queries ({@link #queryMerchantPayments}, {@link #queryMerchantPaymentsByState})
- * use {@link DynamoDbAsyncIndex} with {@link QueryEnhancedRequest#limit()}; only the first result
+ * use {@link DynamoDbAsyncIndex} with {@link QueryEnhancedRequest#limit()}. Only the first result
  * page is collected so the HTTP {@code limit} parameter is honored and continuation state is returned
  * as an opaque API token (see {@link #collectFirstQueryPage}).
  * Multi-attribute partition keys for {@link PaymentStreamHead#GSI_MERCHANT_STATE_PAYMENTS} are built
@@ -65,8 +65,7 @@ import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
 @ConditionalOnProperty(name = "dynamodb.client-type", havingValue = "high-level")
 public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
 
-    /** Logger for this repository. */
-    private static final Logger log = LoggerFactory.getLogger(HighLevelDynamoDbPaymentRepository.class);
+    private static final Logger logger = LoggerFactory.getLogger(HighLevelDynamoDbPaymentRepository.class);
 
     /** Enhanced async client for typed table and transaction APIs. */
     private final DynamoDbEnhancedAsyncClient enhancedClient;
@@ -123,9 +122,10 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         this.ledgerTable = enhancedClient.table(tableName, TableSchema.fromBean(LedgerEntry.class));
         this.merchantPaymentsIndex = streamHeadTable.index(PaymentStreamHead.GSI_MERCHANT_PAYMENTS);
         this.merchantStatePaymentsIndex = streamHeadTable.index(PaymentStreamHead.GSI_MERCHANT_STATE_PAYMENTS);
-        log.info("Initialized high-level DynamoDB payment repository for table '{}'", this.tableName);
+        logger.info("Initialized high-level DynamoDB payment repository: tableName={}", this.tableName);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> createPaymentTransaction(PaymentStreamHead streamHead,
                                                             PaymentEvent firstEvent,
@@ -147,6 +147,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         return enhancedClient.transactWriteItems(request);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<IdempotencyRecord> getIdempotencyRecord(String idempotencyKey) {
         String partitionKey = IdempotencyRecord.KEY_PREFIX + idempotencyKey;
@@ -158,6 +159,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         return idempotencyTable.getItem(r -> r.key(key).consistentRead(true));
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<PaymentPartitionQueryResult> queryPaymentPartition(String paymentId) {
         String pk = Payment.KEY_PREFIX + paymentId;
@@ -180,6 +182,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         });
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Account> getAccount(String accountId) {
         String keyValue = Account.KEY_PREFIX + accountId;
@@ -191,6 +194,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         return accountTable.getItem(r -> r.key(key));
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<AccountPartitionQueryResult> queryAccountPartition(String accountId) {
         String pk = Account.KEY_PREFIX + accountId;
@@ -217,10 +221,10 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
      * {@inheritDoc}
      *
      * <p>Uses {@link DynamoDbAsyncClient#batchGetItem} with keys from
-     * {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.ReservationBatchGetItemHelper}
+     * {@link ReservationBatchGetItemHelper}
      * (same layout as the low-level repository), then maps rows through {@link Reservation} metadata on
-     * {@link #reservationTable}. Callers normally provide the service-layer validated identifier list;
-     * this implementation keeps a small defensive deduplication/empty-input guard so repository behavior
+     * {@link #reservationTable}. Callers normally provide the service-layer validated identifier list.
+     * This implementation keeps a small defensive deduplication/empty-input guard so repository behavior
      * remains stable if reused elsewhere.
      */
     @Override
@@ -239,7 +243,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
                         requestItems,
                         request -> dynamoDbAsyncClient.batchGetItem(request),
                         this::mergeReservationBatchGetResponse,
-                        log)
+                        logger)
                 .thenApply(reservationsByReservationId -> BatchGetItemHelper.toOrderedBatchGetResult(
                         distinctReservationIds,
                         reservationsByReservationId,
@@ -258,6 +262,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
                 reservationTable.tableSchema()::mapToItem);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> reserveFundsTransaction(PaymentStreamHead streamHead,
                                                            Account account,
@@ -280,6 +285,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         return enhancedClient.transactWriteItems(request);
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> completeFundsTransaction(PaymentStreamHead streamHead,
                                                             Account account,
@@ -346,9 +352,9 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
     /**
      * {@inheritDoc}
      *
-     * <p>Queries {@link PaymentStreamHead#GSI_MERCHANT_STATE_PAYMENTS}; the composite partition key uses
-     * {@code merchantId} and {@code state} via two {@link Key.Builder#addPartitionValue(Object)} calls;
-     * the index sort key is {@code createdAtUtc}; traversal order is set via {@code scanIndexForward}.
+     * <p>Queries {@link PaymentStreamHead#GSI_MERCHANT_STATE_PAYMENTS}. The composite partition key uses
+     * {@code merchantId} and {@code state} via two {@link Key.Builder#addPartitionValue(Object)} calls.
+     * The index sort key is {@code createdAtUtc}. Traversal order is set via {@code scanIndexForward}.
      */
     @Override
     public CompletableFuture<MerchantPaymentQueryResult> queryMerchantPaymentsByState(String merchantId,
@@ -379,6 +385,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
                         PaginationTokenCodec.encode(page.lastEvaluatedKey())));
     }
 
+    /** {@inheritDoc} */
     @Override
     public CompletableFuture<Void> rejectPaymentTransaction(PaymentStreamHead streamHead,
                                                             PaymentEvent event,
@@ -403,14 +410,16 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
      * <p>{@link #collectQueryItems} requests unbounded pages and would return every item in the
      * partition regardless of {@code limit}.
      *
-     * @param pages publisher of result pages returned by {@link software.amazon.awssdk.enhanced.dynamodb.DynamoDbAsyncIndex#query}
+     * @param pages publisher of result pages returned by {@link DynamoDbAsyncIndex#query}
      * @return future completing with the first page only
      */
     private <T> CompletableFuture<Page<T>> collectFirstQueryPage(SdkPublisher<Page<T>> pages) {
         List<T> items = new ArrayList<>();
         CompletableFuture<Page<T>> future = new CompletableFuture<>();
         pages.subscribe(new Subscriber<>() {
+            /** Reactive Streams subscription used to request one page and cancel after it arrives. */
             private Subscription subscription;
+            /** DynamoDB {@code LastEvaluatedKey} from the first page for pagination token encoding. */
             private Map<String, AttributeValue> lastEvaluatedKey = Map.of();
 
             /**
@@ -563,7 +572,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
     }
 
     /**
-     * Decrements available balance for reserve; requires sufficient funds while enhanced-client versioning guards
+     * Decrements available balance for reserve. Requires sufficient funds while enhanced-client versioning guards
      * the optimistic {@code version} transition.
      */
     private TransactUpdateItemEnhancedRequest<Account> buildAccountDecrementAvailable(Account account,
@@ -588,7 +597,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
     }
 
     /**
-     * Decrements posted {@code currentBalance} on completion; enhanced-client versioning guards the optimistic
+     * Decrements posted {@code currentBalance} on completion. Enhanced-client versioning guards the optimistic
      * {@code version} transition.
      */
     private TransactUpdateItemEnhancedRequest<Account> buildAccountDecrementCurrent(Account account,

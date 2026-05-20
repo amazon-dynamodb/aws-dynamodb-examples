@@ -14,14 +14,15 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.ResultActions;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.SeedAccountsData;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.AbstractIntegrationTest;
 
 /**
  * Smoke tests for account query endpoints - verifies the endpoints return balances and
- * metadata that match {@link software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.SeedAccountsData}.
+ * metadata that match {@link SeedAccountsData}.
  *
- * <p>Streams are disabled so {@code POST .../process} is the only driver of payment lifecycle here;
- * otherwise the stream listener races manual processing and can surface as HTTP 500 from the
+ * <p>Streams are disabled so {@code POST .../process} is the only driver of payment lifecycle here.
+ * Otherwise the stream listener races manual processing and can surface as HTTP 500 from the
  * process endpoint (see {@link AbstractIntegrationTest}). {@link TestPropertySource} and
  * {@link DynamicPropertySource} both pin {@code dynamodb.streams.enabled=false} so the flag is
  * bound reliably for this context (same idea as low-level tests overriding {@code client-type}).
@@ -31,10 +32,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.Ab
 public class AccountSmokeTest extends AbstractIntegrationTest {
 
     /**
-     * Ensures the DynamoDB Streams poller bean stays off for this class even if test property merging
-     * order differs across Spring versions.
+     * Ensures DynamoDB Streams stay disabled for account smoke tests via dynamic properties.
      *
-     * @param registry test property registry merged after {@link AbstractIntegrationTest} defaults
+     * @param registry dynamic property registry for the test context
      */
     @DynamicPropertySource
     static void accountSmokeDisableDynamoDbStreams(DynamicPropertyRegistry registry) {
@@ -42,7 +42,7 @@ public class AccountSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getAccount_seeded_smokeTest() throws Exception {
+    void getAccount_whenSeededAccount_shouldReturnBalances() throws Exception {
         mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value("acc_usd_1"))
@@ -55,7 +55,7 @@ public class AccountSmokeTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void batchGetReservations_afterPaymentFlow_smokeTest() throws Exception {
+    void batchGetReservations_whenPaymentFlowCompleted_shouldReturnReservation() throws Exception {
         List<String> paymentIds = List.of(
                 createPayment("acc_usd_1", "10", "Smoke Test"),
                 createPayment("acc_usd_1", "20", "Smoke Test"),

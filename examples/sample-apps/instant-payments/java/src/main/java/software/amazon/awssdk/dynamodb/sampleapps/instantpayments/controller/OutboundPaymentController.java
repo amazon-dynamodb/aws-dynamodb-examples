@@ -34,9 +34,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Outbou
  *
  * <p>Exposes:
  * <ul>
- *   <li>{@code POST /api/v1/payments/outbound} — create payments with idempotency</li>
- *   <li>{@code GET /api/v1/payments/outbound/{paymentId}} — read aggregate and event history</li>
- *   <li>{@code POST /api/v1/payments/outbound/{paymentId}/process} — optional manual trigger;
+ *   <li>{@code POST /api/v1/payments/outbound}: create payments with idempotency</li>
+ *   <li>{@code GET /api/v1/payments/outbound/{paymentId}}: read aggregate and event history</li>
+ *   <li>{@code POST /api/v1/payments/outbound/{paymentId}/process}: optional manual trigger.
  *       after create, processing may also start from DynamoDB Streams on {@code INSERT} of the
  *       {@code OUTBOUND_PAYMENT_CREATED} event. Use for operations or to simulate duplicate downstream
  *       invocations (same idempotency semantics as an at-least-once consumer). See {@link OutboundPaymentProcessor}.</li>
@@ -47,11 +47,15 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Outbou
 @Tag(name = "Outbound Payments", description = "Create and manage outbound payments with idempotency guarantees")
 public class OutboundPaymentController {
 
-    private static final Logger log = LoggerFactory.getLogger(OutboundPaymentController.class);
+    private static final Logger logger = LoggerFactory.getLogger(OutboundPaymentController.class);
 
+    /** Idempotent create flow for outbound payments. */
     private final OutboundPaymentService paymentService;
+    /** Read model for GET outbound payment. */
     private final OutboundPaymentQueryService paymentQueryService;
+    /** Validate, reserve, and complete lifecycle processor. */
     private final OutboundPaymentProcessor paymentProcessor;
+    /** Maps domain models to API DTOs. */
     private final PaymentMapper paymentMapper;
 
     /**
@@ -85,17 +89,16 @@ public class OutboundPaymentController {
             description = """
                     Atomically creates PAYMENT_STREAM_HEAD, the first PAYMENT_EVENT, and an IDEMPOTENCY record \
                     using DynamoDB TransactWriteItems. Only the IDEMPOTENCY put is conditional \
-                    (attribute_not_exists on that key); the idempotency key prevents duplicate \
-                    payments under retries: same key + same payload returns the stored response \
-                    (200 OK); same key + different payload returns 409 Conflict.""")
+                    (attribute_not_exists on that key). The idempotency key prevents duplicate \
+                    payments under retries.""")
     @ApiResponse(responseCode = "201", description = "Payment created",
             content = @Content(schema = @Schema(implementation = CreateOutboundPaymentResponse.class)))
-    @ApiResponse(responseCode = "200", description = "Idempotent retry — returning stored response",
+    @ApiResponse(responseCode = "200", description = "Idempotent retry, returning stored response",
             content = @Content(schema = @Schema(implementation = CreateOutboundPaymentResponse.class)))
     @ApiResponse(responseCode = "409", description = "Idempotency key reused with different payload",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error — missing or invalid fields",
+    @ApiResponse(responseCode = "400", description = "Validation error for missing or invalid fields",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @ApiResponse(responseCode = "500", description = "Internal server error",
@@ -104,7 +107,7 @@ public class OutboundPaymentController {
     @PostMapping
     public ResponseEntity<CreateOutboundPaymentResponse> createOutboundPayment(
             @Valid @RequestBody CreateOutboundPaymentRequest request) {
-        log.debug("Received outbound payment request: idempotencyKey={}", request.idempotencyKey());
+        logger.debug("Received outbound payment request: idempotencyKey={}", request.idempotencyKey());
 
         PaymentCreationResult result = paymentService.createOutboundPayment(request);
 
@@ -135,7 +138,7 @@ public class OutboundPaymentController {
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/{paymentId}")
     public ResponseEntity<GetOutboundPaymentResponse> getOutboundPayment(@PathVariable String paymentId) {
-        log.debug("Get outbound payment: paymentId={}", paymentId);
+        logger.debug("Get outbound payment: paymentId={}", paymentId);
         GetOutboundPaymentResponse body = paymentQueryService.getOutboundPayment(paymentId);
         return ResponseEntity.ok(body);
     }
@@ -144,10 +147,10 @@ public class OutboundPaymentController {
      * Manually triggers processing of an outbound payment.
      *
      * <p>Runs the full validate → reserve → complete/reject lifecycle synchronously.
-     * Safe to call multiple times (idempotent) — if the payment is already in a
+     * Safe to call multiple times (idempotent). If the payment is already in a
      * terminal state, processing is skipped. Duplicate calls are a deliberate way to
-     * exercise the same guarantees as duplicate asynchronous invocations or stream redelivery;
-     * see {@link OutboundPaymentProcessor}.
+     * exercise the same guarantees as duplicate asynchronous invocations or stream redelivery.
+     * See {@link OutboundPaymentProcessor}.
      *
      * @param paymentId the payment to process
      * @return the payment's state after processing
@@ -156,8 +159,8 @@ public class OutboundPaymentController {
             summary = "Process outbound payment (manual trigger)",
             description = """
                     Triggers the payment processing lifecycle: validate debtor account, \
-                    reserve funds, and complete or reject. This endpoint is idempotent — \
-                    calling it on an already-processed payment returns the current state.""")
+                    reserve funds, and complete or reject. This endpoint is idempotent. \
+                    Calling it on an already-processed payment returns the current state.""")
     @ApiResponse(responseCode = "200", description = "Payment processed",
             content = @Content(schema = @Schema(implementation = ProcessPaymentResponse.class)))
     @ApiResponse(responseCode = "404", description = "Payment not found",
@@ -168,7 +171,7 @@ public class OutboundPaymentController {
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping("/{paymentId}/process")
     public ResponseEntity<ProcessPaymentResponse> processPayment(@PathVariable String paymentId) {
-        log.info("Manual trigger: processing payment {}", paymentId);
+        logger.info("Manual outbound payment processing triggered: paymentId={}", paymentId);
 
         paymentProcessor.processPayment(paymentId);
 

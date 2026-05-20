@@ -48,7 +48,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
     private String tableName;
 
     @Test
-    void createPayment_shouldReturn201AndStoreItems() throws Exception {
+    void createOutboundPayment_whenValidRequest_shouldReturn201AndStoreItems() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = createRequestBody(idempotencyKey, "acc_usd_1", "100");
 
@@ -111,11 +111,8 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
         assertThat(ttlDesc.timeToLiveDescription().attributeName()).isEqualTo("ttl");
     }
 
-    /**
-     * Legacy rows may still carry transition attributes from older code; readers must ignore them.
-     */
     @Test
-    void getOutboundPayment_afterLegacyTransitionAttributesOnEvent_stillReplaysCorrectly() throws Exception {
+    void getOutboundPayment_whenLegacyTransitionAttributesOnEvent_shouldReplayCorrectly() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = createRequestBody(idempotencyKey, "acc_usd_1", "50");
 
@@ -146,7 +143,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void sameIdempotencyKey_samePayload_shouldReturn200WithSamePaymentId() throws Exception {
+    void createOutboundPayment_whenSameIdempotencyKeyAndPayload_shouldReturn200WithSamePaymentId() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = createRequestBody(idempotencyKey, "acc_usd_2", "200");
 
@@ -170,7 +167,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void sameIdempotencyKey_differentPayload_shouldReturn409() throws Exception {
+    void createOutboundPayment_whenSameIdempotencyKeyAndDifferentPayload_shouldReturn409() throws Exception {
         String idempotencyKey = UUID.randomUUID().toString();
 
         String firstRequest = createRequestBody(idempotencyKey, "acc_usd_1", "100");
@@ -188,7 +185,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void missingRequiredFields_shouldReturn400() throws Exception {
+    void createOutboundPayment_whenRequiredFieldsMissing_shouldReturn400() throws Exception {
         String requestBody = """
                 {"idempotencyKey": "key-1", "merchantId": "merch_1"}""";
 
@@ -199,6 +196,14 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
     }
 
+    /**
+     * Builds a JSON body for {@code POST /api/v1/payments/outbound}.
+     *
+     * @param idempotencyKey idempotency key for the request
+     * @param debtorAccountId debtor account id
+     * @param amount payment amount as a numeric string
+     * @return formatted JSON request body
+     */
     private String createRequestBody(String idempotencyKey, String debtorAccountId, String amount) {
         return """
                 {

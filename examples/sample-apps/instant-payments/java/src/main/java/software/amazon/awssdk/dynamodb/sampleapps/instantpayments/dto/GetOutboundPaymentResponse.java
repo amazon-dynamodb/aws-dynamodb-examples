@@ -4,9 +4,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
+
 /**
- * Read model for an outbound payment: scalar fields from {@linkplain
- * software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer replay}
+ * Read model for an outbound payment: scalar fields from {@link PaymentEventReplayer replay}
  * of the event stream plus ordered history.
  *
  * @param paymentId        server-issued id

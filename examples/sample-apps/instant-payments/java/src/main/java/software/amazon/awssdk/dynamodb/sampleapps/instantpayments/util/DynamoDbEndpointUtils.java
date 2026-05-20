@@ -6,12 +6,12 @@ import java.net.URI;
  * Utility for detecting whether a DynamoDB endpoint URL refers to a local instance
  * (e.g. DynamoDB Local) versus real AWS DynamoDB.
  *
- * <p>Used to decide credential and initialization behaviour: local endpoints use
- * fake credentials and may run table creation; AWS endpoints use the default credential chain.
+ * <p>Used to decide credential and initialization behavior. Local endpoints use
+ * fake credentials and may run table creation. AWS endpoints use the default credential chain.
  */
 public final class DynamoDbEndpointUtils {
 
-    /** Utility class; not instantiated. */
+    /** Utility class, not instantiated. */
     private DynamoDbEndpointUtils() {
     }
 
