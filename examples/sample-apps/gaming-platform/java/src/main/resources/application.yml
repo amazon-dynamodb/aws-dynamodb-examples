@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gaming-platform
+
+dynamodb:
+  endpoint: http://localhost:8000
+  region: eu-west-1
+  client-type: high-level
+  player-state-table-name: GamingPlayerState
+  game-events-table-name: GamingGameEvents
+  leaderboard-table-name: GamingLeaderboard
+  game-events-ttl-seconds: 7776000
+  streams:
+    iterator-type: LATEST
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
