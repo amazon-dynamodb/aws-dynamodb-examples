@@ -6,19 +6,22 @@ spring:
     name: gaming-platform
 
 dynamodb:
-  endpoint: http://localhost:8000
-  region: eu-west-1
-  client-type: high-level
+  endpoint: http://localhost:8000     # required: local or https://dynamodb.{region}.amazonaws.com
+  region: eu-west-1                   # required
+  client-type: high-level             # required: high-level | low-level
   player-state-table-name: GamingPlayerState
   game-events-table-name: GamingGameEvents
   leaderboard-table-name: GamingLeaderboard
   game-events-ttl-seconds: 7776000
   streams:
-    iterator-type: LATEST
+    iterator-type: LATEST             # optional: LATEST (default) | TRIM_HORIZON - sample tests use TRIM_HORIZON
 
 springdoc:
   api-docs:
     path: /api-docs
+  # springdoc-openapi defaults to */*; set application/json so /api-docs matches this JSON API.
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
