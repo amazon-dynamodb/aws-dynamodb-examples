@@ -1,0 +1,11 @@
+@DynamoDB.InstantPayments_HostAddress = http://localhost:5001
+
+GET {{DynamoDB.InstantPayments_HostAddress}}/todos/
+Accept: application/json
+
+###
+
+GET {{DynamoDB.InstantPayments_HostAddress}}/todos/1
+Accept: application/json
+
+###

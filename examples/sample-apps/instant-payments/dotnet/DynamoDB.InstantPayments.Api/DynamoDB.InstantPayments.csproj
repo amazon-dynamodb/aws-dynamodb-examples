@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PublishAot>false</PublishAot>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <DockerfileContext>.</DockerfileContext>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.0.1" />
+  </ItemGroup>
+
+  <!--<ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="DynamoDB.InstantPayments.Processor\**\*.cs" />
+    <Content Remove="DynamoDB.InstantPayments.Processor\**\*" />
+    <None Remove="DynamoDB.InstantPayments.Processor\**\*" />
+  </ItemGroup>-->
+
+  <ItemGroup>
+    <ProjectReference Include="..\DynamoDB.InstantPayments.Application\DynamoDB.InstantPayments.Application.csproj" />
+    <ProjectReference Include="..\DynamoDB.InstantPayments.Infrastructure\DynamoDB.InstantPayments.Infrastructure.csproj" />
+  </ItemGroup>
+  
+</Project>

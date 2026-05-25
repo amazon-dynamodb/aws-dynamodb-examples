@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+	<TargetFramework>net10.0</TargetFramework>
+	<Nullable>enable</Nullable>
+	<ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.18.1" />
+	<PackageReference Include="AWSSDK.DynamoDBStreams" Version="3.7.300.5" />
+	<PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="3.7.300" />
+	<PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
+	<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.8" />
+	<PackageReference Include="Microsoft.Extensions.Options" Version="10.0.8" />
+  </ItemGroup>
+</Project>

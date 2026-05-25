@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="DynamoDB.InstantPayments.Api\DynamoDB.InstantPayments.csproj" />
+  <Project Path="DynamoDB.InstantPayments.Application/DynamoDB.InstantPayments.Application.csproj" Id="d01cce03-ac52-4dcf-bf6b-59f16366818b" />
+  <Project Path="DynamoDB.InstantPayments.Infrastructure/DynamoDB.InstantPayments.Infrastructure.csproj" Id="a85d24d4-8e2f-4d5f-a076-e840bcb6c436" />
+  <Project Path="DynamoDB.InstantPayments.Processor\DynamoDB.InstantPayments.Processor.csproj" />
+</Solution>
