@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# build-app.sh — Builds the Gaming Platform sample application
+# build-app.sh - Builds the Gaming Platform sample application
 #
 # Usage:
 #   ./scripts/build-app.sh [--skip-tests]

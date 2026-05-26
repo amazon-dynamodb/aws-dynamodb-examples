@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class LobbySmokeTest extends AbstractSmokeTest {
 
     @Test
-    void shouldReturnLobbySummaries() throws Exception {
+    void getLobbySummaries_whenPlayersSeeded_shouldReturnSummaries() throws Exception {
         mockMvc.perform(post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -37,7 +37,7 @@ class LobbySmokeTest extends AbstractSmokeTest {
     }
 
     @Test
-    void shouldBrowseByPlatform() throws Exception {
+    void browseByPlatform_whenPlatformProvided_shouldReturnPlayers() throws Exception {
         mockMvc.perform(get("/api/v1/lobbies/platform/PC"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.platform").value("PC"))

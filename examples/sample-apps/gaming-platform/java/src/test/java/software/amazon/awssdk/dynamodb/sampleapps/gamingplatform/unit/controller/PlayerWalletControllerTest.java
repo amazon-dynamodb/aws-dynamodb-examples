@@ -43,7 +43,7 @@ class PlayerWalletControllerTest {
     private CurrencyRewardService currencyRewardService;
 
     @Test
-    void getWallet_whenWalletExists_returnsWalletSliceWithoutRootPlayerId() throws Exception {
+    void getWallet_whenWalletExists_shouldReturnWalletSliceWithoutRootPlayerId() throws Exception {
         when(walletService.getWallet("player-001"))
                 .thenReturn(new GetWalletResponse(new WalletSnapshot(1000L, 1L)));
 
@@ -55,7 +55,7 @@ class PlayerWalletControllerTest {
     }
 
     @Test
-    void getWallet_whenPlayerMissing_returns404() throws Exception {
+    void getWallet_whenPlayerMissing_shouldReturn404() throws Exception {
         when(walletService.getWallet("missing"))
                 .thenThrow(new PlayerNotFoundException("missing"));
 
@@ -65,7 +65,7 @@ class PlayerWalletControllerTest {
     }
 
     @Test
-    void earnCurrency_whenCompleted_returnsFullSnapshotWithOperationFields() throws Exception {
+    void earnCurrency_whenCompleted_shouldReturnFullSnapshotWithOperationFields() throws Exception {
         WalletEarnResponse response = new WalletEarnResponse(
                 "player-001",
                 new ProfileSnapshot("N", "PC", 1, 0, "2026-01-01T00:00:00Z", 1),
@@ -96,7 +96,7 @@ class PlayerWalletControllerTest {
     }
 
     @Test
-    void earnCurrency_whenDuplicateRequest_returnsIdempotentReplayStatus() throws Exception {
+    void earnCurrency_whenDuplicateRequest_shouldReturnIdempotentReplayStatus() throws Exception {
         WalletEarnResponse response = new WalletEarnResponse(
                 "player-001",
                 new ProfileSnapshot("N", "PC", 1, 0, "2026-01-01T00:00:00Z", 1),
@@ -122,7 +122,7 @@ class PlayerWalletControllerTest {
     }
 
     @Test
-    void earnCurrency_whenPlayerMissing_returns404() throws Exception {
+    void earnCurrency_whenPlayerMissing_shouldReturn404() throws Exception {
         when(currencyRewardService.grantCurrency(eq("missing"), any(WalletEarnRequest.class)))
                 .thenThrow(new PlayerNotFoundException("missing"));
 
@@ -140,7 +140,7 @@ class PlayerWalletControllerTest {
     }
 
     @Test
-    void earnCurrency_whenAmountNotPositive_returns400() throws Exception {
+    void earnCurrency_whenAmountNotPositive_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/players/player-001/wallet/earn")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -155,7 +155,7 @@ class PlayerWalletControllerTest {
     }
 
     @Test
-    void earnCurrency_whenClientRequestIdMissing_returns400() throws Exception {
+    void earnCurrency_whenClientRequestIdMissing_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/players/player-001/wallet/earn")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

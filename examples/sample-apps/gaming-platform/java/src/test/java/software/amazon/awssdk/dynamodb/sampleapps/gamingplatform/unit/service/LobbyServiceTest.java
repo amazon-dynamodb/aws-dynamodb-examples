@@ -44,7 +44,7 @@ class LobbyServiceTest {
     private LobbyService service;
 
     @Test
-    void shouldReturnSummariesAndMissingIds() {
+    void getLobbySummaries_whenMixedPlayers_shouldReturnSummariesAndMissingIds() {
         PlayerProfile profile = new PlayerProfile();
         profile.setPlayerId("player-1");
         profile.setPlayerName("AlphaWolf");
@@ -66,7 +66,7 @@ class LobbyServiceTest {
     }
 
     @Test
-    void shouldReturnEmptyWhenNoPlayersFound() {
+    void getLobbySummaries_whenNoPlayersFound_shouldReturnEmpty() {
         when(repository.batchGetPlayers(List.of("unknown-1", "unknown-2")))
                 .thenReturn(CompletableFuture.completedFuture(List.of()));
 
@@ -78,7 +78,7 @@ class LobbyServiceTest {
     }
 
     @Test
-    void shouldReturnPlatformPlayers() {
+    void browseByPlatform_whenValidPlatform_shouldReturnPlayers() {
         PlayerProfile profile = new PlayerProfile();
         profile.setPlayerId("player-1");
         profile.setPlayerName("AlphaWolf");
@@ -99,7 +99,7 @@ class LobbyServiceTest {
     }
 
     @Test
-    void shouldClampLimitToMax() {
+    void browseByPlatform_whenLimitAboveMax_shouldClampToMax() {
         when(repository.queryPlayersByPlatform("PC", 50))
                 .thenReturn(CompletableFuture.completedFuture(List.of()));
 
@@ -110,7 +110,7 @@ class LobbyServiceTest {
     }
 
     @Test
-    void shouldClampLimitToMin() {
+    void browseByPlatform_whenLimitBelowMin_shouldClampToMin() {
         when(repository.queryPlayersByPlatform("PC", 1))
                 .thenReturn(CompletableFuture.completedFuture(List.of()));
 
@@ -121,7 +121,7 @@ class LobbyServiceTest {
     }
 
     @Test
-    void shouldThrowOnInvalidPlatform() {
+    void browseByPlatform_whenPlatformInvalid_shouldThrow() {
         assertThatThrownBy(() -> service.getPlayersByPlatform("XBOX", 20))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid platform");

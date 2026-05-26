@@ -38,7 +38,7 @@ class ProgressionControllerTest {
     private ProgressionService progressionService;
 
     @Test
-    void shouldReturn200OnSuccess() throws Exception {
+    void updateProgression_whenValidPatch_shouldReturn200() throws Exception {
         ProgressionUpdateResponse response = new ProgressionUpdateResponse(
                 "player-001",
                 new ProfileSnapshot("Ace", "STEAM", 5, 4500L, "2025-01-01T00:00:00Z", 2L),
@@ -64,7 +64,7 @@ class ProgressionControllerTest {
     }
 
     @Test
-    void shouldReturn409OnStaleVersion() throws Exception {
+    void updateProgression_whenVersionStale_shouldReturn409() throws Exception {
         when(progressionService.updateProgression(eq("player-001"), any(ProgressionUpdateRequest.class)))
                 .thenThrow(new StaleVersionException("player-001", 1L));
 
@@ -81,7 +81,7 @@ class ProgressionControllerTest {
     }
 
     @Test
-    void shouldReturn400OnMissingExpectedVersion() throws Exception {
+    void updateProgression_whenExpectedVersionMissing_shouldReturn400() throws Exception {
         mockMvc.perform(patch("/api/v1/players/player-001/progression")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -94,7 +94,7 @@ class ProgressionControllerTest {
     }
 
     @Test
-    void shouldReturn404WhenPlayerNotFound() throws Exception {
+    void updateProgression_whenPlayerNotFound_shouldReturn404() throws Exception {
         when(progressionService.updateProgression(eq("ghost-id"), any(ProgressionUpdateRequest.class)))
                 .thenThrow(new PlayerNotFoundException("ghost-id"));
 

@@ -13,9 +13,9 @@
 
 ## Tech stack
 
-- **Runtime:** JDK 21, Spring Boot **3.5.13**
-- **AWS:** SDK for Java v2 BOM **2.42.21** (`dynamodb`, `dynamodb-enhanced`)
-- **API docs:** springdoc-openapi **2.8.16**
+- **Runtime:** JDK 21, Spring Boot **3.5.14**
+- **AWS:** SDK for Java v2 BOM **2.44.9** (`dynamodb`, `dynamodb-enhanced`)
+- **API docs:** springdoc-openapi **2.8.17**
 - **Tests:** JUnit 5 (via Spring Boot), **Testcontainers 2.0.3** (DynamoDB Local for integration/smoke)
 - **Datastore:** DynamoDB Local (Docker) or AWS DynamoDB
 
@@ -31,7 +31,7 @@ Compiles the project and runs unit tests.
 
 ### Run (three ways)
 
-All modes use three tables (**GamingPlayerState**, **GamingGameEvents**, **GamingLeaderboard** by default). On startup the app **creates tables** if missing, enables **DynamoDB Streams** and **TTL** on **GameEvents**, starts the **streams consumer** for leaderboard projection, and **idempotently seeds** five demo players. Existing seed rows are not overwritten.
+All modes use three tables (**JavaGamingPlayerState**, **JavaGamingGameEvents**, **JavaGamingLeaderboard** by default). On startup the app **creates tables** if missing, enables **DynamoDB Streams** and **TTL** on **GameEvents**, starts the **streams consumer** for leaderboard projection, and **idempotently seeds** five demo players. Existing seed rows are not overwritten.
 
 ---
 

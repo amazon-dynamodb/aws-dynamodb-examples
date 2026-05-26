@@ -35,7 +35,7 @@ class LowLevelDynamoDbLeaderboardRepositoryTest {
     private DynamoDbAsyncClient client;
 
     @Test
-    void putLeaderboardEntry_sendsPutItem() {
+    void putLeaderboardEntry_whenValidEntry_shouldSendPutItem() {
         when(client.putItem(any(PutItemRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -59,7 +59,7 @@ class LowLevelDynamoDbLeaderboardRepositoryTest {
     }
 
     @Test
-    void deleteLeaderboardEntry_sendsDeleteItem() {
+    void deleteLeaderboardEntry_whenKeyProvided_shouldSendDeleteItem() {
         when(client.deleteItem(any(DeleteItemRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -76,7 +76,7 @@ class LowLevelDynamoDbLeaderboardRepositoryTest {
     }
 
     @Test
-    void queryTopN_mapsItems() {
+    void queryTopN_whenEntriesExist_shouldMapItems() {
         when(client.query(any(QueryRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(QueryResponse.builder().items(List.of()).build()));
 

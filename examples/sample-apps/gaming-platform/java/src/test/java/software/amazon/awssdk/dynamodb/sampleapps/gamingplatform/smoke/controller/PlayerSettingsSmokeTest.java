@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PlayerSettingsSmokeTest extends AbstractSmokeTest {
 
     @Test
-    void getSettings_whenSeededPlayer_returnsSettingsSliceWithoutRootPlayerId() throws Exception {
+    void getSettings_whenSeededPlayer_shouldReturnSettingsSliceWithoutRootPlayerId() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())

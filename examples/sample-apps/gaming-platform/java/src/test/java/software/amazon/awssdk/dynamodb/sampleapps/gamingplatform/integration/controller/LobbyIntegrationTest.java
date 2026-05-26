@@ -29,7 +29,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void shouldReturnSummariesForSeededPlayers() throws Exception {
+    void getLobbySummaries_whenPlayersSeeded_shouldReturnSummaries() throws Exception {
         mockMvc.perform(post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -45,7 +45,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReportMissingPlayers() throws Exception {
+    void getLobbySummaries_whenSomePlayersMissing_shouldReportMissingIds() throws Exception {
         mockMvc.perform(post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -61,7 +61,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnAllMissingWhenNoneExist() throws Exception {
+    void getLobbySummaries_whenNoPlayersExist_shouldReturnAllMissing() throws Exception {
         mockMvc.perform(post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -75,7 +75,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn400WhenPlayerIdsEmpty() throws Exception {
+    void getLobbySummaries_whenPlayerIdsEmpty_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -88,7 +88,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnPcPlayersOrderedByMostRecentFirst() throws Exception {
+    void browseByPlatform_whenPlatformPc_shouldReturnPlayersOrderedByMostRecentFirst() throws Exception {
         // Seed data has 2 PC players: EchoNova (2026-04-01) and AlphaWolf (2026-01-15)
         mockMvc.perform(get("/api/v1/lobbies/platform/PC"))
                 .andExpect(status().isOk())
@@ -99,7 +99,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnIosPlayers() throws Exception {
+    void browseByPlatform_whenPlatformIos_shouldReturnPlayers() throws Exception {
         // Seed data has 2 IOS players: DeltaStrike (2026-03-25) and BraveFox (2026-02-20)
         mockMvc.perform(get("/api/v1/lobbies/platform/IOS"))
                 .andExpect(status().isOk())
@@ -110,7 +110,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnAndroidPlayers() throws Exception {
+    void browseByPlatform_whenPlatformAndroid_shouldReturnPlayers() throws Exception {
         // Seed data has 1 ANDROID player: CosmicRay
         mockMvc.perform(get("/api/v1/lobbies/platform/ANDROID"))
                 .andExpect(status().isOk())
@@ -120,7 +120,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldRespectLimitParameter() throws Exception {
+    void browseByPlatform_whenLimitProvided_shouldRespectLimit() throws Exception {
         mockMvc.perform(get("/api/v1/lobbies/platform/PC")
                         .param("limit", "1"))
                 .andExpect(status().isOk())
@@ -129,7 +129,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn400ForInvalidPlatform() throws Exception {
+    void browseByPlatform_whenPlatformInvalid_shouldReturn400() throws Exception {
         mockMvc.perform(get("/api/v1/lobbies/platform/XBOX"))
                 .andExpect(status().isBadRequest());
     }

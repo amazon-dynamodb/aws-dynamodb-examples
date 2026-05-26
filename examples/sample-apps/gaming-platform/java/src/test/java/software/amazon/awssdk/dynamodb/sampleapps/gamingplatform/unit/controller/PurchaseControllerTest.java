@@ -38,7 +38,7 @@ class PurchaseControllerTest {
     private PurchaseService purchaseService;
 
     @Test
-    void shouldReturn200OnSuccess() throws Exception {
+    void completePurchase_whenValidRequest_shouldReturn200() throws Exception {
         PurchaseResponse response = new PurchaseResponse(
                 "player-002",
                 new ProfileSnapshot("BuyerPro", "XBOX", 3, 2000L, "2025-01-01T00:00:00Z", 2L),
@@ -66,7 +66,7 @@ class PurchaseControllerTest {
     }
 
     @Test
-    void shouldReturn409OnInsufficientFunds() throws Exception {
+    void completePurchase_whenInsufficientFunds_shouldReturn409() throws Exception {
         when(purchaseService.executePurchase(eq("player-002"), any(PurchaseRequest.class)))
                 .thenThrow(new InsufficientFundsException("player-002", 500L, 100L));
 
@@ -84,7 +84,7 @@ class PurchaseControllerTest {
     }
 
     @Test
-    void shouldReturn400OnMissingRequiredFields() throws Exception {
+    void completePurchase_whenRequiredFieldsMissing_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/players/player-002/purchases")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -97,7 +97,7 @@ class PurchaseControllerTest {
     }
 
     @Test
-    void shouldReturn404WhenPlayerNotFound() throws Exception {
+    void completePurchase_whenPlayerNotFound_shouldReturn404() throws Exception {
         when(purchaseService.executePurchase(eq("missing-player"), any(PurchaseRequest.class)))
                 .thenThrow(new PlayerNotFoundException("missing-player"));
 

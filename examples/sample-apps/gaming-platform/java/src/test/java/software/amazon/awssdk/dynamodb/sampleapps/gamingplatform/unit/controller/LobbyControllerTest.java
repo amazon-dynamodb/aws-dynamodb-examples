@@ -38,7 +38,7 @@ class LobbyControllerTest {
     private LobbyService lobbyService;
 
     @Test
-    void shouldReturnLobbySummaries() throws Exception {
+    void getLobbySummaries_whenPlayersExist_shouldReturnSummaries() throws Exception {
         PlayerSummary summary = new PlayerSummary("player-1", "AlphaWolf", 10, "2026-01-15T10:00:00Z");
         LobbySummariesResponse response = new LobbySummariesResponse(
                 List.of(summary), List.of("player-unknown"));
@@ -61,7 +61,7 @@ class LobbyControllerTest {
     }
 
     @Test
-    void shouldReturn400WhenPlayerIdsEmpty() throws Exception {
+    void getLobbySummaries_whenPlayerIdsEmpty_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -74,7 +74,7 @@ class LobbyControllerTest {
     }
 
     @Test
-    void shouldReturn400WhenPlayerIdsMissing() throws Exception {
+    void getLobbySummaries_whenPlayerIdsMissing_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
@@ -83,7 +83,7 @@ class LobbyControllerTest {
     }
 
     @Test
-    void shouldReturnPlatformPlayers() throws Exception {
+    void browseByPlatform_whenValidPlatform_shouldReturnPlayers() throws Exception {
         PlayerSummary summary = new PlayerSummary("player-1", "AlphaWolf", 10, "2026-01-15T10:00:00Z");
         PlatformPlayersResponse response = new PlatformPlayersResponse("PC", List.of(summary));
 
@@ -97,7 +97,7 @@ class LobbyControllerTest {
     }
 
     @Test
-    void shouldReturnPlatformPlayersWithCustomLimit() throws Exception {
+    void browseByPlatform_whenCustomLimitProvided_shouldReturnPlayers() throws Exception {
         PlatformPlayersResponse response = new PlatformPlayersResponse("IOS", List.of());
 
         when(lobbyService.getPlayersByPlatform("IOS", 5)).thenReturn(response);
@@ -110,7 +110,7 @@ class LobbyControllerTest {
     }
 
     @Test
-    void shouldReturn400ForInvalidPlatform() throws Exception {
+    void browseByPlatform_whenPlatformInvalid_shouldReturn400() throws Exception {
         when(lobbyService.getPlayersByPlatform("XBOX", 20))
                 .thenThrow(new IllegalArgumentException("Invalid platform: XBOX"));
 

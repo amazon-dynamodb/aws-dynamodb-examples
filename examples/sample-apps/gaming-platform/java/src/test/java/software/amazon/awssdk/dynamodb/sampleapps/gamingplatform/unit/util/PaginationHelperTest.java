@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PaginationHelperTest {
 
     @Test
-    void shouldRoundTripEncodeDecode() {
+    void encodeDecode_whenValidKey_shouldRoundTrip() {
         Map<String, AttributeValue> original = new LinkedHashMap<>();
         original.put("PK", AttributeValue.fromS("USER#123"));
         original.put("SK", AttributeValue.fromS("EVT#2026-04-03T12:10:00Z#e5"));
@@ -39,34 +39,34 @@ class PaginationHelperTest {
     }
 
     @Test
-    void shouldReturnNullForNullInput() {
+    void decodeExclusiveStartKey_whenInputNull_shouldReturnNull() {
         assertThat(PaginationHelper.encodePaginationToken(null)).isNull();
     }
 
     @Test
-    void shouldReturnNullForEmptyInput() {
+    void decodeExclusiveStartKey_whenInputEmpty_shouldReturnNull() {
         assertThat(PaginationHelper.encodePaginationToken(Map.of())).isNull();
     }
 
     @Test
-    void shouldReturnNullForNullToken() {
+    void decodeExclusiveStartKey_whenTokenNull_shouldReturnNull() {
         assertThat(PaginationHelper.decodePaginationToken(null)).isNull();
     }
 
     @Test
-    void shouldReturnNullForBlankToken() {
+    void decodeExclusiveStartKey_whenTokenBlank_shouldReturnNull() {
         assertThat(PaginationHelper.decodePaginationToken("   ")).isNull();
     }
 
     @Test
-    void shouldThrowOnInvalidBase64() {
+    void decodeExclusiveStartKey_whenBase64Invalid_shouldThrow() {
         assertThatThrownBy(() -> PaginationHelper.decodePaginationToken("not-valid!!!"))
                 .isInstanceOf(InvalidPaginationTokenException.class)
                 .hasMessage("Invalid pagination token: not-valid!!!");
     }
 
     @Test
-    void shouldThrowOnTamperedJson() {
+    void decodeExclusiveStartKey_whenJsonTampered_shouldThrow() {
         String tampered = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{}".getBytes(StandardCharsets.UTF_8));
 

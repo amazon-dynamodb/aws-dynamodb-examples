@@ -32,7 +32,7 @@ class LeaderboardIntegrationTest extends AbstractIntegrationTest {
     private LeaderboardRepository leaderboardRepository;
 
     @Test
-    void shouldReturnEmptyForFreshScope() throws Exception {
+    void getLeaderboard_whenFreshScope_shouldReturnEmpty() throws Exception {
         mockMvc.perform(get("/api/v1/leaderboards/{scope}", "SEASON#unknown#MODE#ranked"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("SEASON#unknown#MODE#ranked"))
@@ -40,7 +40,7 @@ class LeaderboardIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnPopulatedLeaderboardOrderedByScoreDescending() throws Exception {
+    void getLeaderboard_whenEntriesExist_shouldReturnOrderedByScoreDescending() throws Exception {
         String scope = DynamoDbStreamsLeaderboardListener.DEFAULT_SCOPE + "-populated-tests";
 
         putEntry(scope, SeedPlayerData.SEED_PLAYER_1, "Alice", 100);
@@ -57,7 +57,7 @@ class LeaderboardIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldRespectLimitParameter() throws Exception {
+    void getLeaderboard_whenLimitProvided_shouldRespectLimit() throws Exception {
         String scope = DynamoDbStreamsLeaderboardListener.DEFAULT_SCOPE + "-limit-tests";
 
         putEntry(scope, SeedPlayerData.SEED_PLAYER_1, "Alice", 400);

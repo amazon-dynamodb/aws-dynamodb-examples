@@ -26,7 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PlayerControllerSmokeTest extends AbstractSmokeTest {
 
     @Test
-    void getProfile_whenSeededPlayer_returnsProfileSliceWithoutRootPlayerId() throws Exception {
+    void getProfile_whenSeededPlayer_shouldReturnProfileSliceWithoutRootPlayerId() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
@@ -35,7 +35,7 @@ class PlayerControllerSmokeTest extends AbstractSmokeTest {
     }
 
     @Test
-    void getProfile_whenSeededPlayer_returnsProfileSliceOnly() throws Exception {
+    void getProfile_whenSeededPlayer_shouldReturnProfileSliceOnly() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
@@ -43,7 +43,7 @@ class PlayerControllerSmokeTest extends AbstractSmokeTest {
     }
 
     @Test
-    void registerPlayer_whenNewAccount_returnsFullSnapshotAtRoot() throws Exception {
+    void registerPlayer_whenNewAccount_shouldReturnFullSnapshotAtRoot() throws Exception {
         String uniquePlatformUserId = "smoke-reg-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players")
@@ -64,7 +64,7 @@ class PlayerControllerSmokeTest extends AbstractSmokeTest {
     }
 
     @Test
-    void registerPlayer_whenNewAndroidAccount_returnsFullSnapshotAtRoot() throws Exception {
+    void registerPlayer_whenNewAndroidAccount_shouldReturnFullSnapshotAtRoot() throws Exception {
         String platformUserId = "smoke-snapshot-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players")

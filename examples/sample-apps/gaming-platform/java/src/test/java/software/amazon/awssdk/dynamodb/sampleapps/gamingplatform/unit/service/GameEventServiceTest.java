@@ -60,7 +60,7 @@ class GameEventServiceTest {
     private GameEventService gameEventService;
 
     @Test
-    void shouldRecordEventSuccessfully() {
+    void recordEvent_whenValidRequest_shouldSucceed() {
         PlayerProfile profile = buildProfile();
         RecordEventRequest request = new RecordEventRequest("PVP_MATCH",
                 Map.of("matchId", "match-01", "result", "WIN"));
@@ -82,7 +82,7 @@ class GameEventServiceTest {
     }
 
     @Test
-    void shouldThrowWhenPlayerNotFound() {
+    void recordEvent_whenPlayerNotFound_shouldThrow() {
         when(playerStateRepository.getPlayer(PLAYER_ID))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -95,7 +95,7 @@ class GameEventServiceTest {
     }
 
     @Test
-    void shouldGenerateUniqueEventId() {
+    void recordEvent_whenMultipleCalls_shouldGenerateUniqueEventIds() {
         PlayerProfile profile = buildProfile();
         RecordEventRequest request = new RecordEventRequest("LEVEL_PROGRESS", Map.of("xpDelta", 500));
 
@@ -126,7 +126,7 @@ class GameEventServiceTest {
     }
 
     @Test
-    void shouldQueryNewestFirstWhenScanIndexForwardUnset() {
+    void queryEventsByPlayer_whenScanIndexForwardUnset_shouldQueryNewestFirst() {
         PlayerProfile profile = buildProfile();
         GameEvent event = buildEvent("evt-200");
         Map<String, AttributeValue> lastKey = Map.of(
@@ -148,7 +148,7 @@ class GameEventServiceTest {
     }
 
     @Test
-    void shouldQueryOldestFirstWhenScanIndexForwardTrue() {
+    void queryEventsByPlayer_whenScanIndexForwardTrue_shouldQueryOldestFirst() {
         PlayerProfile profile = buildProfile();
 
         when(playerStateRepository.getPlayer(PLAYER_ID))

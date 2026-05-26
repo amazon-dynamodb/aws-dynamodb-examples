@@ -32,14 +32,14 @@ class PlayerMapperTest {
     private final PlayerMapper mapper = new PlayerMapper(walletMapper, settingsMapper);
 
     @Test
-    void generatePlayerId_whenSamePlatformIdentity_returnsSameId() {
+    void generatePlayerId_whenSamePlatformIdentity_shouldReturnSameId() {
         String id1 = mapper.generatePlayerId("PC", "user-1");
         String id2 = mapper.generatePlayerId("PC", "user-1");
         assertThat(id1).isEqualTo(id2);
     }
 
     @Test
-    void generatePlayerId_whenPlatformOrUserChanges_returnsDifferentIds() {
+    void generatePlayerId_whenPlatformOrUserChanges_shouldReturnDifferentIds() {
         String a = mapper.generatePlayerId("PC", "user-1");
         String b = mapper.generatePlayerId("IOS", "user-1");
         String c = mapper.generatePlayerId("PC", "user-2");
@@ -48,7 +48,7 @@ class PlayerMapperTest {
     }
 
     @Test
-    void toProfile_whenRegistrationRequest_mapsFieldsAndKeys() {
+    void toProfile_whenRegistrationRequestProvided_shouldMapFieldsAndKeys() {
         RegisterPlayerRequest request = new RegisterPlayerRequest("PC", "steam-x", "Neo");
         PlayerProfile profile = mapper.toProfile(request);
 
@@ -65,7 +65,7 @@ class PlayerMapperTest {
     }
 
     @Test
-    void toProfileSnapshot_whenProfilePresent_mapsFieldsWithoutPlayerId() {
+    void toProfileSnapshot_whenProfilePresent_shouldMapFieldsWithoutPlayerId() {
         PlayerProfile profile = new PlayerProfile();
         profile.setPlayerId("pid");
         profile.setPlayerName("Name");
@@ -85,7 +85,7 @@ class PlayerMapperTest {
     }
 
     @Test
-    void toPlayerSnapshot_whenEntitiesPresent_composesSiblingSnapshotsAtRoot() {
+    void toPlayerSnapshot_whenEntitiesPresent_shouldComposeSiblingSnapshotsAtRoot() {
         PlayerProfile profile = mapper.toProfile(new RegisterPlayerRequest("PC", "u", "Neo"));
         PlayerWallet wallet = walletMapper.defaultWallet(profile.getPlayerId());
         PlayerSettings settings = settingsMapper.defaultSettings(profile.getPlayerId());
@@ -99,7 +99,7 @@ class PlayerMapperTest {
     }
 
     @Test
-    void toRegisterResponse_whenEntitiesPresent_wrapsFullSnapshotAndCreatedFlag() {
+    void toRegisterResponse_whenEntitiesPresent_shouldWrapFullSnapshotAndCreatedFlag() {
         PlayerProfile profile = mapper.toProfile(new RegisterPlayerRequest("PC", "u", "N"));
         PlayerWallet wallet = walletMapper.defaultWallet(profile.getPlayerId());
         PlayerSettings settings = settingsMapper.defaultSettings(profile.getPlayerId());
@@ -112,7 +112,7 @@ class PlayerMapperTest {
     }
 
     @Test
-    void toSummary_whenProfilePresent_mapsLightweightFields() {
+    void toSummary_whenProfilePresent_shouldMapLightweightFields() {
         PlayerProfile profile = mapper.toProfile(new RegisterPlayerRequest("IOS", "a", "Summ"));
         profile.setCurrentLevel(7);
         PlayerSummary summary = mapper.toSummary(profile);

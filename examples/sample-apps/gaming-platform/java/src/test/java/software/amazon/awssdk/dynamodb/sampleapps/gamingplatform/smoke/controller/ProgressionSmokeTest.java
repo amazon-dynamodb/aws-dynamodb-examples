@@ -23,7 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ProgressionSmokeTest extends AbstractSmokeTest {
 
     @Test
-    void updateProgression_whenValidPatch_returnsFullSnapshotAtRoot() throws Exception {
+    void updateProgression_whenValidPatch_shouldReturnFullSnapshotAtRoot() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -41,7 +41,7 @@ class ProgressionSmokeTest extends AbstractSmokeTest {
     }
 
     @Test
-    void updateProgression_whenVersionStale_returns409() throws Exception {
+    void updateProgression_whenVersionStale_shouldReturn409() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

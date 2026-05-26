@@ -62,7 +62,7 @@ class DynamoDbTableInitializerTest {
     }
 
     @Test
-    void initializer_shouldIssueCreatesTtlAndSeeds() {
+    void run_whenApplicationStarts_shouldIssueCreatesTtlAndSeeds() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.player-state-table-name=TblPlayerState",
@@ -85,7 +85,7 @@ class DynamoDbTableInitializerTest {
     }
 
     @Test
-    void playerStateGsi_shouldHaveCompositeSortKeyWithLastUpdatedAtAndPlayerId() {
+    void buildPlayerStateGsi_whenConfigured_shouldHaveCompositeSortKeyWithLastUpdatedAtAndPlayerId() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.player-state-table-name=TblPlayerState",
@@ -124,7 +124,7 @@ class DynamoDbTableInitializerTest {
     }
 
     @Test
-    void createTable_alreadyExists_shouldNotFailStartup() {
+    void createTableIfNotExists_whenTableAlreadyExists_shouldNotFailStartup() {
         ResourceInUseException cause = ResourceInUseException.builder()
                 .message("Table exists")
                 .build();

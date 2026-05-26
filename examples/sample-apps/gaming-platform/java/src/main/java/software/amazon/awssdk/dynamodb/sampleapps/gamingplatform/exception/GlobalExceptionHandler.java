@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.ErrorResponse;
 
 /**
@@ -135,6 +136,24 @@ public class GlobalExceptionHandler {
                 ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse("INVALID_ARGUMENT", ex.getMessage(), Instant.now()));
+    }
+
+    /**
+     * Browsers request {@code /favicon.ico} even when the app does not ship a favicon. Without this
+     * handler, the static-resource handler throws and pollutes logs. Returns HTTP 204 for that path only.
+     *
+     * @param ex resource path was not found under configured static locations
+     * @return empty 204 for favicon, otherwise HTTP 404 with {@link ErrorResponse}
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<?> handleNoResourceFound(NoResourceFoundException ex) {
+        String path = ex.getResourcePath();
+        if (path != null && path.endsWith("favicon.ico")) {
+            return ResponseEntity.noContent().build();
+        }
+        logger.debug("Static resource not found: path={}", path);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("NOT_FOUND", "Resource not found", Instant.now()));
     }
 
     /**

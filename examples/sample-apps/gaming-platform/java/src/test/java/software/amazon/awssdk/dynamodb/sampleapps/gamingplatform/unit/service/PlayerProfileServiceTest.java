@@ -40,7 +40,7 @@ class PlayerProfileServiceTest {
     private PlayerProfileService service;
 
     @Test
-    void getProfile_whenPlayerExists_returnsProfileSliceWrapper() {
+    void getProfile_whenPlayerExists_shouldReturnProfileSliceWrapper() {
         PlayerProfile profile = new PlayerProfile();
         profile.setPlayerId("player-1");
         profile.setPlayerName("AlphaWolf");
@@ -63,7 +63,7 @@ class PlayerProfileServiceTest {
     }
 
     @Test
-    void getProfile_whenPlayerMissing_throwsPlayerNotFound() {
+    void getProfile_whenPlayerMissing_shouldThrowPlayerNotFound() {
         when(repository.getPlayer("unknown")).thenReturn(CompletableFuture.completedFuture(null));
 
         assertThatThrownBy(() -> service.getProfile("unknown"))

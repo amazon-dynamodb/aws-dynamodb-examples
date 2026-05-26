@@ -31,7 +31,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void shouldCompletePurchaseForSeededPlayer() throws Exception {
+    void completePurchase_whenFundsAvailable_shouldCompletePurchase() throws Exception {
         String clientRequestId = "integration-purchase-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
@@ -53,7 +53,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnIdempotentReplayWhenSamePurchaseRetried() throws Exception {
+    void completePurchase_whenDuplicateRequest_shouldReturnIdempotentReplay() throws Exception {
         String clientRequestId = "integration-purchase-idem-" + UUID.randomUUID();
         String body = """
                 {
@@ -82,7 +82,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
 
     /** Verifies spend attempts beyond available soft currency yield HTTP 409. */
     @Test
-    void shouldReturn409WhenInsufficientFunds() throws Exception {
+    void completePurchase_whenInsufficientFunds_shouldReturn409() throws Exception {
         String clientRequestId = "integration-insufficient-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
@@ -100,7 +100,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
 
     /** Verifies purchase attempts against unknown wallets map to HTTP 404. */
     @Test
-    void shouldReturn404ForUnknownPlayer() throws Exception {
+    void completePurchase_whenPlayerUnknown_shouldReturn404() throws Exception {
         String clientRequestId = "integration-missing-buyer-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players/{playerId}/purchases", "missing-buyer-id")

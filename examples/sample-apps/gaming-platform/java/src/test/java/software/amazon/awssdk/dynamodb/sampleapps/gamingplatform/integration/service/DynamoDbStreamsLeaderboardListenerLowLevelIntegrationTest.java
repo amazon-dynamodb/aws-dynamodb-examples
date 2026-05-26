@@ -13,6 +13,7 @@ import org.springframework.test.context.DynamicPropertySource;
  * <p>Runs against DynamoDB Local via Testcontainers with a full Spring context.
  */
 @Tag("integration")
+@Tag("smoke")
 class DynamoDbStreamsLeaderboardListenerLowLevelIntegrationTest
         extends DynamoDbStreamsLeaderboardListenerIntegrationTest {
 

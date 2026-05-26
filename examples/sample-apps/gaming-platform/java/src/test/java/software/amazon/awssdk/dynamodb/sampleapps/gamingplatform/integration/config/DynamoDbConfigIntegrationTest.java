@@ -25,7 +25,7 @@ class DynamoDbConfigIntegrationTest extends AbstractIntegrationTest {
     private DynamoDbEnhancedAsyncClient dynamoDbEnhancedAsyncClient;
 
     @Test
-    void dynamoDbBeansShouldExposeExplicitSdkRetryStrategy() {
+    void dynamoDbBeans_whenContextStarted_shouldExposeExplicitSdkRetryStrategy() {
         DynamoDbClientRetryAssertions.assertExplicitSdkRetryStrategy(dynamoDbAsyncClient);
         if (dynamoDbEnhancedAsyncClient != null) {
             DynamoDbClientRetryAssertions.assertExplicitSdkRetryStrategy(dynamoDbEnhancedAsyncClient);

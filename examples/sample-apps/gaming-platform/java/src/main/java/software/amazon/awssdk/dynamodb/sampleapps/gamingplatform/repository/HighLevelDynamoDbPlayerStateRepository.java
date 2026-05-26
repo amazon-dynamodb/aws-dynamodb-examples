@@ -413,7 +413,7 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
     public CompletableFuture<Void> createPlayerWithSettingsAndWallet(PlayerProfile profile,
                                                                       PlayerSettings settings,
                                                                       PlayerWallet wallet) {
-        // All three items share the same PK; each put is guarded against overwrite
+        // All three items share the same PK. Each put is guarded against overwrite
         Expression absent = Expression.builder()
                 .expression("attribute_not_exists(PK)")
                 .build();

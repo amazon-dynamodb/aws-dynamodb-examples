@@ -57,7 +57,7 @@ class PlayerSettingsServiceTest {
     }
 
     @Test
-    void getSettings_whenSettingsExist_returnsSettingsSliceWrapper() {
+    void getSettings_whenSettingsExist_shouldReturnSettingsSliceWrapper() {
         PlayerSettings settings = buildSettings("p1", 1);
         when(repository.getSettings("p1")).thenReturn(CompletableFuture.completedFuture(settings));
 
@@ -69,7 +69,7 @@ class PlayerSettingsServiceTest {
     }
 
     @Test
-    void getSettings_whenSettingsMissing_throwsPlayerNotFound() {
+    void getSettings_whenSettingsMissing_shouldThrowPlayerNotFound() {
         when(repository.getSettings("missing")).thenReturn(CompletableFuture.completedFuture(null));
 
         assertThatThrownBy(() -> service.getSettings("missing"))
@@ -77,7 +77,7 @@ class PlayerSettingsServiceTest {
     }
 
     @Test
-    void updateSettings_whenPartialUpdateApplied_returnsFullSnapshotWithSiblings() {
+    void updateSettings_whenPartialUpdateApplied_shouldReturnFullSnapshotWithSiblings() {
         PlayerSettings current = buildSettings("p1", 1);
         PlayerSettings updated = buildSettings("p1", 2);
         updated.setPreferredLanguage("de");
@@ -103,7 +103,7 @@ class PlayerSettingsServiceTest {
     }
 
     @Test
-    void updateSettings_whenVersionStale_throwsStaleVersion() {
+    void updateSettings_whenVersionStale_shouldThrowStaleVersion() {
         PlayerSettings current = buildSettings("p1", 1);
         when(repository.getSettings("p1")).thenReturn(CompletableFuture.completedFuture(current));
 
@@ -117,7 +117,7 @@ class PlayerSettingsServiceTest {
     }
 
     @Test
-    void updateSettings_whenSettingsMissing_throwsPlayerNotFound() {
+    void updateSettings_whenSettingsMissing_shouldThrowPlayerNotFound() {
         when(repository.getSettings("missing")).thenReturn(CompletableFuture.completedFuture(null));
 
         UpdatePlayerSettingsRequest request = new UpdatePlayerSettingsRequest(true, null, null, 1L);

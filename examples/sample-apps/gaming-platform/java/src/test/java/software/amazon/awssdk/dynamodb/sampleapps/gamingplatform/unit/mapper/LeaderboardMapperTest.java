@@ -22,7 +22,7 @@ class LeaderboardMapperTest {
     private final LeaderboardMapper mapper = new LeaderboardMapper();
 
     @Test
-    void toEntryDto_assignsRank() {
+    void toEntryDto_whenEntryProvided_shouldAssignRank() {
         LeaderboardEntry entry = new LeaderboardEntry();
         entry.setPlayerId("p1");
         entry.setPlayerName("A");
@@ -35,7 +35,7 @@ class LeaderboardMapperTest {
     }
 
     @Test
-    void toResponse_mapsScopeAndOrderedRanks() {
+    void toResponse_whenEntriesProvided_shouldMapScopeAndOrderedRanks() {
         LeaderboardEntry e1 = new LeaderboardEntry();
         e1.setPlayerId("a");
         e1.setPlayerName("A");

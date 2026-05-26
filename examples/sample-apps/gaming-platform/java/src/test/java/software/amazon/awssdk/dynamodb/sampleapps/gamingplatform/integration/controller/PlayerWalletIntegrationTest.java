@@ -45,7 +45,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     private String playerStateTableName;
 
     @Test
-    void getWallet_whenSeededPlayer_returnsWalletSliceWithoutRootPlayerId() throws Exception {
+    void getWallet_whenSeededPlayer_shouldReturnWalletSliceWithoutRootPlayerId() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
@@ -56,7 +56,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnSeededWallet() throws Exception {
+    void getWallet_whenSeededPlayer_shouldReturnWallet() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1200))
@@ -64,7 +64,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldCreditWalletOnEarn() throws Exception {
+    void earnCurrency_whenValidRequest_shouldCreditWallet() throws Exception {
         String clientRequestId = "integration-earn-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_2)
@@ -84,7 +84,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnIdempotentReplayOnDuplicateEarn() throws Exception {
+    void earnCurrency_whenDuplicateRequest_shouldReturnIdempotentReplay() throws Exception {
         String clientRequestId = "integration-earn-idem-" + UUID.randomUUID();
         String body = """
                 {
@@ -109,7 +109,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn404ForUnknownPlayerOnEarn() throws Exception {
+    void earnCurrency_whenPlayerUnknown_shouldReturn404() throws Exception {
         mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", "unknown-wallet-player")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -124,7 +124,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn404WhenWalletRowMissing() throws Exception {
+    void getWallet_whenWalletRowMissing_shouldReturn404() throws Exception {
         String platformUserId = "integration-wallet-missing-user";
         String playerId = playerMapper.generatePlayerId("PC", platformUserId);
 
@@ -152,7 +152,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void earnCurrency_whenCompleted_returnsFullSnapshotWithOperationFields() throws Exception {
+    void earnCurrency_whenCompleted_shouldReturnFullSnapshotWithOperationFields() throws Exception {
         String clientRequestId = "snapshot-contract-earn-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_4)
@@ -174,7 +174,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn400WhenAmountNotPositive() throws Exception {
+    void earnCurrency_whenAmountNotPositive_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

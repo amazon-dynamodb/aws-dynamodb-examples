@@ -48,7 +48,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     private DynamoDbAsyncClient client;
 
     @Test
-    void createPlayer_sendsConditionalPutItem() {
+    void createPlayer_whenValidProfile_shouldSendConditionalPutItem() {
         when(client.putItem(any(PutItemRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -69,7 +69,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void getPlayer_returnsNullWhenMissing() {
+    void getPlayer_whenPlayerMissing_shouldReturnNull() {
         when(client.getItem(any(GetItemRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(GetItemResponse.builder().build()));
 
@@ -80,7 +80,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void getPlayer_mapsItemWhenPresent() {
+    void getPlayer_whenPlayerPresent_shouldMapItem() {
         PlayerProfile stored = new PlayerProfile();
         stored.setPlayerId("p9");
         stored.setPartitionKey(PlayerProfile.PK_PREFIX + "p9");
@@ -100,7 +100,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void updateProgression_sendsUpdateItemWithAbsoluteTotalsAndVersionCondition() {
+    void updateProgression_whenValidPatch_shouldSendUpdateItemWithVersionCondition() {
         PlayerProfile updated = new PlayerProfile();
         updated.setPlayerId("p9");
         updated.setPartitionKey(PlayerProfile.PK_PREFIX + "p9");
@@ -130,7 +130,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void purchaseTransaction_sendsTransactWriteWithUpdateAndConditionalPut() {
+    void purchaseTransaction_whenValidRequest_shouldSendTransactWriteWithConditionalPut() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -165,7 +165,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void batchGetPlayers_returnsEmptyWhenNoIds() {
+    void batchGetPlayers_whenNoIdsProvided_shouldReturnEmpty() {
         LowLevelDynamoDbPlayerStateRepository repository =
                 new LowLevelDynamoDbPlayerStateRepository(client, "PlayerState", "GameEvents");
 
@@ -174,7 +174,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void batchGetPlayers_sendsBatchGetItemRequest() {
+    void batchGetPlayers_whenIdsProvided_shouldSendBatchGetItemRequest() {
         PlayerProfile stored = profileForBatchGet("bob");
         TableSchema<PlayerProfile> schema = TableSchema.fromBean(PlayerProfile.class);
         Map<String, AttributeValue> item = schema.itemToMap(stored, false);
@@ -204,7 +204,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void batchGetPlayers_retriesOnUnprocessedKeys() {
+    void batchGetPlayers_whenUnprocessedKeysRemain_shouldRetryUnprocessedKeys() {
         TableSchema<PlayerProfile> schema = TableSchema.fromBean(PlayerProfile.class);
         PlayerProfile first = profileForBatchGet("id-a");
         PlayerProfile second = profileForBatchGet("id-b");
@@ -238,7 +238,7 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void queryPlayersByPlatform_queriesGsiWithCorrectExpression() {
+    void queryPlayersByPlatform_whenPlatformProvided_shouldQueryGsiWithCorrectExpression() {
         PlayerProfile stored = profileForBatchGet("browse-one");
         TableSchema<PlayerProfile> schema = TableSchema.fromBean(PlayerProfile.class);
         Map<String, AttributeValue> item = schema.itemToMap(stored, false);

@@ -102,14 +102,14 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn404ForUnknownPlayer() throws Exception {
+    void listEvents_whenPlayerUnknown_shouldReturn404() throws Exception {
         mockMvc.perform(get("/api/v1/players/nonexistent-player/events"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
     }
 
     @Test
-    void shouldOmitNextTokenWhenNoFurtherPage() throws Exception {
+    void listEvents_whenSinglePage_shouldOmitNextToken() throws Exception {
         String playerId = registerPlayer("PaginationNoTokenPlayer", "PC", "steam-pag-001");
 
         mockMvc.perform(get("/api/v1/players/{playerId}/events", playerId))
@@ -119,7 +119,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldPaginateThroughMultiplePages() throws Exception {
+    void listEvents_whenMultiplePagesExist_shouldPaginate() throws Exception {
         String playerId = registerPlayer("PaginationMultiPage", "PC", "steam-pag-mp-002");
 
         for (int i = 0; i < 22; i++) {
@@ -155,7 +155,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnNewestFirstByDefault() throws Exception {
+    void listEvents_whenDefaultSort_shouldReturnNewestFirst() throws Exception {
         String playerId = registerPlayer("NewestFirst", "PC", "steam-order-001");
 
         recordPvp(playerId, "match-a");
@@ -178,7 +178,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnOldestFirstWhenScanIndexForwardTrue() throws Exception {
+    void listEvents_whenScanIndexForwardTrue_shouldReturnOldestFirst() throws Exception {
         String playerId = registerPlayer("OldestFirst", "PC", "steam-order-002");
 
         recordPvp(playerId, "m-1");

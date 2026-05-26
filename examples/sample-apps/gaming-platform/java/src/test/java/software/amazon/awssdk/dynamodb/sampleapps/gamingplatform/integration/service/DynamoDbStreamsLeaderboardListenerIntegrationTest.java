@@ -23,8 +23,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Integration tests for {@link DynamoDbStreamsLeaderboardListener}.
  *
  * <p>Verifies leaderboard projection reacts to synthetic stream payloads using the wired repository.
+ *
+ * <p>Tagged {@code integration} and {@code smoke} so the stream-driven leaderboard path is
+ * exercised when running either group ({@code -Dgroups=smoke} or {@code -Dgroups=integration}).
  */
 @Tag("integration")
+@Tag("smoke")
 class DynamoDbStreamsLeaderboardListenerIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
@@ -34,7 +38,7 @@ class DynamoDbStreamsLeaderboardListenerIntegrationTest extends AbstractIntegrat
     private DynamoDbStreamsLeaderboardListener dynamoDbStreamsLeaderboardListener;
 
     @Test
-    void shouldPopulateLeaderboardFromPvpMatchStreamRecord() throws Exception {
+    void processStreamRecord_whenPvpMatchInserted_shouldPopulateLeaderboard() throws Exception {
         String playerId = "stream-integ-player-one";
         int scoreFor = 42_000;
 

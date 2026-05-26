@@ -23,7 +23,7 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 class SeedPlayerDataTest {
 
     @Test
-    void samplePlayerProfilesAsMaps_containsFivePlayersWithExpectedKeys() {
+    void samplePlayerProfilesAsMaps_whenCalled_shouldContainFivePlayersWithExpectedKeys() {
         List<Map<String, AttributeValue>> maps = SeedPlayerData.samplePlayerProfilesAsMaps();
 
         assertThat(maps).hasSize(5);
@@ -39,14 +39,14 @@ class SeedPlayerDataTest {
     }
 
     @Test
-    void seedConstants_matchFirstSampleOrder() {
+    void seedConstants_whenComparedToFirstSample_shouldMatchOrder() {
         List<Map<String, AttributeValue>> maps = SeedPlayerData.samplePlayerProfilesAsMaps();
         assertThat(maps.get(0).get("playerId").s()).isEqualTo(SeedPlayerData.SEED_PLAYER_1);
         assertThat(maps.get(4).get("playerId").s()).isEqualTo(SeedPlayerData.SEED_PLAYER_5);
     }
 
     @Test
-    void samplePlayerSettingsAsMaps_containsFiveSettingsWithDefaults() {
+    void samplePlayerSettingsAsMaps_whenCalled_shouldContainFiveSettingsWithDefaults() {
         List<Map<String, AttributeValue>> maps = SeedPlayerData.samplePlayerSettingsAsMaps();
 
         assertThat(maps).hasSize(5);
@@ -61,7 +61,7 @@ class SeedPlayerDataTest {
     }
 
     @Test
-    void samplePlayerWalletsAsMaps_containsFiveWalletsWithBalance() {
+    void samplePlayerWalletsAsMaps_whenCalled_shouldContainFiveWalletsWithBalance() {
         List<Map<String, AttributeValue>> maps = SeedPlayerData.samplePlayerWalletsAsMaps();
 
         assertThat(maps).hasSize(5);

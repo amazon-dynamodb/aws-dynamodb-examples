@@ -106,7 +106,7 @@ class HighLevelDynamoDbPlayerStateRepositoryTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void createPlayer_sendsConditionalPut() {
+    void createPlayer_whenValidProfile_shouldSendConditionalPut() {
         PlayerProfile profile = new PlayerProfile();
         profile.setPlayerId("p1");
         when(playerTable.putItem(any(PutItemEnhancedRequest.class)))
@@ -124,7 +124,7 @@ class HighLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void getPlayer_loadsByKey() {
+    void getPlayer_whenKeyProvided_shouldLoadByKey() {
         PlayerProfile loaded = new PlayerProfile();
         loaded.setPlayerId("p1");
         when(playerTable.getItem(any(Key.class))).thenReturn(CompletableFuture.completedFuture(loaded));
@@ -141,7 +141,7 @@ class HighLevelDynamoDbPlayerStateRepositoryTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void updateProgression_usesEnhancedUpdateItemWithVersioning() {
+    void updateProgression_whenValidPatch_shouldUseEnhancedUpdateItemWithVersioning() {
         PlayerProfile updated = new PlayerProfile();
         updated.setPlayerId("p1");
         updated.setVersion(8);
@@ -165,7 +165,7 @@ class HighLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void purchaseTransaction_usesEnhancedTransactWriteItems() {
+    void purchaseTransaction_whenValidRequest_shouldUseEnhancedTransactWriteItems() {
         when(enhancedClient.transactWriteItems(any(TransactWriteItemsEnhancedRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -198,13 +198,13 @@ class HighLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void batchGetPlayers_returnsEmptyWhenNoIds() {
+    void batchGetPlayers_whenNoIdsProvided_shouldReturnEmpty() {
         assertThat(repository.batchGetPlayers(List.of()).join()).isEmpty();
         verify(enhancedClient, never()).batchGetItem(any(BatchGetItemEnhancedRequest.class));
     }
 
     @Test
-    void batchGetPlayers_returnsFoundProfiles() {
+    void batchGetPlayers_whenProfilesExist_shouldReturnFoundProfiles() {
         PlayerProfile stored = profileForBatchGet("alice");
         Map<String, AttributeValue> item = TableSchema.fromBean(PlayerProfile.class).itemToMap(stored, false);
 
@@ -231,7 +231,7 @@ class HighLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void batchGetPlayers_handlesUnprocessedKeys() {
+    void batchGetPlayers_whenUnprocessedKeysRemain_shouldRetryUnprocessedKeys() {
         PlayerProfile first = profileForBatchGet("p-one");
         PlayerProfile second = profileForBatchGet("p-two");
         TableSchema<PlayerProfile> schema = TableSchema.fromBean(PlayerProfile.class);
@@ -265,7 +265,7 @@ class HighLevelDynamoDbPlayerStateRepositoryTest {
     }
 
     @Test
-    void queryPlayersByPlatform_queriesGsiWithLimit() {
+    void queryPlayersByPlatform_whenPlatformProvided_shouldQueryGsiWithLimit() {
         PlayerProfile row = profileForBatchGet("gsi-player");
         PagePublisher<PlayerProfile> publisher =
                 PagePublisher.create(SdkPublisher.fromIterable(List.of(Page.create(List.of(row)))));

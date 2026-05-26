@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run-tests.sh — Runs unit, integration, and smoke tests (filtered by JUnit 5 tags)
+# run-tests.sh - Runs unit, integration, and smoke tests (filtered by JUnit 5 tags)
 #
 # Usage:
 #   ./scripts/run-tests.sh                      Run all tests
@@ -16,10 +16,10 @@
 #
 # Docker / Rancher Desktop:
 #   Integration and smoke tests use Testcontainers with DynamoDB Local.
-#   Spring profile "test" is active; before each test method all three tables
-#   (GamingPlayerState, GamingGameEvents, GamingLeaderboard) are deleted,
+#   Spring profile "test" is active. Before each test method all three tables
+#   (JavaGamingPlayerState, JavaGamingGameEvents, JavaGamingLeaderboard) are deleted,
 #   recreated (with DynamoDB Streams and TTL where applicable), and re-seeded with
-#   profiles, settings, and wallets from SeedPlayerData — see DynamoDbTableTestReset.
+#   profiles, settings, and wallets from SeedPlayerData (see DynamoDbTableTestReset).
 #   Integration and smoke tiers include parallel high-level and low-level client
 #   variants (*LowLevel* test classes share the same JUnit 5 tags).
 #   For Rancher Desktop, DOCKER_HOST and Ryuk are configured automatically.

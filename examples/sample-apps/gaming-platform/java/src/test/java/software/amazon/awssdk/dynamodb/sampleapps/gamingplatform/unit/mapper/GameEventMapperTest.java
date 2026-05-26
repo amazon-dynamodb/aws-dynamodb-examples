@@ -24,7 +24,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent
 class GameEventMapperTest {
 
     @Test
-    void toGameEvent_mapsPayloadAndSetsTtlWhenPositiveTtl() {
+    void toGameEvent_whenPositiveTtlProvided_shouldMapPayloadAndSetTtl() {
         GameEventMapper mapper = new GameEventMapper(3600);
         RecordEventRequest request = new RecordEventRequest(
                 GameEventType.PVP_MATCH.name(),
@@ -51,7 +51,7 @@ class GameEventMapperTest {
     }
 
     @Test
-    void toGameEvent_withZeroTtl_omitsTtlAttribute() {
+    void toGameEvent_whenZeroTtlProvided_shouldOmitTtlAttribute() {
         GameEventMapper mapper = new GameEventMapper(0);
         RecordEventRequest request = new RecordEventRequest(GameEventType.LEVEL_PROGRESS.name(), Map.of());
         GameEvent event = mapper.toGameEvent("p", request);
@@ -59,7 +59,7 @@ class GameEventMapperTest {
     }
 
     @Test
-    void toPurchaseEvent_usesDeterministicEventIdFromClientRequest() {
+    void toPurchaseEvent_whenClientRequestProvided_shouldUseDeterministicEventId() {
         GameEventMapper mapper = new GameEventMapper(60);
         PurchaseRequest purchase = new PurchaseRequest("item-1", 100, "idem-key-xyz");
 
@@ -75,7 +75,7 @@ class GameEventMapperTest {
     }
 
     @Test
-    void toRecordEventResponse_mapsIds() {
+    void toRecordEventResponse_whenEventProvided_shouldMapIds() {
         GameEventMapper mapper = new GameEventMapper(1);
         GameEvent event = new GameEvent();
         event.setEventId("eid");
@@ -86,7 +86,7 @@ class GameEventMapperTest {
     }
 
     @Test
-    void toEventDto_rebuildsPayloadFromModel() {
+    void toEventDto_whenEventProvided_shouldRebuildPayloadFromModel() {
         GameEventMapper mapper = new GameEventMapper(1);
         GameEvent event = new GameEvent();
         event.setEventId("e1");
@@ -102,7 +102,7 @@ class GameEventMapperTest {
     }
 
     @Test
-    void toCurrencyGrantEvent_usesDeterministicEventIdFromClientRequestId() {
+    void toCurrencyGrantEvent_whenClientRequestIdProvided_shouldUseDeterministicEventId() {
         GameEventMapper mapper = new GameEventMapper(60);
 
         GameEvent e1 = mapper.toCurrencyGrantEvent("player-c", 500L, CurrencyEarnReason.MATCH_WIN, "req-abc");
@@ -120,7 +120,7 @@ class GameEventMapperTest {
     }
 
     @Test
-    void toCurrencyGrantEvent_differentClientRequestIds_produceDifferentEventIds() {
+    void toCurrencyGrantEvent_whenDifferentClientRequestIds_shouldProduceDifferentEventIds() {
         GameEventMapper mapper = new GameEventMapper(60);
 
         GameEvent e1 = mapper.toCurrencyGrantEvent("player-c", 100L, CurrencyEarnReason.DAILY_LOGIN, "req-1");

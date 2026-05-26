@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class GameEventSmokeTest extends AbstractSmokeTest {
 
     @Test
-    void shouldRecordEvent() throws Exception {
+    void recordEvent_whenValidRequest_shouldSucceed() throws Exception {
         mockMvc.perform(post("/api/v1/players/{playerId}/events", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

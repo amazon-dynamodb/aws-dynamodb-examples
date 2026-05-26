@@ -48,7 +48,7 @@ class PlayerWalletServiceTest {
     }
 
     @Test
-    void getWallet_whenWalletExists_returnsWalletSliceWrapper() {
+    void getWallet_whenWalletExists_shouldReturnWalletSliceWrapper() {
         PlayerWallet wallet = buildWallet("player-1", 1200L, 3L);
         when(repository.getWallet("player-1")).thenReturn(CompletableFuture.completedFuture(wallet));
 
@@ -59,7 +59,7 @@ class PlayerWalletServiceTest {
     }
 
     @Test
-    void getWallet_whenWalletMissing_throwsWalletNotFound() {
+    void getWallet_whenWalletMissing_shouldThrowWalletNotFound() {
         when(repository.getWallet("missing")).thenReturn(CompletableFuture.completedFuture(null));
 
         assertThatThrownBy(() -> service.getWallet("missing"))

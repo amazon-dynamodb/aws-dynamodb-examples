@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# delete-dynamodb-table.sh — Deletes DynamoDB table(s) for the Gaming Platform app
+# delete-dynamodb-table.sh - Deletes DynamoDB table(s) for the Gaming Platform app
 #
 # Usage:
 #   ./scripts/delete-dynamodb-table.sh [--dynamodb-endpoint <url>] [--dynamodb-region <region>] [--table-name <table-name>]
@@ -8,8 +8,8 @@
 # Optional arguments:
 #   --dynamodb-endpoint  DynamoDB endpoint (default: http://localhost:8000)
 #   --dynamodb-region    AWS region (default: eu-west-1)
-#   --table-name         Table name. If omitted, deletes GamingPlayerState,
-#                        GamingGameEvents, and GamingLeaderboard (defaults from application.yml).
+#   --table-name         Table name. If omitted, deletes JavaGamingPlayerState,
+#                        JavaGamingGameEvents, and JavaGamingLeaderboard (defaults from application.yml).
 #
 # WARNING: This permanently deletes the table (or tables) and all their data.
 #
@@ -17,7 +17,7 @@
 # This script waits until describe-table reports each table is gone (avoids racing the
 # next create against the same name).
 #
-# To recreate the tables for this sample, start the Spring Boot app once; it creates the
+# To recreate the tables for this sample, start the Spring Boot app once. It creates the
 # tables when missing with the same specification.
 #
 # Prerequisites:
@@ -61,7 +61,7 @@ done
 if [[ -n "$TABLE_NAME" ]]; then
     TABLES_TO_DELETE=("$TABLE_NAME")
 else
-    TABLES_TO_DELETE=(GamingPlayerState GamingGameEvents GamingLeaderboard)
+    TABLES_TO_DELETE=(JavaGamingPlayerState JavaGamingGameEvents JavaGamingLeaderboard)
 fi
 
 delete_and_wait() {

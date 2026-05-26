@@ -21,7 +21,7 @@ class PlayerWalletMapperTest {
     private final PlayerWalletMapper mapper = new PlayerWalletMapper();
 
     @Test
-    void defaultWallet_whenNewPlayerId_seedsStarterBalanceAndKeys() {
+    void defaultWallet_whenNewPlayerIdProvided_shouldSeedStarterBalanceAndKeys() {
         PlayerWallet wallet = mapper.defaultWallet("player-1");
 
         assertThat(wallet.getPartitionKey()).isEqualTo(PlayerProfile.PK_PREFIX + "player-1");
@@ -32,7 +32,7 @@ class PlayerWalletMapperTest {
     }
 
     @Test
-    void toSnapshot_whenWalletPresent_mapsBalanceAndVersionWithoutPlayerId() {
+    void toSnapshot_whenWalletPresent_shouldMapBalanceAndVersionWithoutPlayerId() {
         PlayerWallet wallet = new PlayerWallet();
         wallet.setPlayerId("player-1");
         wallet.setCurrencyBalance(2500);

@@ -28,7 +28,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void getSettings_whenSeededPlayer_returnsSettingsSliceWithoutRootPlayerId() throws Exception {
+    void getSettings_whenSeededPlayer_shouldReturnSettingsSliceWithoutRootPlayerId() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
@@ -40,7 +40,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnDefaultSettingsForSeedPlayer() throws Exception {
+    void getSettings_whenSeedPlayer_shouldReturnDefaultSettings() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.settings.notificationsEnabled").value(true))
@@ -50,13 +50,13 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn404ForUnknownPlayer() throws Exception {
+    void getSettings_whenPlayerUnknown_shouldReturn404() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/settings", "nonexistent-player"))
                 .andExpect(status().isNotFound());
     }
 
     @Test
-    void shouldUpdateSettingsAndReturnNewValues() throws Exception {
+    void updateSettings_whenValidPatch_shouldReturnNewValues() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -76,7 +76,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldApplyPartialUpdate() throws Exception {
+    void updateSettings_whenPartialPatch_shouldApplyUpdate() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_2)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -92,7 +92,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn409OnStaleVersion() throws Exception {
+    void updateSettings_whenVersionStale_shouldReturn409() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -106,7 +106,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void updateSettings_whenValidPatch_returnsFullSnapshotWithSiblings() throws Exception {
+    void updateSettings_whenValidPatch_shouldReturnFullSnapshotWithSiblings() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_3)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -124,7 +124,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn404WhenUpdatingUnknownPlayer() throws Exception {
+    void updateSettings_whenPlayerUnknown_shouldReturn404() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/settings", "nonexistent-settings-player")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

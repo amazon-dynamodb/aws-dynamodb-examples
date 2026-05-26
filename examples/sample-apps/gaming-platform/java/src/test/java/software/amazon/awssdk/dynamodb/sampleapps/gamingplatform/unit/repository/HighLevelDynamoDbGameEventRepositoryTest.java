@@ -74,7 +74,7 @@ class HighLevelDynamoDbGameEventRepositoryTest {
     }
 
     @Test
-    void appendEvent_callsPutItemOnTable() {
+    void appendEvent_whenValidEvent_shouldCallPutItemOnTable() {
         when(eventTable.putItem(any(GameEvent.class))).thenReturn(CompletableFuture.completedFuture(null));
 
         GameEvent event = new GameEvent();
@@ -87,7 +87,7 @@ class HighLevelDynamoDbGameEventRepositoryTest {
     }
 
     @Test
-    void queryEventsByPlayer_usesEnhancedTableQuery() {
+    void queryEventsByPlayer_whenPlayerIdProvided_shouldUseEnhancedTableQuery() {
         when(eventTable.query(any(QueryEnhancedRequest.class)))
                 .thenReturn(singleEmptyPagePublisher());
 
@@ -109,7 +109,7 @@ class HighLevelDynamoDbGameEventRepositoryTest {
     }
 
     @Test
-    void queryEventsByPlayer_passesExclusiveStartKeyWhenPresent() {
+    void queryEventsByPlayer_whenStartKeyPresent_shouldPassExclusiveStartKey() {
         Map<String, AttributeValue> start = Map.of("PK", AttributeValue.fromS("x"));
         when(eventTable.query(any(QueryEnhancedRequest.class)))
                 .thenReturn(singleEmptyPagePublisher());
@@ -123,7 +123,7 @@ class HighLevelDynamoDbGameEventRepositoryTest {
     }
 
     @Test
-    void queryEventsByPlayer_withScanIndexForwardTrue_setsAscendingOnQuery() {
+    void queryEventsByPlayer_whenScanIndexForwardTrue_shouldSetAscendingOnQuery() {
         when(eventTable.query(any(QueryEnhancedRequest.class)))
                 .thenReturn(singleEmptyPagePublisher());
 

@@ -69,31 +69,31 @@ class ProgressionServiceTest {
     }
 
     @Test
-    void computeLevel_negativeXp_returnsOne() {
+    void computeLevel_whenXpNegative_shouldReturnOne() {
         assertThat(progressionForLevelMath.levelForXp(-500L)).isEqualTo(1);
     }
 
     @Test
-    void computeLevel_zeroXp_returnsOne() {
+    void computeLevel_whenXpZero_shouldReturnOne() {
         assertThat(progressionForLevelMath.levelForXp(0L)).isEqualTo(1);
     }
 
     @Test
-    void computeLevel_justPastTierIncreasesLevel() {
+    void computeLevel_whenJustPastTier_shouldIncreaseLevel() {
         assertThat(progressionForLevelMath.levelForXp(ProgressionService.XP_PER_LEVEL - 1)).isEqualTo(1);
         assertThat(progressionForLevelMath.levelForXp(ProgressionService.XP_PER_LEVEL)).isEqualTo(2);
         assertThat(progressionForLevelMath.levelForXp(ProgressionService.XP_PER_LEVEL + 100)).isEqualTo(2);
     }
 
     @Test
-    void computeLevel_clampsAtMaxLevel() {
+    void computeLevel_whenXpExceedsMax_shouldClampAtMaxLevel() {
         assertThat(progressionForLevelMath.levelForXp(
                 ProgressionService.XP_PER_LEVEL * (ProgressionService.MAX_LEVEL + 10)))
                 .isEqualTo(ProgressionService.MAX_LEVEL);
     }
 
     @Test
-    void shouldUpdateProgressionAndReturnSnapshot() {
+    void updateProgression_whenValidPatch_shouldReturnSnapshot() {
         PlayerProfile current = buildProfile(5000L, 1);
         PlayerProfile updated = buildProfile(5500L, 6);
         PlayerSnapshot snapshot = sampleSnapshot(5500L, 6, 600L, 1L);
@@ -112,7 +112,7 @@ class ProgressionServiceTest {
     }
 
     @Test
-    void shouldThrowOnStaleVersion() {
+    void updateProgression_whenVersionStale_shouldThrow() {
         PlayerProfile current = buildProfile(3000L, 1);
 
         when(playerStateRepository.getPlayer(PLAYER_ID))
@@ -129,7 +129,7 @@ class ProgressionServiceTest {
     }
 
     @Test
-    void shouldComputeLevelUpWhenThresholdCrossed() {
+    void updateProgression_whenXpThresholdCrossed_shouldLevelUp() {
         PlayerProfile current = buildProfile(900L, 1);
         PlayerProfile updated = buildProfile(1100L, 2);
         WalletEarnResponse earnResponse = new WalletEarnResponse(
@@ -159,7 +159,7 @@ class ProgressionServiceTest {
     }
 
     @Test
-    void shouldThrowWhenPlayerNotFound() {
+    void updateProgression_whenPlayerNotFound_shouldThrow() {
         when(playerStateRepository.getPlayer(PLAYER_ID))
                 .thenReturn(CompletableFuture.completedFuture(null));
 

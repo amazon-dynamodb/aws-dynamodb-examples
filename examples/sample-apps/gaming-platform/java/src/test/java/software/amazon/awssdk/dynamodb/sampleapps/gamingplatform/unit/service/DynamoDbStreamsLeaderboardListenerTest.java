@@ -45,7 +45,7 @@ import static org.mockito.Mockito.when;
 class DynamoDbStreamsLeaderboardListenerTest {
 
     private static final String STREAM_ARN =
-            "arn:aws:dynamodb:eu-west-1:123456789012:table/GamingGameEvents/stream/2024-01-01T00:00:00.000";
+            "arn:aws:dynamodb:eu-west-1:123456789012:table/JavaGamingGameEvents/stream/2024-01-01T00:00:00.000";
     private static final String SHARD_ID = "shardId-00000001778153554951-c17279f5";
 
     @Mock
@@ -65,11 +65,11 @@ class DynamoDbStreamsLeaderboardListenerTest {
     private DynamoDbStreamsLeaderboardListener createListener() {
         return new DynamoDbStreamsLeaderboardListener(
                 dynamoDbClient, streamsClient, leaderboardRepository,
-                "GamingGameEvents", "LATEST");
+                "JavaGamingGameEvents", "LATEST");
     }
 
     @Test
-    void shouldWriteLeaderboardEntryForPvpMatch() {
+    void processStreamRecord_whenPvpMatchInserted_shouldWriteLeaderboardEntry() {
         when(leaderboardRepository.putLeaderboardEntry(any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -92,7 +92,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void shouldSkipNonInsertEvents() {
+    void processStreamRecord_whenEventModified_shouldSkip() {
         DynamoDbStreamsLeaderboardListener listener = createListener();
 
         Record record = Record.builder()
@@ -110,7 +110,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void shouldSkipNonGameEventEntityType() {
+    void processStreamRecord_whenNonGameEventEntity_shouldSkip() {
         DynamoDbStreamsLeaderboardListener listener = createListener();
 
         Record record = Record.builder()
@@ -128,7 +128,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void shouldSkipNonPvpMatchEventType() {
+    void processStreamRecord_whenNonPvpMatchEventType_shouldSkip() {
         DynamoDbStreamsLeaderboardListener listener = createListener();
 
         Record record = Record.builder()
@@ -146,7 +146,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void shouldSkipWhenScoreForMissing() {
+    void processStreamRecord_whenScoreForMissing_shouldSkip() {
         DynamoDbStreamsLeaderboardListener listener = createListener();
 
         Record record = Record.builder()
@@ -166,7 +166,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void shouldUsePlayerIdAsNameWhenPlayerNameMissing() {
+    void processStreamRecord_whenPlayerNameMissing_shouldUsePlayerIdAsName() {
         when(leaderboardRepository.putLeaderboardEntry(any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -192,7 +192,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void getRecordsWithRenewal_trimmedOnGetRecords_clearsSequenceAndRetries() throws Exception {
+    void getRecordsWithRenewal_whenTrimmedOnGetRecords_shouldClearSequenceAndRetry() throws Exception {
         GetRecordsResponse second = GetRecordsResponse.builder()
                 .records(List.of())
                 .nextShardIterator("next-after-trim-retry")
@@ -226,7 +226,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void openShardIterator_trimmedAfterSequence_clearsSequenceAndFallsBackToConfiguredIterator() throws Exception {
+    void openShardIterator_whenTrimmedAfterSequence_shouldClearSequenceAndFallBackToConfiguredIterator() throws Exception {
         when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
                 .thenReturn(CompletableFuture.failedFuture(
                         new CompletionException(TrimmedDataAccessException.builder().build())))
@@ -246,7 +246,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     }
 
     @Test
-    void getRecordsWithRenewal_nonRenewableCompletionException_rethrows() throws Exception {
+    void getRecordsWithRenewal_whenNonRenewableCompletionException_shouldRethrow() throws Exception {
         when(streamsClient.getRecords(any(GetRecordsRequest.class)))
                 .thenReturn(CompletableFuture.failedFuture(
                         new CompletionException(new RuntimeException("throttle"))));

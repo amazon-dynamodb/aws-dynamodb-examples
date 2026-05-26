@@ -27,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PurchaseSmokeTest extends AbstractSmokeTest {
 
     @Test
-    void completePurchase_whenFundsAvailable_returnsFullSnapshotWithStatus() throws Exception {
+    void completePurchase_whenFundsAvailable_shouldReturnFullSnapshotWithStatus() throws Exception {
         String clientRequestId = "smoke-purchase-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)

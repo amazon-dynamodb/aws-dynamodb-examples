@@ -46,7 +46,7 @@ class PlayerControllerTest {
     private PlayerProfileService profileService;
 
     @Test
-    void registerPlayer_whenNewAccount_returns201WithFullSnapshot() throws Exception {
+    void registerPlayer_whenNewAccount_shouldReturn201WithFullSnapshot() throws Exception {
         RegisterPlayerResponse response = registerResponse("player-1", "TestPlayer", "PC", 1, 0, 0, 1, true);
 
         when(registrationService.registerPlayer(any(RegisterPlayerRequest.class))).thenReturn(response);
@@ -69,7 +69,7 @@ class PlayerControllerTest {
     }
 
     @Test
-    void registerPlayer_whenIdempotentReplay_returns200WithExistingSnapshot() throws Exception {
+    void registerPlayer_whenIdempotentReplay_shouldReturn200WithExistingSnapshot() throws Exception {
         RegisterPlayerResponse response = registerResponse("player-1", "TestPlayer", "PC", 5, 1000, 500, 3, false);
 
         when(registrationService.registerPlayer(any(RegisterPlayerRequest.class))).thenReturn(response);
@@ -89,7 +89,7 @@ class PlayerControllerTest {
     }
 
     @Test
-    void registerPlayer_whenConflictingIdentity_returns409() throws Exception {
+    void registerPlayer_whenConflictingIdentity_shouldReturn409() throws Exception {
         when(registrationService.registerPlayer(any(RegisterPlayerRequest.class)))
                 .thenThrow(new PlayerAlreadyExistsException("player-1"));
 
@@ -107,7 +107,7 @@ class PlayerControllerTest {
     }
 
     @Test
-    void registerPlayer_whenPlatformMissing_returns400() throws Exception {
+    void registerPlayer_whenPlatformMissing_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -121,7 +121,7 @@ class PlayerControllerTest {
     }
 
     @Test
-    void getProfile_whenPlayerExists_returnsProfileSliceWithoutRootPlayerId() throws Exception {
+    void getProfile_whenPlayerExists_shouldReturnProfileSliceWithoutRootPlayerId() throws Exception {
         GetProfileResponse profileResponse = new GetProfileResponse(
                 new ProfileSnapshot("AlphaWolf", "PC", 10, 3500, "2026-01-15T10:00:00Z", 1));
 
@@ -135,7 +135,7 @@ class PlayerControllerTest {
     }
 
     @Test
-    void getProfile_whenPlayerMissing_returns404() throws Exception {
+    void getProfile_whenPlayerMissing_shouldReturn404() throws Exception {
         when(profileService.getProfile("unknown"))
                 .thenThrow(new PlayerNotFoundException("unknown"));
 

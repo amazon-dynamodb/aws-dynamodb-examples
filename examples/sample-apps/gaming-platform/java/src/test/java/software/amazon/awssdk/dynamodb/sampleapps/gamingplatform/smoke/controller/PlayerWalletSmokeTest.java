@@ -27,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PlayerWalletSmokeTest extends AbstractSmokeTest {
 
     @Test
-    void getWallet_whenSeededPlayer_returnsWalletSliceWithoutRootPlayerId() throws Exception {
+    void getWallet_whenSeededPlayer_shouldReturnWalletSliceWithoutRootPlayerId() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
@@ -35,7 +35,7 @@ class PlayerWalletSmokeTest extends AbstractSmokeTest {
     }
 
     @Test
-    void earnCurrency_whenCompleted_returnsFullSnapshotWithStatus() throws Exception {
+    void earnCurrency_whenCompleted_shouldReturnFullSnapshotWithStatus() throws Exception {
         String clientRequestId = "smoke-earn-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_1)

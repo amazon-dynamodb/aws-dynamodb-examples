@@ -49,7 +49,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
     private String playerStateTableName;
 
     @Test
-    void shouldReturnSeededPlayer() throws Exception {
+    void getProfile_whenSeededPlayer_shouldReturnProfile() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.profile.playerName").value("AlphaWolf"))
@@ -58,14 +58,14 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn404ForUnknownPlayer() throws Exception {
+    void getProfile_whenPlayerUnknown_shouldReturn404() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/profile", UUID.randomUUID().toString()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
     }
 
     @Test
-    void getProfile_whenSeededPlayer_returnsProfileSliceWithoutRootPlayerId() throws Exception {
+    void getProfile_whenSeededPlayer_shouldReturnProfileSliceWithoutRootPlayerId() throws Exception {
         mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
@@ -76,7 +76,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldCreateAndRetrievePlayer() throws Exception {
+    void registerPlayer_whenNewAccount_shouldCreateAndRetrievePlayer() throws Exception {
         String registerBody = """
                 {
                   "platform": "PC",
@@ -115,7 +115,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnExistingOnDuplicateRegister() throws Exception {
+    void registerPlayer_whenDuplicateRegister_shouldReturnExisting() throws Exception {
         String registerBody = """
                 {
                   "platform": "IOS",
@@ -139,7 +139,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void registerPlayer_whenNewAccount_returnsFullSnapshotAtRoot() throws Exception {
+    void registerPlayer_whenNewAccount_shouldReturnFullSnapshotAtRoot() throws Exception {
         String platformUserId = "snapshot-contract-" + UUID.randomUUID();
 
         mockMvc.perform(post("/api/v1/players")
@@ -163,7 +163,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn409WhenConflictingDataForSamePlatformIdentity() throws Exception {
+    void registerPlayer_whenConflictingIdentity_shouldReturn409() throws Exception {
         String platformUserId = "integration-registration-clash-user";
         String playerId = playerMapper.generatePlayerId("PC", platformUserId);
 

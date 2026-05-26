@@ -40,7 +40,7 @@ class RetryHelperTest {
     private DynamoDbAsyncClient client;
 
     @Test
-    void shouldCollectAllItemsWhenNoUnprocessedKeys() {
+    void executeBatchGetUntilComplete_whenNoUnprocessedKeys_shouldCollectAllItems() {
         Map<String, AttributeValue> item1 = Map.of("PK", AttributeValue.fromS("USER#1"));
         Map<String, AttributeValue> item2 = Map.of("PK", AttributeValue.fromS("USER#2"));
 
@@ -67,7 +67,7 @@ class RetryHelperTest {
     }
 
     @Test
-    void shouldRetryWhenUnprocessedKeysExist() {
+    void executeBatchGetUntilComplete_whenUnprocessedKeysExist_shouldRetry() {
         Map<String, AttributeValue> item1 = Map.of("PK", AttributeValue.fromS("USER#1"));
         Map<String, AttributeValue> item2 = Map.of("PK", AttributeValue.fromS("USER#2"));
         Map<String, AttributeValue> unprocessedKey = Map.of("PK", AttributeValue.fromS("USER#2"));
@@ -103,7 +103,7 @@ class RetryHelperTest {
     }
 
     @Test
-    void shouldThrowWhenMaxRoundsExceeded() {
+    void executeBatchGetUntilComplete_whenMaxRoundsExceeded_shouldThrow() {
         Map<String, AttributeValue> unprocessedKey = Map.of("PK", AttributeValue.fromS("USER#1"));
 
         BatchGetItemResponse responseWithUnprocessed = BatchGetItemResponse.builder()

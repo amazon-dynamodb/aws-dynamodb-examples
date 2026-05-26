@@ -15,13 +15,13 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.DynamoDbEn
 class DynamoDbEndpointUtilsTest {
 
     @Test
-    void isLocalEndpointShouldReturnTrueForLocalhost() {
+    void isLocalEndpoint_whenHostIsLocalhost_shouldReturnTrue() {
         assertThat(DynamoDbEndpointUtils.isLocalEndpoint("http://localhost:8000")).isTrue();
         assertThat(DynamoDbEndpointUtils.isLocalEndpoint("http://127.0.0.1:8000")).isTrue();
     }
 
     @Test
-    void isLocalEndpointShouldReturnFalseForAwsEndpoint() {
+    void isLocalEndpoint_whenHostIsAwsRegionalEndpoint_shouldReturnFalse() {
         assertThat(DynamoDbEndpointUtils.isLocalEndpoint("https://dynamodb.eu-west-1.amazonaws.com")).isFalse();
     }
 }

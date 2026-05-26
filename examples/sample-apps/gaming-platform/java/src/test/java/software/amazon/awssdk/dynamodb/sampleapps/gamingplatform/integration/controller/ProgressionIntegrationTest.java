@@ -29,7 +29,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    void shouldApplyXpAndReturnUpdatedProfile() throws Exception {
+    void updateProgression_whenValidPatch_shouldApplyXpAndReturnUpdatedProfile() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -51,7 +51,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn409OnStaleVersion() throws Exception {
+    void updateProgression_whenVersionStale_shouldReturn409() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -66,7 +66,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturn404ForUnknownPlayer() throws Exception {
+    void updateProgression_whenPlayerUnknown_shouldReturn404() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/progression", "nonexistent-progression-player")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -81,7 +81,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldLevelUpWhenXpThresholdCrossed() throws Exception {
+    void updateProgression_whenXpThresholdCrossed_shouldLevelUp() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -98,7 +98,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void shouldReturnWalletInResponseAndIgnoreUnknownFields() throws Exception {
+    void updateProgression_whenUnknownFieldsPresent_shouldReturnWalletAndIgnoreUnknownFields() throws Exception {
         mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

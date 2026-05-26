@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# start-dynamodb-local.sh — Starts DynamoDB Local in a Docker container
+# start-dynamodb-local.sh - Starts DynamoDB Local in a Docker container
 #
 # Usage:
 #   ./scripts/start-dynamodb-local.sh

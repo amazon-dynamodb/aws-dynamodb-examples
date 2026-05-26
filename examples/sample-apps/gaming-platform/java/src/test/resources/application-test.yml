@@ -5,9 +5,9 @@ dynamodb:
   endpoint: http://localhost:8000    # overridden by AbstractIntegrationTest#dynamoDbProperties
   region: eu-west-1
   client-type: high-level
-  player-state-table-name: GamingPlayerState
-  game-events-table-name: GamingGameEvents
-  leaderboard-table-name: GamingLeaderboard
+  player-state-table-name: JavaGamingPlayerState
+  game-events-table-name: JavaGamingGameEvents
+  leaderboard-table-name: JavaGamingLeaderboard
   game-events-ttl-seconds: 7776000
   streams:
     # Lets integration tests observe INSERTs without relying on LATEST iterator timing.

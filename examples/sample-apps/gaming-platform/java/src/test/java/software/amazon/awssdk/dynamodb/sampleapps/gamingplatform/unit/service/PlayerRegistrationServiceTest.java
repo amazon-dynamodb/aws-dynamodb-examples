@@ -61,7 +61,7 @@ class PlayerRegistrationServiceTest {
     private PlayerRegistrationService service;
 
     @Test
-    void shouldRegisterNewPlayer() {
+    void registerPlayer_whenNewRequest_shouldRegisterPlayer() {
         RegisterPlayerRequest request = new RegisterPlayerRequest("PC", "steam-123", "TestPlayer");
         PlayerProfile draft = buildProfile("player-1", "PC", "steam-123");
         draft.setVersion(0);
@@ -85,7 +85,7 @@ class PlayerRegistrationServiceTest {
     }
 
     @Test
-    void shouldReturnExistingOnIdempotentReplay() {
+    void registerPlayer_whenIdempotentReplay_shouldReturnExisting() {
         RegisterPlayerRequest request = new RegisterPlayerRequest("PC", "steam-123", "TestPlayer");
         PlayerProfile profile = buildProfile("player-1", "PC", "steam-123");
         PlayerSettings defaultSettings = new PlayerSettings();
@@ -108,7 +108,7 @@ class PlayerRegistrationServiceTest {
     }
 
     @Test
-    void shouldThrowWhenDuplicateWithDifferentData() {
+    void registerPlayer_whenDuplicateWithDifferentData_shouldThrow() {
         RegisterPlayerRequest request = new RegisterPlayerRequest("PC", "steam-123", "TestPlayer");
         PlayerProfile profile = buildProfile("player-1", "PC", "steam-123");
         PlayerSettings defaultSettings = new PlayerSettings();

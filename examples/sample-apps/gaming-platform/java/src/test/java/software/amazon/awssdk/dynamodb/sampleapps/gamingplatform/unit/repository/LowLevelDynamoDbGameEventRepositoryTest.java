@@ -35,7 +35,7 @@ class LowLevelDynamoDbGameEventRepositoryTest {
     private DynamoDbAsyncClient client;
 
     @Test
-    void appendEvent_sendsPutItem() {
+    void appendEvent_whenValidEvent_shouldSendPutItem() {
         when(client.putItem(any(PutItemRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -60,7 +60,7 @@ class LowLevelDynamoDbGameEventRepositoryTest {
     }
 
     @Test
-    void queryEventsByPlayer_returnsPageFromQuery() {
+    void queryEventsByPlayer_whenPlayerIdProvided_shouldReturnPageFromQuery() {
         when(client.query(any(QueryRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(
                         QueryResponse.builder().items(List.of()).build()));
@@ -81,7 +81,7 @@ class LowLevelDynamoDbGameEventRepositoryTest {
     }
 
     @Test
-    void queryEventsByPlayer_withStartKey_setsExclusiveStartKey() {
+    void queryEventsByPlayer_whenStartKeyProvided_shouldSetExclusiveStartKey() {
         when(client.query(any(QueryRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(
                         QueryResponse.builder().items(List.of()).build()));
@@ -98,7 +98,7 @@ class LowLevelDynamoDbGameEventRepositoryTest {
     }
 
     @Test
-    void queryEventsByPlayer_withScanIndexForwardTrue_sendsAscendingQuery() {
+    void queryEventsByPlayer_whenScanIndexForwardTrue_shouldSendAscendingQuery() {
         when(client.query(any(QueryRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(
                         QueryResponse.builder().items(List.of()).build()));

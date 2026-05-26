@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run-app-docker.sh — Runs the app + DynamoDB Local together via docker-compose
+# run-app-docker.sh - Runs the app + DynamoDB Local together via docker-compose
 #
 # Usage:
 #   ./scripts/run-app-docker.sh [--stop] [--dynamodb-client-type <type>]

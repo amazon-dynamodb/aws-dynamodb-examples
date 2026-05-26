@@ -32,7 +32,7 @@ class LeaderboardControllerTest {
     private LeaderboardQueryService leaderboardQueryService;
 
     @Test
-    void shouldReturnLeaderboard() throws Exception {
+    void getLeaderboard_whenEntriesExist_shouldReturnLeaderboard() throws Exception {
         String scope = "SEASON#default#MODE#ranked";
         LeaderboardResponse response = new LeaderboardResponse(scope,
                 List.of(
@@ -54,7 +54,7 @@ class LeaderboardControllerTest {
     }
 
     @Test
-    void shouldUseDefaultLimit() throws Exception {
+    void getLeaderboard_whenLimitOmitted_shouldUseDefaultLimit() throws Exception {
         String scope = "SEASON#default#MODE#ranked";
         LeaderboardResponse response = new LeaderboardResponse(scope, List.of());
 
@@ -67,7 +67,7 @@ class LeaderboardControllerTest {
     }
 
     @Test
-    void shouldReturnEmptyLeaderboard() throws Exception {
+    void getLeaderboard_whenNoEntries_shouldReturnEmptyLeaderboard() throws Exception {
         String scope = "SEASON#unknown#MODE#ranked";
         LeaderboardResponse response = new LeaderboardResponse(scope, List.of());
 

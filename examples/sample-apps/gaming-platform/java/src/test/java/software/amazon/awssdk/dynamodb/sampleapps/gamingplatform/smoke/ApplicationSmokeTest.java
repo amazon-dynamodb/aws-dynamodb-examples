@@ -30,14 +30,20 @@ public class ApplicationSmokeTest extends AbstractSmokeTest {
     private DynamoDbEnhancedAsyncClient dynamoDbEnhancedAsyncClient;
 
     @Test
-    void healthEndpointShouldReturn200() throws Exception {
+    void actuatorHealth_whenRequested_shouldReturn200() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
     }
 
     @Test
-    void openApiSpecShouldBeAccessible() throws Exception {
+    void favicon_whenRequested_shouldReturn204() throws Exception {
+        mockMvc.perform(get("/favicon.ico"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void openApiSpec_whenRequested_shouldBeAccessible() throws Exception {
         mockMvc.perform(get("/api-docs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.info.title").value("Gaming Platform DynamoDB Sample API"))
@@ -46,7 +52,7 @@ public class ApplicationSmokeTest extends AbstractSmokeTest {
     }
 
     @Test
-    void dynamoDbClientsShouldUseExplicitSdkRetryStrategy() {
+    void dynamoDbClients_whenWired_shouldUseExplicitSdkRetryStrategy() {
         DynamoDbClientRetryAssertions.assertExplicitSdkRetryStrategy(dynamoDbAsyncClient);
         if (dynamoDbEnhancedAsyncClient != null) {
             DynamoDbClientRetryAssertions.assertExplicitSdkRetryStrategy(dynamoDbEnhancedAsyncClient);

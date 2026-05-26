@@ -44,7 +44,7 @@ class LeaderboardQueryServiceTest {
     private LeaderboardQueryService service;
 
     @Test
-    void shouldReturnTopEntries() {
+    void getTopEntries_whenEntriesExist_shouldReturnTopEntries() {
         String scope = "SEASON#default#MODE#ranked";
         LeaderboardEntry entry = new LeaderboardEntry();
         entry.setPlayerId("player-1");
@@ -66,7 +66,7 @@ class LeaderboardQueryServiceTest {
     }
 
     @Test
-    void shouldClampLimitToMinimum() {
+    void getTopEntries_whenLimitBelowMinimum_shouldClampToMinimum() {
         String scope = "SEASON#default#MODE#ranked";
         when(repository.queryTopN(scope, 1)).thenReturn(CompletableFuture.completedFuture(List.of()));
         when(mapper.toResponse(eq(scope), anyList())).thenReturn(new LeaderboardResponse(scope, List.of()));
@@ -77,7 +77,7 @@ class LeaderboardQueryServiceTest {
     }
 
     @Test
-    void shouldClampLimitToMaximum() {
+    void getTopEntries_whenLimitAboveMaximum_shouldClampToMaximum() {
         String scope = "SEASON#default#MODE#ranked";
         when(repository.queryTopN(scope, 100)).thenReturn(CompletableFuture.completedFuture(List.of()));
         when(mapper.toResponse(eq(scope), anyList())).thenReturn(new LeaderboardResponse(scope, List.of()));
@@ -88,7 +88,7 @@ class LeaderboardQueryServiceTest {
     }
 
     @Test
-    void shouldReturnEmptyForNoEntries() {
+    void getTopEntries_whenNoEntries_shouldReturnEmpty() {
         String scope = "SEASON#empty#MODE#ranked";
         LeaderboardResponse expected = new LeaderboardResponse(scope, List.of());
 

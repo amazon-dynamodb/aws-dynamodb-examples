@@ -61,7 +61,7 @@ class PurchaseServiceTest {
     private PurchaseService purchaseService;
 
     @Test
-    void shouldCompletePurchase() {
+    void completePurchase_whenFundsAvailable_shouldComplete() {
         PlayerProfile profile = buildProfile(1);
         PlayerWallet wallet = buildWallet(5000L, 1);
         GameEvent event = buildEvent();
@@ -86,7 +86,7 @@ class PurchaseServiceTest {
     }
 
     @Test
-    void shouldRejectInsufficientFunds() {
+    void completePurchase_whenInsufficientFunds_shouldReject() {
         PlayerProfile profile = buildProfile(1);
         PlayerWallet wallet = buildWallet(100L, 1);
         PurchaseRequest request = new PurchaseRequest("epic-armor", 500L, "req-xyz-789");
@@ -101,7 +101,7 @@ class PurchaseServiceTest {
     }
 
     @Test
-    void shouldFailFastWhenBalanceTooLow() {
+    void completePurchase_whenBalanceTooLow_shouldFailFast() {
         PlayerProfile profile = buildProfile(1);
         PlayerWallet wallet = buildWallet(0L, 1);
         PurchaseRequest request = new PurchaseRequest("potion", 50L, "req-fail-fast");
@@ -118,7 +118,7 @@ class PurchaseServiceTest {
     }
 
     @Test
-    void shouldThrowWhenPlayerNotFound() {
+    void completePurchase_whenPlayerNotFound_shouldThrow() {
         when(playerStateRepository.getPlayer(PLAYER_ID))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
@@ -129,7 +129,7 @@ class PurchaseServiceTest {
     }
 
     @Test
-    void shouldThrowStaleVersionWhenWalletUpdateConditionallyFails() {
+    void completePurchase_whenWalletUpdateConditionallyFails_shouldThrowStaleVersion() {
         PlayerProfile profile = buildProfile(7);
         PlayerWallet wallet = buildWallet(5000L, 7);
         GameEvent event = buildEvent();
@@ -160,7 +160,7 @@ class PurchaseServiceTest {
     }
 
     @Test
-    void shouldReturnIdempotentReplayOnDuplicateEvent() {
+    void completePurchase_whenDuplicateEvent_shouldReturnIdempotentReplay() {
         PlayerProfile profile = buildProfile(1);
         PlayerWallet wallet = buildWallet(5000L, 1);
         GameEvent event = buildEvent();

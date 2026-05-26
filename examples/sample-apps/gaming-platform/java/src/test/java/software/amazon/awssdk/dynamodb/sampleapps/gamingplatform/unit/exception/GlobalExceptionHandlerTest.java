@@ -67,7 +67,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void playerNotFound_returns404() throws Exception {
+    void handleException_whenPlayerNotFound_shouldReturn404() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/player-not-found").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"))
@@ -77,7 +77,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void playerAlreadyExists_returns409() throws Exception {
+    void handleException_whenPlayerAlreadyExists_shouldReturn409() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/player-exists").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("PLAYER_ALREADY_EXISTS"))
@@ -87,7 +87,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void insufficientFunds_returns409() throws Exception {
+    void handleException_whenInsufficientFunds_shouldReturn409() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/insufficient-funds").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("INSUFFICIENT_FUNDS"))
@@ -97,7 +97,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void staleVersion_returns409() throws Exception {
+    void handleException_whenStaleVersion_shouldReturn409() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/stale-version").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("STALE_VERSION"))
@@ -107,7 +107,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void validationError_returns400() throws Exception {
+    void handleException_whenValidationError_shouldReturn400() throws Exception {
         MvcResult result = mockMvc.perform(post("/test/validation")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"value\":\"\"}"))
@@ -119,7 +119,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void invalidPaginationToken_returns400() throws Exception {
+    void handleException_whenInvalidPaginationToken_shouldReturn400() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/bad-pagination-token").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"))
@@ -129,7 +129,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void illegalArgument_returns400() throws Exception {
+    void handleException_whenIllegalArgument_shouldReturn400() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/bad-arg").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_ARGUMENT"))
@@ -139,7 +139,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void unexpectedException_returns500() throws Exception {
+    void handleException_whenUnexpectedException_shouldReturn500() throws Exception {
         MvcResult result = mockMvc.perform(get("/test/unexpected").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error").value("INTERNAL_ERROR"))

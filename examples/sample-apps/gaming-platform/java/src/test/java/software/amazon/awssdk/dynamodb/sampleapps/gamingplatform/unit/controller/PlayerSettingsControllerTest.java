@@ -39,7 +39,7 @@ class PlayerSettingsControllerTest {
     private PlayerSettingsService settingsService;
 
     @Test
-    void getSettings_whenSettingsExist_returnsSettingsSliceWithoutRootPlayerId() throws Exception {
+    void getSettings_whenSettingsExist_shouldReturnSettingsSliceWithoutRootPlayerId() throws Exception {
         GetSettingsResponse response = new GetSettingsResponse(
                 new SettingsSnapshot(true, "en", "PUBLIC", 1));
         when(settingsService.getSettings("p1")).thenReturn(response);
@@ -54,7 +54,7 @@ class PlayerSettingsControllerTest {
     }
 
     @Test
-    void getSettings_whenPlayerMissing_returns404() throws Exception {
+    void getSettings_whenPlayerMissing_shouldReturn404() throws Exception {
         when(settingsService.getSettings("missing")).thenThrow(new PlayerNotFoundException("missing"));
 
         mockMvc.perform(get("/api/v1/players/{playerId}/settings", "missing"))
@@ -62,7 +62,7 @@ class PlayerSettingsControllerTest {
     }
 
     @Test
-    void updateSettings_whenPatchApplied_returnsFullSnapshotWithSiblings() throws Exception {
+    void updateSettings_whenPatchApplied_shouldReturnFullSnapshotWithSiblings() throws Exception {
         UpdatePlayerSettingsResponse response = new UpdatePlayerSettingsResponse(
                 "p1",
                 new ProfileSnapshot("N", "PC", 1, 0, "2026-01-01T00:00:00Z", 1),
@@ -89,7 +89,7 @@ class PlayerSettingsControllerTest {
     }
 
     @Test
-    void updateSettings_whenVersionStale_returns409() throws Exception {
+    void updateSettings_whenVersionStale_shouldReturn409() throws Exception {
         when(settingsService.updateSettings(eq("p1"), any()))
                 .thenThrow(new StaleVersionException("p1", 999));
 
@@ -105,7 +105,7 @@ class PlayerSettingsControllerTest {
     }
 
     @Test
-    void updateSettings_whenPlayerMissing_returns404() throws Exception {
+    void updateSettings_whenPlayerMissing_shouldReturn404() throws Exception {
         when(settingsService.updateSettings(eq("missing"), any()))
                 .thenThrow(new PlayerNotFoundException("missing"));
 

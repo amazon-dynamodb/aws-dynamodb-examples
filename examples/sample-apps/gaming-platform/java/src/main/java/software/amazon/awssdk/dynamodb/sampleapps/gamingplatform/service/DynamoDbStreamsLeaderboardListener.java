@@ -283,7 +283,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
                 pollShard(streamArn, shard);
             }
         } catch (CancellationException e) {
-            // Poller stopped while waiting on an async SDK call; exit quietly.
+            // Poller stopped while waiting on an async SDK call. Exit quietly.
         } catch (Exception e) {
             if (!running.get()) {
                 return;

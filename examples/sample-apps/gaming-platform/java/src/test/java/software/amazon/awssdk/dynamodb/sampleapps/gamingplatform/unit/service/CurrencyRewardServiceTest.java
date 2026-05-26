@@ -69,7 +69,7 @@ class CurrencyRewardServiceTest {
     }
 
     @Test
-    void grantCurrency_completesSuccessfully() {
+    void grantCurrency_whenValidRequest_shouldComplete() {
         PlayerWallet wallet = buildWallet(500L, 1L);
         GameEvent rewardEvent = buildEvent("evt-1");
 
@@ -92,7 +92,7 @@ class CurrencyRewardServiceTest {
     }
 
     @Test
-    void grantCurrency_returnsIdempotentReplay_onDuplicateEvent() {
+    void grantCurrency_whenDuplicateEvent_shouldReturnIdempotentReplay() {
         PlayerWallet wallet = buildWallet(500L, 1L);
         GameEvent rewardEvent = buildEvent("evt-dup");
 
@@ -120,7 +120,7 @@ class CurrencyRewardServiceTest {
     }
 
     @Test
-    void grantCurrency_throwsPlayerNotFound_whenWalletConditionFails() {
+    void grantCurrency_whenWalletConditionFails_shouldThrowPlayerNotFound() {
         PlayerWallet wallet = buildWallet(0L, 1L);
         GameEvent rewardEvent = buildEvent("evt-x");
 
@@ -144,7 +144,7 @@ class CurrencyRewardServiceTest {
     }
 
     @Test
-    void grantCurrency_throwsPlayerNotFound_whenWalletMissing() {
+    void grantCurrency_whenWalletMissing_shouldThrowPlayerNotFound() {
         when(repository.getWallet(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(null));
 
         assertThatThrownBy(() -> service.grantCurrency(
@@ -155,7 +155,7 @@ class CurrencyRewardServiceTest {
     }
 
     @Test
-    void grantCurrency_convenienceOverload_delegatesCorrectly() {
+    void grantCurrency_whenConvenienceOverloadUsed_shouldDelegateCorrectly() {
         PlayerWallet wallet = buildWallet(100L, 1L);
         GameEvent rewardEvent = buildEvent("evt-conv");
 

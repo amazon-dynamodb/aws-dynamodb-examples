@@ -54,7 +54,7 @@ class HighLevelDynamoDbLeaderboardRepositoryTest {
     }
 
     @Test
-    void putLeaderboardEntry_callsPutItem() {
+    void putLeaderboardEntry_whenValidEntry_shouldCallPutItem() {
         LeaderboardEntry entry = new LeaderboardEntry();
         entry.setPartitionKey("PK");
         entry.setSortKey("SK");
@@ -66,7 +66,7 @@ class HighLevelDynamoDbLeaderboardRepositoryTest {
     }
 
     @Test
-    void deleteLeaderboardEntry_callsDeleteItemWithKey() {
+    void deleteLeaderboardEntry_whenKeyProvided_shouldCallDeleteItemWithKey() {
         when(table.deleteItem(any(Key.class))).thenReturn(CompletableFuture.completedFuture(null));
 
         repository.deleteLeaderboardEntry("pk1", "sk1").join();
@@ -78,7 +78,7 @@ class HighLevelDynamoDbLeaderboardRepositoryTest {
     }
 
     @Test
-    void queryTopN_collectsFirstPage() {
+    void queryTopN_whenEntriesExist_shouldCollectFirstPage() {
         LeaderboardEntry row = new LeaderboardEntry();
         row.setPlayerId("p");
         PagePublisher<LeaderboardEntry> publisher =

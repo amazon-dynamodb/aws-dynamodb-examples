@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# stop-dynamodb-local.sh — Stops the DynamoDB Local Docker container
+# stop-dynamodb-local.sh - Stops the DynamoDB Local Docker container
 #
 # Usage:
 #   ./scripts/stop-dynamodb-local.sh

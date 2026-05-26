@@ -21,7 +21,7 @@ class PlayerSettingsMapperTest {
     private final PlayerSettingsMapper mapper = new PlayerSettingsMapper();
 
     @Test
-    void defaultSettings_whenNewPlayerId_setsExpectedDefaultsAndKeys() {
+    void defaultSettings_whenNewPlayerIdProvided_shouldSetExpectedDefaultsAndKeys() {
         PlayerSettings settings = mapper.defaultSettings("player-1");
 
         assertThat(settings.getPartitionKey()).isEqualTo(PlayerProfile.PK_PREFIX + "player-1");
@@ -34,7 +34,7 @@ class PlayerSettingsMapperTest {
     }
 
     @Test
-    void toSnapshot_whenSettingsPresent_mapsFieldsWithoutPlayerId() {
+    void toSnapshot_whenSettingsPresent_shouldMapFieldsWithoutPlayerId() {
         PlayerSettings settings = new PlayerSettings();
         settings.setPlayerId("player-1");
         settings.setNotificationsEnabled(false);

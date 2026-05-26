@@ -18,7 +18,7 @@ class DynamoDbStreamsConfigTest {
             .withUserConfiguration(DynamoDbStreamsConfig.class);
 
     @Test
-    void localEndpoint_shouldProvideStreamsAsyncClientBean() {
+    void contextRunner_whenLocalEndpointConfigured_shouldProvideStreamsAsyncClientBean() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.endpoint=http://localhost:8000",
@@ -27,7 +27,7 @@ class DynamoDbStreamsConfigTest {
     }
 
     @Test
-    void awsEndpoint_shouldProvideStreamsAsyncClientBean() {
+    void contextRunner_whenAwsEndpointConfigured_shouldProvideStreamsAsyncClientBean() {
         contextRunner
                 .withPropertyValues(
                         "dynamodb.endpoint=https://dynamodb.eu-west-1.amazonaws.com",

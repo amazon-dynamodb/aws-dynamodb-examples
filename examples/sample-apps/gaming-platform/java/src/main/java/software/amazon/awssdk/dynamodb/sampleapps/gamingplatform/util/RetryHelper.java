@@ -245,7 +245,7 @@ public final class RetryHelper {
             @Override
             public void onSubscribe(Subscription s) {
                 this.subscription = s;
-                // Request exactly one page; the enhanced client emits one page per BatchGetItem call.
+                // Request exactly one page. The enhanced client emits one page per BatchGetItem call.
                 s.request(1);
             }
 
@@ -253,7 +253,7 @@ public final class RetryHelper {
             @Override
             public void onNext(BatchGetResultPage page) {
                 result.complete(page);
-                // Only the first page is needed; cancel to avoid unnecessary publisher work.
+                // Only the first page is needed. Cancel to avoid unnecessary publisher work.
                 subscription.cancel();
             }
 
@@ -266,7 +266,7 @@ public final class RetryHelper {
             /** Signals a missing page if the stream ends without data. */
             @Override
             public void onComplete() {
-                // Guard: onComplete may fire after cancel; only fail if no page was received.
+                // Guard: onComplete may fire after cancel. Only fail if no page was received.
                 if (!result.isDone()) {
                     result.completeExceptionally(
                             new IllegalStateException("BatchGetItem publisher completed without a page"));

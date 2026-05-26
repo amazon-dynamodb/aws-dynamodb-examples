@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run-app-local.sh — Runs the app on the host machine
+# run-app-local.sh - Runs the app on the host machine
 #
 # DynamoDB Local must already be running in Docker (use start-dynamodb-local.sh).
 #

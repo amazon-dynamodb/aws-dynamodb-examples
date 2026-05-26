@@ -8,8 +8,8 @@ import org.springframework.test.context.DynamicPropertySource;
  * Runs the same smoke tests as {@link ApplicationSmokeTest} with
  * {@code dynamodb.client-type=low-level}.
  *
- * <p>Verifies actuator health, OpenAPI docs, and retry strategy beans when the low-level
- * repository implementation is active.
+ * <p>Verifies actuator health, favicon handling, OpenAPI docs, and retry strategy beans when the
+ * low-level repository implementation is active.
  *
  * <p>Issues HTTP requests through MockMvc against the running application.
  */

@@ -42,7 +42,7 @@ class GameEventControllerTest {
     private GameEventService gameEventService;
 
     @Test
-    void shouldReturn201OnSuccess() throws Exception {
+    void recordEvent_whenValidRequest_shouldReturn201() throws Exception {
         RecordEventResponse response = new RecordEventResponse("evt-123", "2026-04-07T10:00:00Z");
 
         when(gameEventService.recordEvent(eq("player-1"), any(RecordEventRequest.class)))
@@ -65,7 +65,7 @@ class GameEventControllerTest {
     }
 
     @Test
-    void shouldReturn404WhenPlayerNotFound() throws Exception {
+    void recordEvent_whenPlayerNotFound_shouldReturn404() throws Exception {
         when(gameEventService.recordEvent(eq("unknown"), any(RecordEventRequest.class)))
                 .thenThrow(new PlayerNotFoundException("unknown"));
 
@@ -82,7 +82,7 @@ class GameEventControllerTest {
     }
 
     @Test
-    void shouldReturn400OnMissingEventType() throws Exception {
+    void recordEvent_whenEventTypeMissing_shouldReturn400() throws Exception {
         mockMvc.perform(post("/api/v1/players/player-1/events")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -97,7 +97,7 @@ class GameEventControllerTest {
     }
 
     @Test
-    void shouldReturn200WithEventsPage() throws Exception {
+    void listEvents_whenEventsExist_shouldReturn200WithPage() throws Exception {
         GameEventDto dto = new GameEventDto("evt-1", "PVP_MATCH", "2026-04-07T10:00:00Z",
                 Map.of("matchId", "match-42", "result", "WIN"));
         EventsPageResponse response = new EventsPageResponse(List.of(dto), "next-page-token");
@@ -114,7 +114,7 @@ class GameEventControllerTest {
     }
 
     @Test
-    void shouldReturn404WhenPlayerNotFoundOnGetEvents() throws Exception {
+    void listEvents_whenPlayerNotFound_shouldReturn404() throws Exception {
         when(gameEventService.getEvents(eq("unknown"), eq(20), isNull(), isNull()))
                 .thenThrow(new PlayerNotFoundException("unknown"));
 
@@ -124,7 +124,7 @@ class GameEventControllerTest {
     }
 
     @Test
-    void shouldReturn400OnInvalidPaginationToken() throws Exception {
+    void listEvents_whenPaginationTokenInvalid_shouldReturn400() throws Exception {
         when(gameEventService.getEvents(eq("player-1"), eq(10), isNull(), eq("bad-token")))
                 .thenThrow(new InvalidPaginationTokenException("bad-token"));
 
@@ -136,7 +136,7 @@ class GameEventControllerTest {
     }
 
     @Test
-    void shouldPassScanIndexForwardQueryParam() throws Exception {
+    void listEvents_whenScanIndexForwardProvided_shouldPassQueryParam() throws Exception {
         EventsPageResponse response = new EventsPageResponse(List.of(), null);
         when(gameEventService.getEvents(eq("player-1"), eq(15), eq(Boolean.TRUE), isNull()))
                 .thenReturn(response);
@@ -150,7 +150,7 @@ class GameEventControllerTest {
     }
 
     @Test
-    void shouldOmitEmptyNextTokenFromResponseBody() throws Exception {
+    void listEvents_whenNoNextPage_shouldOmitEmptyNextToken() throws Exception {
         GameEventDto dto = new GameEventDto("evt-1", "LOGIN", "2026-04-07T10:00:00Z", Map.of());
         EventsPageResponse response = new EventsPageResponse(List.of(dto), "");
 

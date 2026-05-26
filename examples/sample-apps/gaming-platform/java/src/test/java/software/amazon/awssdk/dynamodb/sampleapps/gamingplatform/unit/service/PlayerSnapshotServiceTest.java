@@ -49,7 +49,7 @@ class PlayerSnapshotServiceTest {
     }
 
     @Test
-    void load_whenProfileWalletAndSettingsExist_composesFullSnapshot() {
+    void load_whenProfileWalletAndSettingsExist_shouldComposeFullSnapshot() {
         String playerId = "player-1";
         PlayerProfile profile = buildProfile(playerId);
         PlayerWallet wallet = buildWallet(playerId, 1200L, 2L);
@@ -68,7 +68,7 @@ class PlayerSnapshotServiceTest {
     }
 
     @Test
-    void load_whenProfileMissing_throwsPlayerNotFound() {
+    void load_whenProfileMissing_shouldThrowPlayerNotFound() {
         when(repository.getPlayer("missing")).thenReturn(CompletableFuture.completedFuture(null));
 
         assertThatThrownBy(() -> service.load("missing"))
@@ -76,7 +76,7 @@ class PlayerSnapshotServiceTest {
     }
 
     @Test
-    void load_whenWalletMissing_throwsWalletNotFound() {
+    void load_whenWalletMissing_shouldThrowWalletNotFound() {
         String playerId = "player-1";
         when(repository.getPlayer(playerId)).thenReturn(CompletableFuture.completedFuture(buildProfile(playerId)));
         when(repository.getWallet(playerId)).thenReturn(CompletableFuture.completedFuture(null));
@@ -86,7 +86,7 @@ class PlayerSnapshotServiceTest {
     }
 
     @Test
-    void load_whenSettingsMissing_throwsPlayerNotFound() {
+    void load_whenSettingsMissing_shouldThrowPlayerNotFound() {
         String playerId = "player-1";
         when(repository.getPlayer(playerId)).thenReturn(CompletableFuture.completedFuture(buildProfile(playerId)));
         when(repository.getWallet(playerId)).thenReturn(CompletableFuture.completedFuture(buildWallet(playerId, 0, 1)));

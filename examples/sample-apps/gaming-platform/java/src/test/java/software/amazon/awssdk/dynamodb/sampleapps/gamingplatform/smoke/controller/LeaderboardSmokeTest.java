@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class LeaderboardSmokeTest extends AbstractSmokeTest {
 
     @Test
-    void shouldQueryLeaderboard() throws Exception {
+    void getLeaderboard_whenScopeProvided_shouldReturnLeaderboard() throws Exception {
         mockMvc.perform(get("/api/v1/leaderboards/{scope}", "SEASON#default#MODE#ranked")
                         .param("limit", "10"))
                 .andExpect(status().isOk())
