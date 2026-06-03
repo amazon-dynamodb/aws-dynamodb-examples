@@ -1,4 +1,4 @@
-# Runbook — DynamoDB Sample App — Instant Payments
+# Runbook - DynamoDB Sample App - Instant Payments
 
 ## Prerequisites
 
@@ -13,9 +13,9 @@
 
 ## Tech stack
 
-- **Runtime:** JDK 21, Spring Boot **3.5.13**
-- **AWS:** SDK for Java v2 BOM **2.42.21** (`dynamodb`, `dynamodb-enhanced`)
-- **API docs:** springdoc-openapi **2.8.16**
+- **Runtime:** JDK 21, Spring Boot **3.5.14**
+- **AWS:** SDK for Java v2 BOM **2.44.9** (`dynamodb`, `dynamodb-enhanced`)
+- **API docs:** springdoc-openapi **2.8.17**
 - **Tests:** JUnit 5 (via Spring Boot), **Testcontainers 2.0.3** (DynamoDB Local for integration/smoke)
 - **Datastore:** DynamoDB Local (Docker) or AWS DynamoDB
 
@@ -31,7 +31,7 @@ Compiles the project and runs unit tests.
 
 ### Run (three ways)
 
-All modes use one table (**JavaInstantPayments** by default). On startup the app **creates the table + streams** if missing, enables **TTL** on `ttl`, and **idempotently seeds** ten demo accounts (5 USD, 5 EUR); existing seed rows are not overwritten.
+All modes use one table (**JavaInstantPayments** by default). On startup the app **creates the table + streams** if missing, enables **TTL** on `ttl`, and **idempotently seeds** ten demo accounts (5 USD, 5 EUR). Existing seed rows are not overwritten.
 
 ---
 
@@ -42,7 +42,7 @@ All modes use one table (**JavaInstantPayments** by default). On startup the app
 ```bash
 ./scripts/start-dynamodb-local.sh
 ./scripts/run-app-local.sh
-# ./scripts/stop-dynamodb-local.sh   # stop only DynamoDB Local; app stops independently (Ctrl+C)
+# ./scripts/stop-dynamodb-local.sh   # stop only DynamoDB Local, app stops independently (Ctrl+C)
 ```
 
 <details>
@@ -67,7 +67,7 @@ All modes use one table (**JavaInstantPayments** by default). On startup the app
 
 **2) Full stack in Docker (app + DynamoDB Local)**
 
-*Best when you don’t want JDK/Maven on the host; compose builds the app image and starts both services.*
+*Best when you don’t want JDK/Maven on the host. Compose builds the app image and starts both services.*
 
 ```bash
 ./scripts/run-app-docker.sh
@@ -83,7 +83,7 @@ All modes use one table (**JavaInstantPayments** by default). On startup the app
 
 | Option (`run-app-docker.sh`)    | Default      | Notes                                                     |
 | ------------------------------- | ------------ | --------------------------------------------------------- |
-| `--stop`                        | —            | Stops the Compose stack for profile `app` and exits       |
+| `--stop`                        | -            | Stops the Compose stack for profile `app` and exits       |
 | `--dynamodb-client-type <type>` | `high-level` | Passed through as `DYNAMODB_CLIENTTYPE` for the container |
 
 </details>
@@ -95,7 +95,7 @@ All modes use one table (**JavaInstantPayments** by default). On startup the app
 
 **3) Host app + AWS DynamoDB**
 
-*Best for a real account/region; no Docker required for the database.*
+*Best for a real account/region. No Docker required for the database.*
 
 - Set **AWS credentials** and pass the **regional HTTPS endpoint** so the SDK hits your table in that region.
 
