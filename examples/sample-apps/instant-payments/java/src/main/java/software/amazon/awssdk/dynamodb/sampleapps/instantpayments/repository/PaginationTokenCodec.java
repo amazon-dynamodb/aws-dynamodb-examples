@@ -17,11 +17,20 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 /**
  * Encodes and decodes opaque API pagination tokens backed by DynamoDB {@code LastEvaluatedKey} maps.
  *
- * <p>Each GSI endpoint produces tokens whose decoded key maps contain a discriminating attribute
- * unique to that index. {@link #requireKeyAttribute} validates that a decoded token was issued by
- * the expected index, so cross-endpoint token reuse is rejected with
- * {@link InvalidPaginationTokenException} (HTTP 400) rather than propagating as an unhandled
- * DynamoDB error.
+ * <p><strong>Canonical token contract (validate and 400).</strong> A {@code nextToken} is only valid on
+ * the exact route that issued it. The codec rejects three kinds of misuse with
+ * {@link InvalidPaginationTokenException} (HTTP 400 {@code INVALID_PAGINATION_TOKEN}) rather than letting
+ * an incompatible {@code ExclusiveStartKey} surface as an unhandled DynamoDB error (HTTP 500):
+ * <ul>
+ *   <li><strong>Malformed token:</strong> {@link #decode} fails to Base64/JSON parse the token, or it
+ *       decodes to an empty key map.</li>
+ *   <li><strong>Cross-endpoint reuse:</strong> a token from the other merchant-list GSI. Each GSI token
+ *       carries a discriminating attribute ({@link #requireKeyAttribute}), so a token issued by one
+ *       merchant-list route used on the other route, or the reverse, is rejected.</li>
+ *   <li><strong>Cross-merchant reuse:</strong> a token whose encoded {@code merchantId} differs from the
+ *       path {@code merchantId} ({@link #requireMatchingMerchantId}), so a token issued for one merchant
+ *       cannot be replayed against another merchant's list route.</li>
+ * </ul>
  *
  * <ul>
  *   <li>{@link #GSI_MERCHANT_PAYMENTS_DISCRIMINATOR} ({@value #GSI_MERCHANT_PAYMENTS_DISCRIMINATOR})
@@ -46,6 +55,12 @@ final class PaginationTokenCodec {
      * {@link #requireKeyAttribute} to detect cross-endpoint token reuse.
      */
     static final String GSI_MERCHANT_STATE_PAYMENTS_DISCRIMINATOR = "aggregateState";
+
+    /**
+     * Partition-key attribute carried in both merchant-list GSI {@code LastEvaluatedKey} maps. Used by
+     * {@link #requireMatchingMerchantId} to bind a token to the merchant whose route issued it.
+     */
+    static final String MERCHANT_ID_KEY = "merchantId";
 
     /** Jackson mapper for serializing pagination token payloads. */
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -118,6 +133,29 @@ final class PaginationTokenCodec {
                                     String requiredKey,
                                     String nextToken) {
         if (!decoded.containsKey(requiredKey)) {
+            throw new InvalidPaginationTokenException(nextToken);
+        }
+    }
+
+    /**
+     * Validates that a decoded key map's {@code merchantId} matches the merchant whose route is serving the
+     * request. Throws {@link InvalidPaginationTokenException} when the token encodes a different (or missing)
+     * {@code merchantId}, which indicates the token was issued for another merchant (cross-merchant token
+     * reuse). Without this check DynamoDB would reject the mismatched {@code ExclusiveStartKey} and the error
+     * would surface as an HTTP 500 instead of a clean 400.
+     *
+     * @param decoded     result of {@link #decode(String)}, must not be {@code null}
+     * @param merchantId  merchant id from the request path that must match the token
+     * @param nextToken   original opaque token string (used in the exception)
+     * @throws InvalidPaginationTokenException if the decoded {@code merchantId} is absent or differs
+     */
+    static void requireMatchingMerchantId(Map<String, AttributeValue> decoded,
+                                          String merchantId,
+                                          String nextToken) {
+        AttributeValue tokenMerchantId = decoded.get(MERCHANT_ID_KEY);
+        if (tokenMerchantId == null
+                || tokenMerchantId.s() == null
+                || !tokenMerchantId.s().equals(merchantId)) {
             throw new InvalidPaginationTokenException(nextToken);
         }
     }

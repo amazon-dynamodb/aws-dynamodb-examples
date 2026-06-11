@@ -7,6 +7,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbConfig;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutboundPaymentRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutboundPaymentResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.PaymentCreationResult;
@@ -26,6 +28,7 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,10 +49,24 @@ public class OutboundPaymentServiceTest {
 
     private OutboundPaymentService service;
 
-    /** Constructs the service with a fresh mapper for each test method. */
+    /** Constructs the service with a fresh mapper and a stubbed config for each test method. */
     @BeforeEach
     void setUp() {
-        service = new OutboundPaymentService(paymentRepository, new PaymentMapper());
+        DynamoDbConfig config = new DynamoDbConfig();
+        ReflectionTestUtils.setField(config, "idempotencyTtlSeconds", 2_592_000L);
+        service = new OutboundPaymentService(paymentRepository, new PaymentMapper(), config);
+    }
+
+    @Test
+    void createOutboundPayment_whenZeroIdempotencyTtl_shouldThrowIllegalState() {
+        DynamoDbConfig zeroTtlConfig = new DynamoDbConfig();
+        ReflectionTestUtils.setField(zeroTtlConfig, "idempotencyTtlSeconds", 0L);
+        OutboundPaymentService serviceWithZeroTtl = new OutboundPaymentService(
+                paymentRepository, new PaymentMapper(), zeroTtlConfig);
+
+        assertThatThrownBy(() -> serviceWithZeroTtl.createOutboundPayment(sampleRequest("key-expired")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("expiresAtEpochSecond must be after now");
     }
 
     @Test
@@ -60,7 +77,7 @@ public class OutboundPaymentServiceTest {
 
         var request = sampleRequest("key-1");
 
-        PaymentCreationResult result = service.createOutboundPayment(request);
+        PaymentCreationResult result = service.createOutboundPayment(request).join();
 
         assertThat(result.newlyCreated()).isTrue();
         assertThat(result.response().paymentId()).startsWith("pay_");
@@ -96,7 +113,7 @@ public class OutboundPaymentServiceTest {
         when(paymentRepository.getIdempotencyRecord("key-dup"))
                 .thenReturn(CompletableFuture.completedFuture(existing));
 
-        PaymentCreationResult result = service.createOutboundPayment(request);
+        PaymentCreationResult result = service.createOutboundPayment(request).join();
 
         assertThat(result.newlyCreated()).isFalse();
         assertThat(result.response().paymentId()).isEqualTo("pay_existing");
@@ -118,9 +135,11 @@ public class OutboundPaymentServiceTest {
         when(paymentRepository.getIdempotencyRecord("key-conflict"))
                 .thenReturn(CompletableFuture.completedFuture(existing));
 
-        assertThatThrownBy(() -> service.createOutboundPayment(request))
-                .isInstanceOf(IdempotencyConflictException.class)
-                .hasMessageContaining("key-conflict");
+        assertThatThrownBy(() -> service.createOutboundPayment(request).join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(IdempotencyConflictException.class)
+                        .hasMessageContaining("key-conflict"));
     }
 
     @Test
@@ -130,10 +149,12 @@ public class OutboundPaymentServiceTest {
 
         var request = sampleRequest("key-fail");
 
-        assertThatThrownBy(() -> service.createOutboundPayment(request))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Failed to create payment transaction")
-                .hasCauseInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> service.createOutboundPayment(request).join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Failed to create payment transaction")
+                        .hasCauseInstanceOf(RuntimeException.class));
     }
 
     @Test
@@ -146,9 +167,11 @@ public class OutboundPaymentServiceTest {
         when(paymentRepository.getIdempotencyRecord("key-missing-record"))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> service.createOutboundPayment(request))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Idempotency record not found");
+        assertThatThrownBy(() -> service.createOutboundPayment(request).join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("Idempotency record not found"));
     }
 
     @Test
@@ -164,10 +187,12 @@ public class OutboundPaymentServiceTest {
         when(paymentRepository.createPaymentTransaction(any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(tce));
 
-        assertThatThrownBy(() -> service.createOutboundPayment(request))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Failed to create payment transaction")
-                .hasCauseInstanceOf(TransactionCanceledException.class);
+        assertThatThrownBy(() -> service.createOutboundPayment(request).join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Failed to create payment transaction")
+                        .hasCauseInstanceOf(TransactionCanceledException.class));
     }
 
     /** Returns a minimal valid create request with the given idempotency key. */

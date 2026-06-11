@@ -27,6 +27,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.support.AsyncMockMvcTestSupport;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.SeedAccountsData;
@@ -115,7 +117,7 @@ public abstract class AbstractIntegrationTest {
             container.start();
             registerDynamoDbLocalShutdownHook(container);
         } catch (Exception e) {
-            logger.warn("Could not start DynamoDB Local container — Docker may not be available. "
+            logger.warn("Could not start DynamoDB Local container - Docker may not be available. "
                     + "Integration and smoke tests will be skipped. Error: {}", e.getMessage());
             try {
                 container.close();
@@ -161,7 +163,7 @@ public abstract class AbstractIntegrationTest {
     @BeforeAll
     static void ensureDockerAvailable() {
         assumeTrue(dynamoDbLocalContainer.isRunning(),
-                "DynamoDB Local container is not running — Docker may not be available. "
+                "DynamoDB Local container is not running - Docker may not be available. "
                         + "Run with -P rancher-desktop. "
                         + "For Rancher Desktop, ensure DOCKER_HOST=unix://$HOME/.rd/docker.sock.");
     }
@@ -269,6 +271,16 @@ public abstract class AbstractIntegrationTest {
     }
 
     /**
+     * Performs an HTTP request against async MVC controllers and waits for completion.
+     *
+     * @param request request to perform
+     * @return result actions after async dispatch for further expectations
+     */
+    protected ResultActions performAsync(MockHttpServletRequestBuilder request) throws Exception {
+        return AsyncMockMvcTestSupport.performAsync(mockMvc, request);
+    }
+
+    /**
      * Creates an outbound payment via {@code POST /api/v1/payments/outbound} and returns its id.
      *
      * @param debtorAccountId seeded debtor account id
@@ -292,7 +304,7 @@ public abstract class AbstractIntegrationTest {
                   "currency": "USD"
                 }""".formatted(idempotencyKey, debtorAccountId, creditorName, amount);
 
-        MvcResult result = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult result = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -308,7 +320,7 @@ public abstract class AbstractIntegrationTest {
      * @throws Exception when the HTTP request fails or returns a non-200 status
      */
     protected void processPayment(String paymentId) throws Exception {
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk());
     }
 

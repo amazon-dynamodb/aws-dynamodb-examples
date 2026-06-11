@@ -1,7 +1,6 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.unit.controller;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -11,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -28,6 +28,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.PaymentCre
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.PaymentEventResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.ProcessPaymentResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.GlobalExceptionHandler;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.WebMvcAsyncConfig;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.IdempotencyConflictException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.PaymentNotFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.mapper.PaymentMapper;
@@ -36,6 +37,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentS
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentProcessor;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentQueryService;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentService;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.support.AsyncMockMvcTestSupport;
 
 /**
  * Web MVC slice tests for {@link OutboundPaymentController}, covering create, process, and get
@@ -43,7 +45,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Outbou
  */
 @Tag("unit")
 @WebMvcTest(OutboundPaymentController.class)
-@Import(GlobalExceptionHandler.class)
+@Import({GlobalExceptionHandler.class, WebMvcAsyncConfig.class})
 public class OutboundPaymentControllerTest {
 
     @Autowired
@@ -64,11 +66,11 @@ public class OutboundPaymentControllerTest {
     @Test
     void createOutboundPayment_whenValidRequest_shouldReturn201() throws Exception {
         when(paymentService.createOutboundPayment(any(CreateOutboundPaymentRequest.class)))
-                .thenReturn(new PaymentCreationResult(
+                .thenReturn(CompletableFuture.completedFuture(new PaymentCreationResult(
                         new CreateOutboundPaymentResponse("pay_1", "RECEIVED", "corr_1", Instant.now()),
-                        true));
+                        true)));
 
-        mvc.perform(post("/api/v1/payments/outbound")
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -87,11 +89,11 @@ public class OutboundPaymentControllerTest {
     @Test
     void createOutboundPayment_whenIdempotentRetry_shouldReturn200() throws Exception {
         when(paymentService.createOutboundPayment(any(CreateOutboundPaymentRequest.class)))
-                .thenReturn(new PaymentCreationResult(
+                .thenReturn(CompletableFuture.completedFuture(new PaymentCreationResult(
                         new CreateOutboundPaymentResponse("pay_retry", "RECEIVED", "corr_r", Instant.now()),
-                        false));
+                        false)));
 
-        mvc.perform(post("/api/v1/payments/outbound")
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -110,9 +112,9 @@ public class OutboundPaymentControllerTest {
     @Test
     void createOutboundPayment_whenIdempotencyConflict_shouldReturn409() throws Exception {
         when(paymentService.createOutboundPayment(any(CreateOutboundPaymentRequest.class)))
-                .thenThrow(new IdempotencyConflictException("idem-clash"));
+                .thenReturn(CompletableFuture.failedFuture(new IdempotencyConflictException("idem-clash")));
 
-        mvc.perform(post("/api/v1/payments/outbound")
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -149,20 +151,20 @@ public class OutboundPaymentControllerTest {
 
     @Test
     void processPayment_whenPaymentMissing_shouldReturn404() throws Exception {
-        doThrow(new PaymentNotFoundException("missing"))
-                .when(paymentProcessor).processPayment("missing");
+        when(paymentProcessor.processPayment("missing"))
+                .thenReturn(CompletableFuture.failedFuture(new PaymentNotFoundException("missing")));
 
-        mvc.perform(post("/api/v1/payments/outbound/missing/process"))
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/payments/outbound/missing/process"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PAYMENT_NOT_FOUND"));
     }
 
     @Test
     void processPayment_whenUnexpectedError_shouldReturn500() throws Exception {
-        doThrow(new RuntimeException("downstream failure"))
-                .when(paymentProcessor).processPayment("pay_bad");
+        when(paymentProcessor.processPayment("pay_bad"))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("downstream failure")));
 
-        mvc.perform(post("/api/v1/payments/outbound/pay_bad/process"))
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/payments/outbound/pay_bad/process"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error").value("INTERNAL_ERROR"));
     }
@@ -174,11 +176,14 @@ public class OutboundPaymentControllerTest {
         payment.setState(PaymentState.COMPLETED.name());
         payment.setReasonCode(null);
 
-        when(paymentProcessor.getPayment("pay_ok")).thenReturn(payment);
+        when(paymentProcessor.processPayment("pay_ok"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(paymentProcessor.getPayment("pay_ok"))
+                .thenReturn(CompletableFuture.completedFuture(payment));
         when(paymentMapper.toProcessPaymentResponse(payment))
                 .thenReturn(new ProcessPaymentResponse("pay_ok", "COMPLETED", null));
 
-        mvc.perform(post("/api/v1/payments/outbound/pay_ok/process"))
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/payments/outbound/pay_ok/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value("pay_ok"))
                 .andExpect(jsonPath("$.state").value("COMPLETED"))
@@ -188,18 +193,41 @@ public class OutboundPaymentControllerTest {
     @Test
     void getOutboundPayment_whenPaymentMissing_shouldReturn404() throws Exception {
         when(paymentQueryService.getOutboundPayment("pay_missing"))
-                .thenThrow(new PaymentNotFoundException("pay_missing"));
+                .thenReturn(CompletableFuture.failedFuture(new PaymentNotFoundException("pay_missing")));
 
-        mvc.perform(get("/api/v1/payments/outbound/pay_missing"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/payments/outbound/pay_missing"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PAYMENT_NOT_FOUND"));
+    }
+
+    @Test
+    void getOutboundPayment_whenPaymentIdMalformed_shouldReturn400() throws Exception {
+        mvc.perform(get("/api/v1/payments/outbound/pay$bad"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void getOutboundPayment_whenPaymentIdTooLong_shouldReturn400() throws Exception {
+        String tooLong = "a".repeat(65);
+        mvc.perform(get("/api/v1/payments/outbound/" + tooLong))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void processPayment_whenPaymentIdMalformed_shouldReturn400() throws Exception {
+        mvc.perform(post("/api/v1/payments/outbound/pay$bad/process"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
     }
 
     @Test
     void getOutboundPayment_whenPaymentExists_shouldReturn200WithEvents() throws Exception {
         Instant t0 = Instant.parse("2025-01-01T12:00:00Z");
         Instant t1 = Instant.parse("2025-01-01T12:01:00Z");
-        when(paymentQueryService.getOutboundPayment("pay_get")).thenReturn(new GetOutboundPaymentResponse(
+        when(paymentQueryService.getOutboundPayment("pay_get")).thenReturn(CompletableFuture.completedFuture(
+                new GetOutboundPaymentResponse(
                 "pay_get",
                 "COMPLETED",
                 "corr_x",
@@ -223,9 +251,9 @@ public class OutboundPaymentControllerTest {
                                 "EVENT#0000000000000000002",
                                 "FUNDS_RESERVED",
                                 null,
-                                "corr_x"))));
+                                "corr_x")))));
 
-        mvc.perform(get("/api/v1/payments/outbound/pay_get"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/payments/outbound/pay_get"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value("pay_get"))
                 .andExpect(jsonPath("$.state").value("COMPLETED"))

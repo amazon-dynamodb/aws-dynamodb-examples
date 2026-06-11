@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Tag;
@@ -28,16 +29,18 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.GetAccount
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.ReservationResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.AccountNotFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.GlobalExceptionHandler;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.WebMvcAsyncConfig;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.InvalidBatchGetReservationsRequestException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.utils.JsonPathSupport;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.AccountQueryService;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.support.AsyncMockMvcTestSupport;
 
 /**
  * Unit tests for {@link AccountController}.
  */
 @Tag("unit")
 @WebMvcTest(AccountController.class)
-@Import(GlobalExceptionHandler.class)
+@Import({GlobalExceptionHandler.class, WebMvcAsyncConfig.class})
 public class AccountControllerTest {
 
     @Autowired
@@ -53,9 +56,10 @@ public class AccountControllerTest {
                 List.of(new ReservationResponse("res_1", "pay_1", new BigDecimal("100"), "ACTIVE", created)),
                 List.of("res_missing"));
 
-        when(accountQueryService.batchGetReservations(eq("acc_usd_1"), any())).thenReturn(response);
+        when(accountQueryService.batchGetReservations(eq("acc_usd_1"), any()))
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reservationIds\":[\"res_1\",\"res_missing\"]}"))
                 .andExpect(status().isOk())
@@ -102,10 +106,10 @@ public class AccountControllerTest {
     @Test
     void batchGetReservations_whenServiceRejectsRequest_shouldReturn400() throws Exception {
         when(accountQueryService.batchGetReservations(eq("acc_usd_1"), any()))
-                .thenThrow(new InvalidBatchGetReservationsRequestException(
-                        "reservationIds must contain at least one distinct reservation id"));
+                .thenReturn(CompletableFuture.failedFuture(new InvalidBatchGetReservationsRequestException(
+                        "reservationIds must contain at least one distinct reservation id")));
 
-        mvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        AsyncMockMvcTestSupport.performAsync(mvc, post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reservationIds\":[\"res_1\"]}"))
                 .andExpect(status().isBadRequest())
@@ -126,9 +130,10 @@ public class AccountControllerTest {
                 List.of(new ReservationResponse(
                         "res_pay_1", "pay_1", new BigDecimal("100"), "ACTIVE", resCreated)));
 
-        when(accountQueryService.getAccount("acc_usd_1")).thenReturn(response);
+        when(accountQueryService.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mvc.perform(get("/api/v1/accounts/acc_usd_1"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value("acc_usd_1"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
@@ -145,9 +150,9 @@ public class AccountControllerTest {
     @Test
     void getAccount_whenAccountMissing_shouldReturn404() throws Exception {
         when(accountQueryService.getAccount("acc_nonexistent"))
-                .thenThrow(new AccountNotFoundException("acc_nonexistent"));
+                .thenReturn(CompletableFuture.failedFuture(new AccountNotFoundException("acc_nonexistent")));
 
-        MvcResult result = mvc.perform(get("/api/v1/accounts/acc_nonexistent"))
+        MvcResult result = AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/accounts/acc_nonexistent"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("ACCOUNT_NOT_FOUND"))
                 .andExpect(jsonPath("$.message").value("Account not found: acc_nonexistent"))
@@ -159,14 +164,38 @@ public class AccountControllerTest {
     @Test
     void getAccount_whenUnexpectedError_shouldReturn500() throws Exception {
         when(accountQueryService.getAccount("acc_boom"))
-                .thenThrow(new RuntimeException("downstream failure"));
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("downstream failure")));
 
-        MvcResult result = mvc.perform(get("/api/v1/accounts/acc_boom"))
+        MvcResult result = AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/accounts/acc_boom"))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error").value("INTERNAL_ERROR"))
                 .andExpect(jsonPath("$.message").value("An unexpected error occurred"))
                 .andReturn();
 
         JsonPathSupport.readInstantAssertingPlausibleNow(result.getResponse().getContentAsString(), "$.timestamp");
+    }
+
+    @Test
+    void getAccount_whenAccountIdMalformed_shouldReturn400() throws Exception {
+        mvc.perform(get("/api/v1/accounts/acc$bad"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void getAccount_whenAccountIdTooLong_shouldReturn400() throws Exception {
+        String tooLong = "a".repeat(65);
+        mvc.perform(get("/api/v1/accounts/" + tooLong))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void batchGetReservations_whenAccountIdMalformed_shouldReturn400() throws Exception {
+        mvc.perform(post("/api/v1/accounts/acc$bad/batch-get-reservations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reservationIds\":[\"res_1\"]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
     }
 }

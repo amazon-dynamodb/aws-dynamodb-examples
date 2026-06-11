@@ -27,7 +27,7 @@ public class Payment {
     private String paymentId;
     /** Merchant that initiated the payment. */
     private String merchantId;
-    /** Aggregate payment state after replaying events. */
+    /** Aggregate payment state after replaying events. Values match {@link PaymentState}. */
     private String state;
     /** Debtor account debited for the payment. */
     private String debtorAccountId;

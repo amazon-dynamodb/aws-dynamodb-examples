@@ -66,7 +66,7 @@ public class DynamoDbStreamsPoisonPillIntegrationTest extends AbstractIntegratio
                   "currency": "USD"
                 }""".formatted(idempotencyKey);
 
-        MvcResult createResult = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult createResult = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())

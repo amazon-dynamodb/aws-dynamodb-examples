@@ -34,6 +34,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
 import software.amazon.awssdk.services.dynamodb.model.Put;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.Update;
@@ -52,6 +53,18 @@ import software.amazon.awssdk.services.dynamodb.model.Update;
 public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(LowLevelDynamoDbPaymentRepository.class);
+
+    /**
+     * Page size for the expired-reservation {@code Scan}. The sweeper accumulates filtered matches across
+     * pages, so this only bounds how many items each {@code Scan} call reads, not how many are released.
+     */
+    private static final int RESERVATION_SCAN_PAGE_SIZE = 100;
+
+    /**
+     * Upper bound on {@code Scan} pages walked in one expired-reservation sweep so a large table cannot make
+     * a single sweep unbounded. Any remaining expired holds are picked up on the next sweep.
+     */
+    private static final int MAX_RESERVATION_SCAN_PAGES = 10;
 
     /**
      * Enhanced table schema for mapping {@link PaymentStreamHead} attribute maps.
@@ -106,22 +119,26 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
     public CompletableFuture<Void> createPaymentTransaction(PaymentStreamHead streamHead,
                                                             PaymentEvent firstEvent,
                                                             IdempotencyRecord idempotency) {
+        // Item positions follow CreateTransactItem so the order is defined once and shared with the
+        // consumer that reads cancellation reasons by the same index.
+        TransactWriteItem[] items = new TransactWriteItem[CreatePaymentTransactItemOrder.values().length];
+        items[CreatePaymentTransactItemOrder.STREAM_HEAD.index()] = TransactWriteItem.builder()
+                .put(Put.builder()
+                        .tableName(tableName)
+                        .item(STREAM_HEAD_SCHEMA.itemToMap(streamHead, false))
+                        .build())
+                .build();
+        items[CreatePaymentTransactItemOrder.FIRST_EVENT.index()] = putEventUnconditional(firstEvent);
+        items[CreatePaymentTransactItemOrder.IDEMPOTENCY.index()] = TransactWriteItem.builder()
+                .put(Put.builder()
+                        .tableName(tableName)
+                        .item(IDEMPOTENCY_SCHEMA.itemToMap(idempotency, false))
+                        .conditionExpression("attribute_not_exists(PK)")
+                        .build())
+                .build();
+
         TransactWriteItemsRequest request = TransactWriteItemsRequest.builder()
-                .transactItems(
-                        TransactWriteItem.builder()
-                                .put(Put.builder()
-                                        .tableName(tableName)
-                                        .item(STREAM_HEAD_SCHEMA.itemToMap(streamHead, false))
-                                        .build())
-                                .build(),
-                        putEventUnconditional(firstEvent),
-                        TransactWriteItem.builder()
-                                .put(Put.builder()
-                                        .tableName(tableName)
-                                        .item(IDEMPOTENCY_SCHEMA.itemToMap(idempotency, false))
-                                        .conditionExpression("attribute_not_exists(PK)")
-                                        .build())
-                                .build())
+                .transactItems(items)
                 .build();
 
         return client.transactWriteItems(request).thenApply(r -> null);
@@ -171,6 +188,10 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
             PartitionScan acc) {
         QueryRequest.Builder builder = QueryRequest.builder()
                 .tableName(tableName)
+                // Strongly consistent so the processor's read-before-write sees the latest committed
+                // head and events, matching the high-level repository. Keeps the head-versus-fold guard
+                // in OutboundPaymentProcessor reliable under concurrent writers.
+                .consistentRead(true)
                 .keyConditionExpression("PK = :pk")
                 .expressionAttributeValues(Map.of(
                         ":pk", AttributeValue.builder().s(pk).build()));
@@ -307,7 +328,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                         tableName, accountId, distinctReservationIds);
         return BatchGetItemHelper.accumulateWithRetry(
                         requestItems,
-                        request -> client.batchGetItem(request),
+                        client::batchGetItem,
                         this::mergeReservationBatchGetResponse,
                         logger)
                 .thenApply(reservationsByReservationId -> BatchGetItemHelper.toOrderedBatchGetResult(
@@ -411,6 +432,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                     exclusiveStartKey,
                     PaginationTokenCodec.GSI_MERCHANT_PAYMENTS_DISCRIMINATOR,
                     nextToken);
+            PaginationTokenCodec.requireMatchingMerchantId(exclusiveStartKey, merchantId, nextToken);
             builder.exclusiveStartKey(exclusiveStartKey);
         }
 
@@ -450,6 +472,7 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                     exclusiveStartKey,
                     PaginationTokenCodec.GSI_MERCHANT_STATE_PAYMENTS_DISCRIMINATOR,
                     nextToken);
+            PaginationTokenCodec.requireMatchingMerchantId(exclusiveStartKey, merchantId, nextToken);
             builder.exclusiveStartKey(exclusiveStartKey);
         }
 
@@ -474,6 +497,77 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                 .transactItems(
                         updateStreamHeadReject(streamHead, expectedSeq, newSeq, now, reasonCode),
                         putEventUnconditional(event))
+                .build();
+
+        return client.transactWriteItems(request).thenApply(r -> null);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Runs a {@code Scan} with a server-side {@code FilterExpression} and accumulates matched rows across
+     * pages up to {@code limit} or {@link #MAX_RESERVATION_SCAN_PAGES}.
+     */
+    @Override
+    public CompletableFuture<List<Reservation>> scanExpiredActiveReservations(long nowEpochSecond, int limit) {
+        return scanExpiredActiveReservationsPage(nowEpochSecond, limit, null, new ArrayList<>(), 0);
+    }
+
+    /**
+     * Recursively pages the expired-reservation {@code Scan}, accumulating matches until {@code limit} rows are
+     * collected, the table is exhausted, or {@link #MAX_RESERVATION_SCAN_PAGES} pages have been read.
+     *
+     * @param nowEpochSecond    expiry cutoff as a Unix epoch second
+     * @param limit             maximum reservations to accumulate
+     * @param exclusiveStartKey pagination token, or {@code null} for the first page
+     * @param acc               mutable accumulator across pages
+     * @param page              0-based page index for the page cap
+     * @return completed future of the accumulated expired reservations
+     */
+    private CompletableFuture<List<Reservation>> scanExpiredActiveReservationsPage(
+            long nowEpochSecond,
+            int limit,
+            Map<String, AttributeValue> exclusiveStartKey,
+            List<Reservation> acc,
+            int page) {
+        ScanRequest.Builder builder = ScanRequest.builder()
+                .tableName(tableName)
+                .filterExpression("entityType = :res AND #s = :active AND expiresAt <= :now")
+                .expressionAttributeNames(Map.of("#s", "status"))
+                .expressionAttributeValues(Map.of(
+                        ":res", AttributeValue.builder().s(Reservation.ENTITY_TYPE).build(),
+                        ":active", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build(),
+                        ":now", AttributeValue.builder().n(Long.toString(nowEpochSecond)).build()))
+                .limit(RESERVATION_SCAN_PAGE_SIZE);
+        if (exclusiveStartKey != null) {
+            builder.exclusiveStartKey(exclusiveStartKey);
+        }
+        return client.scan(builder.build())
+                .thenCompose(response -> {
+                    for (Map<String, AttributeValue> item : response.items()) {
+                        if (acc.size() >= limit) {
+                            break;
+                        }
+                        acc.add(RESERVATION_SCHEMA.mapToItem(item));
+                    }
+                    boolean morePages = response.hasLastEvaluatedKey() && !response.lastEvaluatedKey().isEmpty();
+                    if (acc.size() < limit && morePages && page + 1 < MAX_RESERVATION_SCAN_PAGES) {
+                        return scanExpiredActiveReservationsPage(
+                                nowEpochSecond, limit, response.lastEvaluatedKey(), acc, page + 1);
+                    }
+                    return CompletableFuture.completedFuture(List.copyOf(acc));
+                });
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public CompletableFuture<Void> releaseReservationTransaction(Reservation reservation,
+                                                                 Account account,
+                                                                 BigDecimal amount) {
+        TransactWriteItemsRequest request = TransactWriteItemsRequest.builder()
+                .transactItems(
+                        updateReservationStatus(reservation, ReservationStatus.RELEASED.name()),
+                        updateAccountIncrementAvailable(account, amount))
                 .build();
 
         return client.transactWriteItems(request).thenApply(r -> null);
@@ -604,6 +698,27 @@ public class LowLevelDynamoDbPaymentRepository implements PaymentRepository {
                                 "PK", AttributeValue.builder().s(account.getAccountKey()).build(),
                                 "SK", AttributeValue.builder().s(account.getEntityKey()).build()))
                         .updateExpression("SET currentBalance = currentBalance - :amt, version = version + :one")
+                        .conditionExpression("version = :expectedVersion")
+                        .expressionAttributeValues(Map.of(
+                                ":amt", AttributeValue.builder().n(amount.toPlainString()).build(),
+                                ":one", AttributeValue.builder().n("1").build(),
+                                ":expectedVersion", AttributeValue.builder().n(String.valueOf(account.getVersion())).build()))
+                        .build())
+                .build();
+    }
+
+    /**
+     * Increments {@code availableBalance} when releasing an expired hold. Requires matching optimistic
+     * {@code version}. No balance floor applies because returning held funds only ever increases the balance.
+     */
+    private TransactWriteItem updateAccountIncrementAvailable(Account account, BigDecimal amount) {
+        return TransactWriteItem.builder()
+                .update(Update.builder()
+                        .tableName(tableName)
+                        .key(Map.of(
+                                "PK", AttributeValue.builder().s(account.getAccountKey()).build(),
+                                "SK", AttributeValue.builder().s(account.getEntityKey()).build()))
+                        .updateExpression("SET availableBalance = availableBalance + :amt, version = version + :one")
                         .conditionExpression("version = :expectedVersion")
                         .expressionAttributeValues(Map.of(
                                 ":amt", AttributeValue.builder().n(amount.toPlainString()).build(),

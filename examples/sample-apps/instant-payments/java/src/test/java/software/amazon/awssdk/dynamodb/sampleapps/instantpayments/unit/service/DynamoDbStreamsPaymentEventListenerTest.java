@@ -5,23 +5,23 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -31,6 +31,8 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Outbou
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.DescribeStreamRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeStreamResponse;
 import software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.ExpiredIteratorException;
 import software.amazon.awssdk.services.dynamodb.model.GetRecordsRequest;
@@ -39,7 +41,9 @@ import software.amazon.awssdk.services.dynamodb.model.GetShardIteratorRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetShardIteratorResponse;
 import software.amazon.awssdk.services.dynamodb.model.OperationType;
 import software.amazon.awssdk.services.dynamodb.model.Record;
+import software.amazon.awssdk.services.dynamodb.model.Shard;
 import software.amazon.awssdk.services.dynamodb.model.ShardIteratorType;
+import software.amazon.awssdk.services.dynamodb.model.StreamDescription;
 import software.amazon.awssdk.services.dynamodb.model.StreamRecord;
 import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException;
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClient;
@@ -90,6 +94,9 @@ public class DynamoDbStreamsPaymentEventListenerTest {
 
     @Test
     void processStreamRecord_whenCreatedEventInserted_shouldInvokeProcessor() {
+        when(processor.processPayment("pay_stream_1"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
         Record record = Record.builder()
                 .eventName(OperationType.INSERT)
                 .dynamodb(StreamRecord.builder()
@@ -220,12 +227,12 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     void processStreamRecord_whenProcessorThrows_shouldPropagateUnderRetryLimit() {
         Record record = buildCreatedRecord("pay_err");
 
-        doThrow(new RuntimeException("fail"))
-                .when(processor).processPayment("pay_err");
+        when(processor.processPayment("pay_err"))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("fail")));
 
         assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("fail");
+                .isInstanceOf(CompletionException.class)
+                .hasRootCauseMessage("fail");
 
         verify(processor).processPayment("pay_err");
     }
@@ -234,12 +241,12 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     void processStreamRecord_whenProcessorExhaustsRetries_shouldSwallowAndUnblockShard() {
         Record record = buildCreatedRecord("pay_poison");
 
-        doThrow(new RuntimeException("permanent failure"))
-                .when(processor).processPayment("pay_poison");
+        when(processor.processPayment("pay_poison"))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("permanent failure")));
 
         for (int i = 1; i < DynamoDbStreamsPaymentEventListener.MAX_PROCESS_RETRIES; i++) {
             assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record))
-                    .isInstanceOf(RuntimeException.class);
+                    .isInstanceOf(CompletionException.class);
         }
 
         assertThatCode(() -> ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record))
@@ -249,8 +256,8 @@ public class DynamoDbStreamsPaymentEventListenerTest {
                 .processPayment("pay_poison");
 
         @SuppressWarnings("unchecked")
-        ConcurrentHashMap<String, Integer> counts =
-                (ConcurrentHashMap<String, Integer>) ReflectionTestUtils.getField(listener, "retryCounts");
+        Map<String, Integer> counts =
+                (Map<String, Integer>) ReflectionTestUtils.getField(listener, "processingFailureCounts");
         assertThat(counts).doesNotContainKey("pay_poison");
     }
 
@@ -258,20 +265,20 @@ public class DynamoDbStreamsPaymentEventListenerTest {
     void processStreamRecord_whenSuccessAfterFailure_shouldClearRetryCount() {
         Record record = buildCreatedRecord("pay_retry_ok");
 
-        doThrow(new RuntimeException("transient"))
-                .doNothing()
-                .when(processor).processPayment("pay_retry_ok");
+        when(processor.processPayment("pay_retry_ok"))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("transient")))
+                .thenReturn(CompletableFuture.completedFuture(null));
 
         assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record))
-                .isInstanceOf(RuntimeException.class);
+                .isInstanceOf(CompletionException.class);
 
         ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
 
         verify(processor, times(2)).processPayment("pay_retry_ok");
 
         @SuppressWarnings("unchecked")
-        ConcurrentHashMap<String, Integer> counts =
-                (ConcurrentHashMap<String, Integer>) ReflectionTestUtils.getField(listener, "retryCounts");
+        Map<String, Integer> counts =
+                (Map<String, Integer>) ReflectionTestUtils.getField(listener, "processingFailureCounts");
         assertThat(counts).doesNotContainKey("pay_retry_ok");
     }
 
@@ -354,6 +361,165 @@ public class DynamoDbStreamsPaymentEventListenerTest {
         assertThat(ReflectionTestUtils.getField(cp, "nextIterator")).isEqualTo("fallback-iter");
     }
 
+    @Test
+    void discoverShards_whenStreamHasMultiplePages_shouldWalkAllPagesUntilLastEvaluatedShardIdIsNull() {
+        Shard shardPage1 = Shard.builder().shardId("shardId-000000000001").build();
+        Shard shardPage2 = Shard.builder().shardId("shardId-000000000002").build();
+
+        DescribeStreamResponse page1 = DescribeStreamResponse.builder()
+                .streamDescription(StreamDescription.builder()
+                        .shards(shardPage1)
+                        .lastEvaluatedShardId("shardId-000000000001")
+                        .build())
+                .build();
+        DescribeStreamResponse page2 = DescribeStreamResponse.builder()
+                .streamDescription(StreamDescription.builder()
+                        .shards(shardPage2)
+                        .lastEvaluatedShardId(null)
+                        .build())
+                .build();
+
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(page1))
+                .thenReturn(CompletableFuture.completedFuture(page2));
+
+        List<Shard> shards = ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        assertThat(shards).containsExactly(shardPage1, shardPage2);
+
+        ArgumentCaptor<DescribeStreamRequest> captor = ArgumentCaptor.forClass(DescribeStreamRequest.class);
+        verify(streamsClient, times(2)).describeStream(captor.capture());
+        assertThat(captor.getAllValues().get(0).exclusiveStartShardId()).isNull();
+        assertThat(captor.getAllValues().get(1).exclusiveStartShardId()).isEqualTo("shardId-000000000001");
+    }
+
+    @Test
+    void discoverShards_whenSinglePage_shouldStopAfterFirstDescribeStream() {
+        Shard shard = Shard.builder().shardId(SHARD_ID).build();
+        DescribeStreamResponse onePage = DescribeStreamResponse.builder()
+                .streamDescription(StreamDescription.builder()
+                        .shards(shard)
+                        .lastEvaluatedShardId(null)
+                        .build())
+                .build();
+
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(onePage));
+
+        List<Shard> shards = ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        assertThat(shards).containsExactly(shard);
+        ArgumentCaptor<DescribeStreamRequest> captor = ArgumentCaptor.forClass(DescribeStreamRequest.class);
+        verify(streamsClient, times(1)).describeStream(captor.capture());
+        assertThat(captor.getValue().exclusiveStartShardId()).isNull();
+    }
+
+    @Test
+    void discoverShards_whenLastEvaluatedShardIdBlank_shouldStopWithoutRequestingNextPage() {
+        Shard shard = Shard.builder().shardId(SHARD_ID).build();
+        DescribeStreamResponse blankToken = DescribeStreamResponse.builder()
+                .streamDescription(StreamDescription.builder()
+                        .shards(shard)
+                        .lastEvaluatedShardId("")
+                        .build())
+                .build();
+
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(blankToken));
+
+        List<Shard> shards = ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        assertThat(shards).containsExactly(shard);
+        verify(streamsClient, times(1)).describeStream(any(DescribeStreamRequest.class));
+    }
+
+    @Test
+    void discoverShards_whenDescribeStreamFails_shouldReturnEmptyList() {
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("no stream")));
+
+        List<Shard> shards = ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        assertThat(shards).isEmpty();
+    }
+
+    @Test
+    void discoverShards_whenShardClosed_shouldPruneStaleCheckpoint() throws Exception {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> checkpoints =
+                (Map<String, Object>) ReflectionTestUtils.getField(listener, "checkpoints");
+        checkpoints.put("shardId-closed-old", newShardCheckpoint());
+        checkpoints.put(SHARD_ID, newShardCheckpoint());
+
+        Shard activeShard = Shard.builder().shardId(SHARD_ID).build();
+        DescribeStreamResponse onePage = DescribeStreamResponse.builder()
+                .streamDescription(StreamDescription.builder()
+                        .shards(activeShard)
+                        .lastEvaluatedShardId(null)
+                        .build())
+                .build();
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(onePage));
+
+        ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        // The closed shard's checkpoint is dropped. Only the still-active shard remains.
+        assertThat(checkpoints).containsOnlyKeys(SHARD_ID);
+    }
+
+    @Test
+    void discoverShards_whenDescribeStreamFails_shouldNotPruneCheckpoints() throws Exception {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> checkpoints =
+                (Map<String, Object>) ReflectionTestUtils.getField(listener, "checkpoints");
+        checkpoints.put(SHARD_ID, newShardCheckpoint());
+
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("no stream")));
+
+        ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        // A transient describe failure must not wipe live checkpoints.
+        assertThat(checkpoints).containsKey(SHARD_ID);
+    }
+
+    @Test
+    void processingFailureCounts_whenManyTransientFailuresNeverReturn_shouldStayBoundedAtCap() throws Exception {
+        int cap = maxRetryCountEntries();
+
+        @SuppressWarnings("unchecked")
+        Map<String, Integer> processingFailureCounts =
+                (Map<String, Integer>) ReflectionTestUtils.getField(listener, "processingFailureCounts");
+
+        // Simulate distinct ids that each failed once and never reappeared (so they never self-remove).
+        int overflow = cap + 50;
+        for (int i = 0; i < overflow; i++) {
+            processingFailureCounts.merge("pay_transient_" + i, 1, Integer::sum);
+        }
+
+        // The access-ordered LRU evicts least-recently-touched entries, holding the map at the cap.
+        assertThat(processingFailureCounts).hasSize(cap);
+    }
+
+    @Test
+    void pollLimit_whenConfigured_shouldNotExceedGetRecordsHardCap() throws Exception {
+        // DynamoDB Streams GetRecords accepts at most 1000 records per call. POLL_LIMIT must respect it.
+        int pollLimit = intConstant("POLL_LIMIT");
+        assertThat(pollLimit).isPositive();
+        assertThat(pollLimit).isLessThanOrEqualTo(1000);
+    }
+
+    @Test
+    void maxGetRecordsRoundsPerShard_whenConfigured_shouldBePositive() throws Exception {
+        // Per-tick round cap that keeps one hot shard from starving others. It must be a positive bound.
+        assertThat(intConstant("MAX_GET_RECORDS_ROUNDS_PER_SHARD")).isPositive();
+    }
+
+    @Test
+    void maxProcessRetries_whenConfigured_shouldBePositive() {
+        assertThat(DynamoDbStreamsPaymentEventListener.MAX_PROCESS_RETRIES).isPositive();
+    }
+
     /** Builds an INSERT stream record for an OUTBOUND_PAYMENT_CREATED payment event. */
     private static Record buildCreatedRecord(String paymentId) {
         return Record.builder()
@@ -368,6 +534,13 @@ public class DynamoDbStreamsPaymentEventListenerTest {
                 .build();
     }
 
+    /** Reflectively reads a private {@code int} constant by field name. */
+    private static int intConstant(String fieldName) throws Exception {
+        Field field = DynamoDbStreamsPaymentEventListener.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.getInt(null);
+    }
+
     /** Reflectively instantiates the listener package-private {@code ShardCheckpoint} type. */
     private static Object newShardCheckpoint() throws Exception {
         Class<?> inner = Class.forName(
@@ -375,5 +548,12 @@ public class DynamoDbStreamsPaymentEventListenerTest {
         Constructor<?> ctor = inner.getDeclaredConstructor();
         ctor.setAccessible(true);
         return ctor.newInstance();
+    }
+
+    /** Reflectively reads the private {@code MAX_RETRY_COUNT_ENTRIES} cap. */
+    private static int maxRetryCountEntries() throws Exception {
+        Field field = DynamoDbStreamsPaymentEventListener.class.getDeclaredField("MAX_RETRY_COUNT_ENTRIES");
+        field.setAccessible(true);
+        return field.getInt(null);
     }
 }

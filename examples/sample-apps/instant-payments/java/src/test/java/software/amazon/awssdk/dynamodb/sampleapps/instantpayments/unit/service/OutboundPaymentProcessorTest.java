@@ -1,22 +1,30 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.unit.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentProcessor.MAX_TRANSACTION_CONFLICT_RETRIES;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.PaymentNotFoundException;
@@ -28,9 +36,11 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentE
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentState;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Reservation;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.ReservationStatus;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentPartitionQueryResult;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentProcessor;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.AsyncSupport;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
@@ -48,12 +58,29 @@ public class OutboundPaymentProcessorTest {
 
     private OutboundPaymentProcessor processor;
 
+    private ScheduledExecutorService delayScheduler;
+
     private final PaymentEventReplayer replayer = new PaymentEventReplayer();
+
+    private static final long RESERVATION_TIMEOUT_SECONDS = 900L;
 
     /** Constructs the processor with repository and replayer collaborators. */
     @BeforeEach
     void setUp() {
-        processor = new OutboundPaymentProcessor(paymentRepository, replayer);
+        delayScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "async-delay-processor-test");
+            thread.setDaemon(true);
+            return thread;
+        });
+        AsyncSupport asyncSupport = new AsyncSupport(delayScheduler);
+        processor = new OutboundPaymentProcessor(
+                paymentRepository, replayer, asyncSupport, RESERVATION_TIMEOUT_SECONDS);
+    }
+
+    /** Shuts down the delay scheduler so test threads do not leak between cases. */
+    @AfterEach
+    void tearDown() {
+        delayScheduler.shutdownNow();
     }
 
     @Test
@@ -62,10 +89,9 @@ public class OutboundPaymentProcessorTest {
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
         Account accountAfterReserve = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
 
+        // Single partition load on the happy path: the post-reserve head is threaded forward to complete.
         when(paymentRepository.queryPaymentPartition("pay_1"))
-                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(payment)))
-                .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(
-                        adjustPaymentState(payment, PaymentState.FUNDS_RESERVED, 2))));
+                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(payment)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account))
                 .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
@@ -78,14 +104,49 @@ public class OutboundPaymentProcessorTest {
                 any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        processor.processPayment("pay_1");
+        processor.processPayment("pay_1").join();
 
+        // The partition is queried exactly once: reserve advances the head in memory and threads it to complete.
+        verify(paymentRepository, times(1)).queryPaymentPartition("pay_1");
         verify(paymentRepository).reserveFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
                 any(PaymentEvent.class), eq(new BigDecimal("100")));
         verify(paymentRepository).completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
                 any(LedgerEntry.class), any(PaymentEvent.class), eq(new BigDecimal("100")));
+    }
+
+    @Test
+    void processPayment_whenHappyPath_shouldStampActiveReservationWithDerivedExpiry() {
+        Payment payment = buildPayment("pay_expiry", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
+        Account accountAfterReserve = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+
+        when(paymentRepository.queryPaymentPartition("pay_expiry"))
+                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(payment)));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account))
+                .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.processPayment("pay_expiry").join();
+
+        ArgumentCaptor<Reservation> reservationCaptor = ArgumentCaptor.forClass(Reservation.class);
+        verify(paymentRepository).reserveFundsTransaction(
+                any(PaymentStreamHead.class), eq(account), reservationCaptor.capture(),
+                any(PaymentEvent.class), eq(new BigDecimal("100")));
+
+        Reservation reservation = reservationCaptor.getValue();
+        assertThat(reservation.getReservationId()).isEqualTo("res_pay_expiry");
+        assertThat(reservation.getReservationKey()).isEqualTo(Reservation.KEY_PREFIX + "res_pay_expiry");
+        assertThat(reservation.getPaymentId()).isEqualTo("pay_expiry");
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.ACTIVE.name());
+        assertThat(reservation.getCreatedAtUtc()).isNotNull();
+        assertThat(reservation.getExpiresAt())
+                .isEqualTo(reservation.getCreatedAtUtc().getEpochSecond() + RESERVATION_TIMEOUT_SECONDS);
     }
 
     @Test
@@ -100,7 +161,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.rejectPaymentTransaction(any(PaymentStreamHead.class), any(PaymentEvent.class), eq("ACCOUNT_NOT_FOUND")))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        processor.processPayment("pay_2");
+        processor.processPayment("pay_2").join();
 
         verify(paymentRepository).rejectPaymentTransaction(
                 any(PaymentStreamHead.class), any(PaymentEvent.class), eq("ACCOUNT_NOT_FOUND"));
@@ -120,7 +181,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.rejectPaymentTransaction(any(PaymentStreamHead.class), any(PaymentEvent.class), eq("INSUFFICIENT_FUNDS")))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        processor.processPayment("pay_3");
+        processor.processPayment("pay_3").join();
 
         verify(paymentRepository).rejectPaymentTransaction(
                 any(PaymentStreamHead.class), any(PaymentEvent.class), eq("INSUFFICIENT_FUNDS"));
@@ -134,7 +195,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.queryPaymentPartition("pay_4"))
                 .thenReturn(CompletableFuture.completedFuture(completedPartition(payment)));
 
-        processor.processPayment("pay_4");
+        processor.processPayment("pay_4").join();
 
         verify(paymentRepository, never()).getAccount(any());
         verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
@@ -149,7 +210,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.queryPaymentPartition("pay_5"))
                 .thenReturn(CompletableFuture.completedFuture(rejectedPartition(payment)));
 
-        processor.processPayment("pay_5");
+        processor.processPayment("pay_5").join();
 
         verify(paymentRepository, never()).getAccount(any());
         verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
@@ -172,7 +233,7 @@ public class OutboundPaymentProcessorTest {
                 any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        processor.processPayment("pay_6");
+        processor.processPayment("pay_6").join();
 
         verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
         verify(paymentRepository).completeFundsTransaction(
@@ -185,9 +246,50 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.queryPaymentPartition("pay_unknown"))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> processor.processPayment("pay_unknown"))
-                .isInstanceOf(PaymentNotFoundException.class)
-                .hasMessageContaining("pay_unknown");
+        assertThatThrownBy(() -> processor.processPayment("pay_unknown").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(PaymentNotFoundException.class)
+                        .hasMessageContaining("pay_unknown"));
+    }
+
+    @Test
+    void getPayment_whenPartitionReadIsTransientlySkewed_shouldRereadUntilConsistent() {
+        Payment payment = buildPayment("pay_skew_once", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
+        Instant createdAt = payment.getCreatedAtUtc();
+        PaymentPartitionQueryResult skewed = new PaymentPartitionQueryResult(
+                baseHead("pay_skew_once", 2, PaymentState.FUNDS_RESERVED.name(), createdAt.plusSeconds(1)),
+                List.of(createdEvent(payment, createdAt)));
+
+        when(paymentRepository.queryPaymentPartition("pay_skew_once"))
+                .thenReturn(CompletableFuture.completedFuture(skewed))
+                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(payment)));
+
+        Payment folded = processor.getPayment("pay_skew_once").join();
+
+        assertThat(folded.getPaymentId()).isEqualTo("pay_skew_once");
+        assertThat(folded.getState()).isEqualTo(PaymentState.RECEIVED.name());
+        verify(paymentRepository, times(2)).queryPaymentPartition("pay_skew_once");
+    }
+
+    @Test
+    void getPayment_whenPartitionReadSkewPersists_shouldThrow() {
+        Payment payment = buildPayment("pay_skew_stuck", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
+        Instant createdAt = payment.getCreatedAtUtc();
+        PaymentPartitionQueryResult skewed = new PaymentPartitionQueryResult(
+                baseHead("pay_skew_stuck", 2, PaymentState.FUNDS_RESERVED.name(), createdAt.plusSeconds(1)),
+                List.of(createdEvent(payment, createdAt)));
+
+        when(paymentRepository.queryPaymentPartition("pay_skew_stuck"))
+                .thenReturn(CompletableFuture.completedFuture(skewed));
+
+        assertThatThrownBy(() -> processor.getPayment("pay_skew_stuck").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("Stream head does not match replayed aggregate"));
+
+        verify(paymentRepository, times(5)).queryPaymentPartition("pay_skew_stuck");
     }
 
     @Test
@@ -206,7 +308,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(tce));
 
-        processor.processPayment("pay_7");
+        processor.processPayment("pay_7").join();
 
         verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any());
     }
@@ -230,7 +332,7 @@ public class OutboundPaymentProcessorTest {
                 any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        processor.processPayment("pay_8");
+        processor.processPayment("pay_8").join();
 
         verify(paymentRepository).completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
@@ -250,7 +352,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(3, 5)));
 
-        processor.processPayment("pay_9");
+        processor.processPayment("pay_9").join();
 
         verify(paymentRepository).completeFundsTransaction(any(), any(), any(), any(), any(), any());
     }
@@ -268,7 +370,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(0, 5)));
 
-        processor.processPayment("pay_9b");
+        processor.processPayment("pay_9b").join();
 
         verify(paymentRepository).completeFundsTransaction(any(), any(), any(), any(), any(), any());
     }
@@ -285,7 +387,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.rejectPaymentTransaction(any(), any(), eq("ACCOUNT_NOT_FOUND")))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(1, 2)));
 
-        processor.processPayment("pay_10");
+        processor.processPayment("pay_10").join();
 
         verify(paymentRepository).rejectPaymentTransaction(any(), any(), eq("ACCOUNT_NOT_FOUND"));
     }
@@ -303,7 +405,7 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(2, 4)));
 
-        processor.processPayment("pay_11");
+        processor.processPayment("pay_11").join();
 
         verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any());
     }
@@ -320,9 +422,11 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("network")));
 
-        assertThatThrownBy(() -> processor.processPayment("pay_12"))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Reserve transaction failed");
+        assertThatThrownBy(() -> processor.processPayment("pay_12").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Reserve transaction failed"));
     }
 
     @Test
@@ -337,9 +441,11 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("throttle")));
 
-        assertThatThrownBy(() -> processor.processPayment("pay_13"))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Complete transaction failed");
+        assertThatThrownBy(() -> processor.processPayment("pay_13").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Complete transaction failed"));
     }
 
     @Test
@@ -354,9 +460,109 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.rejectPaymentTransaction(any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("throttle")));
 
-        assertThatThrownBy(() -> processor.processPayment("pay_14"))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Reject transaction failed");
+        assertThatThrownBy(() -> processor.processPayment("pay_14").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Reject transaction failed"));
+    }
+
+    @Test
+    void processPayment_whenReserveTransactionConflictThenSuccess_shouldRetryAndComplete() {
+        Payment received = buildPayment("pay_15", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
+        Account accountAfterReserve = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+
+        // Attempt 1 reloads RECEIVED and the reserve conflicts.
+        // Attempt 2 reloads RECEIVED, reserves, then completes against the threaded-forward head.
+        when(paymentRepository.queryPaymentPartition("pay_15"))
+                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(received)))
+                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(received)));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account))
+                .thenReturn(CompletableFuture.completedFuture(account))
+                .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(buildTransactionConflictCancellation(4)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(paymentRepository.completeFundsTransaction(
+                any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
+                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.processPayment("pay_15").join();
+
+        verify(paymentRepository, times(2)).reserveFundsTransaction(any(), any(), any(), any(), any());
+        verify(paymentRepository).completeFundsTransaction(
+                any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
+                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class));
+    }
+
+    @Test
+    void processPayment_whenReserveTransactionConflictNeverResolves_shouldExhaustRetriesAndThrow() {
+        Payment received = buildPayment("pay_16", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
+
+        when(paymentRepository.queryPaymentPartition("pay_16"))
+                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(received)));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(buildTransactionConflictCancellation(4)));
+
+        assertThatThrownBy(() -> processor.processPayment("pay_16").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Transaction conflict retries exhausted"));
+
+        // Initial attempt plus the capped retries.
+        verify(paymentRepository, times(MAX_TRANSACTION_CONFLICT_RETRIES + 1))
+                .reserveFundsTransaction(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void processPayment_whenCompleteTransactionConflictThenSuccess_shouldRetryWholeFlowAndComplete() {
+        Payment received = buildPayment("pay_17", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
+        Payment fundsReserved = buildPayment("pay_17", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
+        Account accountAfterReserve = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+
+        when(paymentRepository.queryPaymentPartition("pay_17"))
+                .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(received)))
+                .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(fundsReserved)))
+                .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(fundsReserved)));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account))
+                .thenReturn(CompletableFuture.completedFuture(accountAfterReserve))
+                .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(buildTransactionConflictCancellation(5)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.processPayment("pay_17").join();
+
+        verify(paymentRepository, times(1)).reserveFundsTransaction(any(), any(), any(), any(), any());
+        verify(paymentRepository, times(2)).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Builds a {@link TransactionCanceledException} whose first reason is a {@code TransactionConflict}
+     * (a concurrent transaction rather than a precondition failure).
+     */
+    private static TransactionCanceledException buildTransactionConflictCancellation(int size) {
+        List<CancellationReason> reasons = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            reasons.add(CancellationReason.builder()
+                    .code(i == 0 ? "TransactionConflict" : "None")
+                    .build());
+        }
+        return TransactionCanceledException.builder()
+                .cancellationReasons(reasons)
+                .message("Transaction is ongoing for the item")
+                .build();
     }
 
     /**
@@ -397,26 +603,6 @@ public class OutboundPaymentProcessorTest {
         if (state == PaymentState.REJECTED) {
             p.setReasonCode("TEST_REJECT");
         }
-        return p;
-    }
-
-    /** Copies {@code template} and overrides state and version for successive query stubs. */
-    private static Payment adjustPaymentState(Payment template, PaymentState state, int version) {
-        Payment p = new Payment();
-        p.setPaymentKey(template.getPaymentKey());
-        p.setPaymentId(template.getPaymentId());
-        p.setMerchantId(template.getMerchantId());
-        p.setState(state.name());
-        p.setDebtorAccountId(template.getDebtorAccountId());
-        p.setCreditorIban(template.getCreditorIban());
-        p.setCreditorName(template.getCreditorName());
-        p.setAmount(template.getAmount());
-        p.setCurrency(template.getCurrency());
-        p.setIdempotencyKey(template.getIdempotencyKey());
-        p.setCorrelationId(template.getCorrelationId());
-        p.setCreatedAtUtc(template.getCreatedAtUtc());
-        p.setUpdatedAtUtc(template.getUpdatedAtUtc());
-        p.setVersion(version);
         return p;
     }
 

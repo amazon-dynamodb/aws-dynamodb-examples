@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
@@ -18,6 +19,8 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BillingMode;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableResponse;
 import software.amazon.awssdk.services.dynamodb.model.GlobalSecondaryIndex;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
@@ -25,6 +28,9 @@ import software.amazon.awssdk.services.dynamodb.model.Projection;
 import software.amazon.awssdk.services.dynamodb.model.ProjectionType;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.ResourceInUseException;
+import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
+import software.amazon.awssdk.services.dynamodb.model.TableDescription;
+import software.amazon.awssdk.services.dynamodb.model.TableStatus;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 import software.amazon.awssdk.services.dynamodb.model.StreamSpecification;
 import software.amazon.awssdk.services.dynamodb.model.StreamViewType;
@@ -32,23 +38,29 @@ import software.amazon.awssdk.services.dynamodb.model.TimeToLiveSpecification;
 import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
 
 /**
- * Creates the DynamoDB table and seeds initial account data on application startup.
+ * Creates the DynamoDB table and seeds demo accounts on startup, or verifies the table when
+ * resource creation is disabled.
  *
- * <p>Table creation and seeding run on every startup (local and AWS). If the table already
- * exists, creation is skipped and a log message is emitted. Seeding is idempotent.
- *
- * <p>The table uses a single-table design with composite keys:
+ * <p>Property {@code dynamodb.create-resources} defaults to {@code false} when unset.
  * <ul>
- *   <li>{@code PK}: partition key (String)</li>
- *   <li>{@code SK}: sort key (String)</li>
+ *   <li>{@code true}: create the table, enable TTL on {@code ttl}, seed accounts from
+ *       {@link SeedAccountsData}</li>
+ *   <li>{@code false} or unset: call {@code DescribeTable} and fail fast if the table is missing
+ *       or not {@link TableStatus#ACTIVE}</li>
  * </ul>
  *
- * <p>New tables are created with DynamoDB Streams enabled ({@link StreamViewType#NEW_IMAGE})
- * so the payment processor can react to {@code INSERT} of the first payment domain event.
+ * <p>In production, leave the property unset or set {@code false}. Manage schema and seed data in IaC.
  *
- * <p>Account seed rows come from {@link SeedAccountsData}.
+ * <p>Single-table keys are string attributes {@code PK} for partition and {@code SK} for sort.
  *
- * <p>DynamoDB TTL is enabled on attribute {@code ttl} for items that set it (e.g. idempotency rows).
+ * <p>New tables enable DynamoDB Streams with {@link StreamViewType#NEW_IMAGE} so the payment processor
+ * can react to the first {@code OUTBOUND_PAYMENT_CREATED} event.
+ *
+ * <p>TTL is enabled on {@code ttl} for items that set it, such as idempotency records.
+ *
+ * @apiNote Repository and client futures are completed with blocking {@code .join()} on the Spring
+ * startup thread. That is intentional bootstrap work, not the HTTP request path, and runs once per
+ * process start.
  */
 @Configuration
 public class DynamoDbTableInitializer {
@@ -60,12 +72,14 @@ public class DynamoDbTableInitializer {
     private String tableName;
 
     /**
-     * Runs once per application start: ensures table (+ streams) exist, then idempotent account seed.
+     * Runs at startup when {@code dynamodb.create-resources=true}. Creates the table with streams,
+     * enables TTL, and idempotently seeds accounts.
      *
      * @param dynamoDbAsyncClient low-level client for createTable and PutItem
      * @return runner registered by Spring Boot
      */
     @Bean
+    @ConditionalOnProperty(name = "dynamodb.create-resources", havingValue = "true")
     public CommandLineRunner initializeDynamoDbTable(DynamoDbAsyncClient dynamoDbAsyncClient) {
         return args -> {
             createTableIfNotExists(dynamoDbAsyncClient);
@@ -75,11 +89,56 @@ public class DynamoDbTableInitializer {
     }
 
     /**
-     * Creates the DynamoDB table if it does not exist. Logs and continues if the table
-     * already exists (e.g. on restarts or when connected to AWS).
+     * Runs at startup when {@code dynamodb.create-resources=false} or unset. Confirms the table
+     * exists and is {@link TableStatus#ACTIVE}.
+     *
+     * @param dynamoDbAsyncClient low-level client for describeTable
+     * @return runner registered by Spring Boot
+     */
+    @Bean
+    @ConditionalOnProperty(name = "dynamodb.create-resources", havingValue = "false", matchIfMissing = true)
+    public CommandLineRunner verifyDynamoDbTableExists(DynamoDbAsyncClient dynamoDbAsyncClient) {
+        return args -> verifyTableExists(dynamoDbAsyncClient);
+    }
+
+    /**
+     * Calls {@code DescribeTable} and fails fast when the table is missing or not active.
+     *
+     * @param client low-level DynamoDB client
+     * @throws IllegalStateException when the table does not exist or is not {@link TableStatus#ACTIVE}
+     */
+    void verifyTableExists(DynamoDbAsyncClient client) {
+        try {
+            DescribeTableResponse response = client.describeTable(
+                    DescribeTableRequest.builder().tableName(tableName).build()).join();
+            TableDescription table = response.table();
+            TableStatus status = table.tableStatus();
+            if (status != TableStatus.ACTIVE) {
+                throw new IllegalStateException(
+                        "DynamoDB table is not ACTIVE: tableName=" + tableName + ", status=" + status
+                                + ". Provision the table via IaC or set dynamodb.create-resources=true for local dev.");
+            }
+            logger.info("DynamoDB table verified: tableName={}, status={}", tableName, status);
+        } catch (Exception e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            if (cause instanceof ResourceNotFoundException) {
+                throw new IllegalStateException(
+                        "DynamoDB table not found: tableName=" + tableName
+                                + ". Provision the table via IaC or set dynamodb.create-resources=true for local dev.",
+                        cause);
+            }
+            if (cause instanceof IllegalStateException illegalState) {
+                throw illegalState;
+            }
+            throw new IllegalStateException("Failed to verify DynamoDB table: tableName=" + tableName, cause);
+        }
+    }
+
+    /**
+     * Creates the DynamoDB table when it does not exist. Skips creation when the table is already present.
      *
      * <p>Streams use {@link StreamViewType#NEW_IMAGE} so {@code INSERT} records include the full item
-     * (the poller can detect new OUTBOUND_PAYMENT_CREATED events without an extra read).
+     * and the poller can detect {@code OUTBOUND_PAYMENT_CREATED} without an extra read.
      */
     private void createTableIfNotExists(DynamoDbAsyncClient client) {
         CreateTableRequest.Builder requestBuilder = CreateTableRequest.builder()
@@ -143,8 +202,7 @@ public class DynamoDbTableInitializer {
                 .projection(allProjection)
                 .build();
 
-        // Key attributes (always projected): PK, SK, merchantId, aggregateState, createdAtUtc.
-        // Non-key attributes below are the additional fields the merchant-list DTO needs.
+        // INCLUDE projection lists only fields needed by the merchant payment list response.
         Projection includeProjection = Projection.builder()
                 .projectionType(ProjectionType.INCLUDE)
                 .nonKeyAttributes(MerchantGsiProjectionAttributes.GSI_MERCHANT_STATE_PAYMENTS_PROJECTED_NON_KEYS)
@@ -163,7 +221,7 @@ public class DynamoDbTableInitializer {
     }
 
     /**
-     * Enables TTL on the {@code ttl} (epoch seconds) attribute. Idempotent for already-enabled tables.
+     * Enables TTL on the {@code ttl} attribute in epoch seconds. Safe to call when TTL is already enabled.
      */
     private void enableTimeToLiveOnTtlAttribute(DynamoDbAsyncClient client) {
         try {
@@ -181,7 +239,7 @@ public class DynamoDbTableInitializer {
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             logger.warn(
-                    "Could not enable DynamoDB TTL; table may already have TTL enabled or an update may be in progress: "
+                    "Could not enable DynamoDB TTL, table may already have TTL enabled or an update may be in progress: "
                             + "tableName={}, reason={}",
                     tableName,
                     cause.getMessage());

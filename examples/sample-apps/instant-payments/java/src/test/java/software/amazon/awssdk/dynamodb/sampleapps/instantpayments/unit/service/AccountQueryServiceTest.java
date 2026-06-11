@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -54,9 +55,11 @@ public class AccountQueryServiceTest {
         when(paymentRepository.queryAccountPartition(eq("acc_missing")))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> accountQueryService.getAccount("acc_missing"))
-                .isInstanceOf(AccountNotFoundException.class)
-                .hasFieldOrPropertyWithValue("accountId", "acc_missing");
+        assertThatThrownBy(() -> accountQueryService.getAccount("acc_missing").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(AccountNotFoundException.class)
+                        .hasFieldOrPropertyWithValue("accountId", "acc_missing"));
     }
 
     @Test
@@ -75,7 +78,7 @@ public class AccountQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(
                         new AccountPartitionQueryResult(account, List.of(r1, r2))));
 
-        GetAccountResponse response = accountQueryService.getAccount("acc_usd_1");
+        GetAccountResponse response = accountQueryService.getAccount("acc_usd_1").join();
 
         assertThat(response.accountId()).isEqualTo("acc_usd_1");
         assertThat(response.status()).isEqualTo("ACTIVE");
@@ -104,7 +107,7 @@ public class AccountQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(
                         new AccountPartitionQueryResult(account, List.of())));
 
-        GetAccountResponse response = accountQueryService.getAccount("acc_eur_1");
+        GetAccountResponse response = accountQueryService.getAccount("acc_eur_1").join();
 
         assertThat(response.accountId()).isEqualTo("acc_eur_1");
         assertThat(response.currency()).isEqualTo("EUR");
@@ -128,7 +131,7 @@ public class AccountQueryServiceTest {
 
         BatchGetReservationsResponse response = accountQueryService.batchGetReservations(
                 "acc_usd_1",
-                new BatchGetReservationsRequest(List.of("res_pay_1", "res_pay_2", "res_missing")));
+                new BatchGetReservationsRequest(List.of("res_pay_1", "res_pay_2", "res_missing"))).join();
 
         assertThat(response.missingReservationIds()).containsExactly("res_missing");
         assertThat(response.reservations()).hasSize(2);
@@ -151,7 +154,7 @@ public class AccountQueryServiceTest {
                         new BatchGetReservationsResult(List.of(r1), List.of())));
 
         BatchGetReservationsResponse response = accountQueryService.batchGetReservations(
-                "acc_usd_1", new BatchGetReservationsRequest(List.of("res_a")));
+                "acc_usd_1", new BatchGetReservationsRequest(List.of("res_a"))).join();
 
         assertThat(response.reservations()).hasSize(1);
         assertThat(response.missingReservationIds()).isEmpty();
@@ -164,7 +167,7 @@ public class AccountQueryServiceTest {
                         new BatchGetReservationsResult(List.of(), List.of("res_x", "res_y"))));
 
         BatchGetReservationsResponse response = accountQueryService.batchGetReservations(
-                "acc_usd_1", new BatchGetReservationsRequest(List.of("res_x", "res_y")));
+                "acc_usd_1", new BatchGetReservationsRequest(List.of("res_x", "res_y"))).join();
 
         assertThat(response.reservations()).isEmpty();
         assertThat(response.missingReservationIds()).containsExactly("res_x", "res_y");
@@ -181,7 +184,7 @@ public class AccountQueryServiceTest {
                         new BatchGetReservationsResult(List.of(reservation), List.of("res_b"))));
 
         BatchGetReservationsResponse response = accountQueryService.batchGetReservations(
-                "acc_usd_1", new BatchGetReservationsRequest(List.of("res_a", "res_a", "res_b")));
+                "acc_usd_1", new BatchGetReservationsRequest(List.of("res_a", "res_a", "res_b"))).join();
 
         assertThat(response.reservations()).hasSize(1);
         assertThat(response.reservations().getFirst().reservationId()).isEqualTo("res_a");
@@ -213,7 +216,7 @@ public class AccountQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(
                         new AccountPartitionQueryResult(account, List.of(active, consumed))));
 
-        GetAccountResponse response = accountQueryService.getAccount("acc_usd_2");
+        GetAccountResponse response = accountQueryService.getAccount("acc_usd_2").join();
 
         assertThat(response.reservations()).hasSize(2);
         assertThat(response.reservations().get(0).status()).isEqualTo("ACTIVE");

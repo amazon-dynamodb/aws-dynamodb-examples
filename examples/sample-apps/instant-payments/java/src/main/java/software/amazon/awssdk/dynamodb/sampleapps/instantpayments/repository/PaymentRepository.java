@@ -199,4 +199,44 @@ public interface PaymentRepository {
                                                                                int limit,
                                                                                boolean scanIndexForward,
                                                                                String nextToken);
+
+    /**
+     * Finds {@link Reservation} rows that are still {@link ReservationStatus#ACTIVE} but whose
+     * {@link Reservation#getExpiresAt()} is at or before {@code nowEpochSecond}, so the expiry sweeper
+     * can release them.
+     *
+     * <p>Implementations run a single-table {@code Scan} with a server-side {@code FilterExpression}
+     * ({@code entityType = RESERVATION AND status = ACTIVE AND expiresAt < now}). A {@code Scan} reads
+     * the whole table, so this is a sweeper-only operation, not a hot path. The result is bounded to at
+     * most {@code limit} reservations and to a small number of scanned pages, so one sweep does a bounded
+     * amount of work and any remainder is picked up on the next sweep.
+     *
+     * @param nowEpochSecond current time as a Unix epoch second. Reservations expiring at or before this are returned
+     * @param limit          maximum number of expired reservations to return in one sweep
+     * @return up to {@code limit} expired {@code ACTIVE} reservations (possibly empty)
+     */
+    CompletableFuture<List<Reservation>> scanExpiredActiveReservations(long nowEpochSecond, int limit);
+
+    /**
+     * Atomically releases an expired hold in one {@code TransactWriteItems}: the held funds are returned
+     * and the reservation is marked {@link ReservationStatus#RELEASED}.
+     *
+     * <p>Item set (all succeed or none apply):
+     * <ul>
+     *   <li>{@code Update} {@link Reservation}: {@code status} changes from {@link ReservationStatus#ACTIVE} to
+     *       {@link ReservationStatus#RELEASED}, conditional on the reservation still being {@code ACTIVE}</li>
+     *   <li>{@code Update} debtor {@link Account}: increment {@code availableBalance} by {@code amount},
+     *       conditional on the optimistic {@code version}</li>
+     * </ul>
+     *
+     * <p>The reservation condition is the serialization point against a concurrent complete: both require
+     * {@code status = ACTIVE} on the same item, so a hold is either consumed or released, never both.
+     *
+     * @param reservation expired reservation to release (supplies the keys to update)
+     * @param account     debtor account read just before this call (supplies key and {@code version})
+     * @param amount      held amount to add back to {@code availableBalance}
+     */
+    CompletableFuture<Void> releaseReservationTransaction(Reservation reservation,
+                                                          Account account,
+                                                          BigDecimal amount);
 }

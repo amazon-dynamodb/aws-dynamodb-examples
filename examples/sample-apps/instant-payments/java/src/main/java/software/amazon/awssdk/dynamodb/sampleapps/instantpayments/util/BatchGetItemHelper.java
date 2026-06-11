@@ -32,22 +32,22 @@ import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
  * {@code BatchGetItem} again with only the unprocessed key set. Stop after
  * {@link #MAX_UNPROCESSED_RETRIES} retries and return partial data if keys remain unprocessed.
  *
- * <p><strong>Example shape (pseudocode).</strong>
+ * <p><strong>Example shape (pseudocode).</strong> HTTP handlers compose with {@code thenCompose}.
+ * Background jobs may still {@code .join()} on a dedicated thread.
  * <pre>{@code
- * Map<String, KeysAndAttributes> request = buildKeysForFirstCall();
- * Map<String, YourItem> found = new HashMap<>();
- * for (int attempt = 0; attempt <= MAX_UNPROCESSED_RETRIES; attempt++) {
- *   BatchGetItemResponse resp = client.batchGetItem(b -> b.requestItems(request)).join();
- *   found.putAll(mapAttributeMapsToItems(resp.responses()));
- *   Map<String, KeysAndAttributes> unprocessed = resp.unprocessedKeys();
- *   if (unprocessed == null || unprocessed.isEmpty()) {
- *     break;
- *   }
- *   if (attempt == MAX_UNPROCESSED_RETRIES) {
- *     break;
- *   }
- *   delayAsync(unprocessedKeysDelay(attempt)).join();
- *   request = unprocessed;
+ * CompletableFuture<Map<String, YourItem>> batchGetWithRetry(Map<String, KeysAndAttributes> request,
+ *                                                            int attempt) {
+ *   return client.batchGetItem(b -> b.requestItems(request))
+ *       .thenCompose(resp -> {
+ *         Map<String, YourItem> found = mapAttributeMapsToItems(resp.responses());
+ *         Map<String, KeysAndAttributes> unprocessed = resp.unprocessedKeys();
+ *         if (unprocessed == null || unprocessed.isEmpty() || attempt == MAX_UNPROCESSED_RETRIES) {
+ *           return CompletableFuture.completedFuture(found);
+ *         }
+ *         return delayAsync(unprocessedKeysDelay(attempt))
+ *             .thenCompose(ignored -> batchGetWithRetry(unprocessed, attempt + 1)
+ *                 .thenApply(more -> merge(found, more)));
+ *       });
  * }
  * }</pre>
  *
@@ -77,6 +77,18 @@ public final class BatchGetItemHelper {
             BackoffStrategy.exponentialDelay(Duration.ofMillis(50), Duration.ofSeconds(1));
 
     /**
+     * Offset that maps the repository 0-based loop index onto the SDK 1-based attempt numbering used
+     * by {@link BackoffStrategy#computeDelay(int)}.
+     *
+     * <p>The SDK treats attempt {@code 1} as the first call and returns zero delay for it. Adding
+     * this offset to the 0-based loop index of the call that just returned unprocessed keys aligns
+     * the application backoff with the SDK attempt numbering, so the first retry after loop attempt
+     * {@code 0} maps to SDK attempt {@code 2} and picks up a non-zero delay rather than the zero
+     * delay reserved for the first attempt.
+     */
+    private static final int SDK_ATTEMPT_OFFSET = 2;
+
+    /**
      * Prevents instantiation of this utility type.
      */
     private BatchGetItemHelper() {
@@ -87,15 +99,15 @@ public final class BatchGetItemHelper {
      *
      * <p>The SDK {@link BackoffStrategy#computeDelay(int)} method uses a 1-based attempt index where
      * attempt {@code 1} yields zero delay (no wait before the first call). Repository code uses a
-     * 0-based loop index for the call that just returned unprocessed keys. The mapping uses
-     * {@code loopAttempt + 2} as the SDK attempt so the first retry after attempt {@code 0} picks up
-     * a non-zero delay.
+     * 0-based loop index for the call that just returned unprocessed keys. The mapping adds
+     * {@link #SDK_ATTEMPT_OFFSET} to the loop index so the first retry after attempt {@code 0} picks
+     * up a non-zero delay.
      *
      * @param attempt zero-based index of the attempt that produced unprocessed keys
      * @return non-negative duration to wait before the next retry
      */
     public static Duration unprocessedKeysDelay(int attempt) {
-        return UNPROCESSED_KEY_BACKOFF.computeDelay(attempt + 2);
+        return UNPROCESSED_KEY_BACKOFF.computeDelay(attempt + SDK_ATTEMPT_OFFSET);
     }
 
     /**

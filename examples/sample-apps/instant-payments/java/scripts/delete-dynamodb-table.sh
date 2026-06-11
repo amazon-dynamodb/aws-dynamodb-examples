@@ -16,8 +16,11 @@
 # This script waits until describe-table reports the table is gone (avoids racing the
 # next create against the same name).
 #
-# To recreate the table for this sample, use create-dynamodb-table.sh (Streams NEW_IMAGE)
-# or start the Spring Boot app once; it creates the table when missing with the same spec.
+# To bring the table back for this sample, run the Spring Boot app once. With
+# dynamodb.create-resources enabled (the default), the app detects the missing table, recreates it
+# with the same configuration (Streams NEW_IMAGE, TTL), and re-seeds the demo accounts. In
+# production this flag stays off and the table is created separately through CDK, CloudFormation,
+# Terraform, or the console.
 #
 # Prerequisites:
 #   - AWS CLI v2 installed

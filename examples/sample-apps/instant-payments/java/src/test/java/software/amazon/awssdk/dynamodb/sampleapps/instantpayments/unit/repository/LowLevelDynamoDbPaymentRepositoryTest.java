@@ -25,6 +25,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Reservat
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.InvalidPaginationTokenException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.AccountPartitionQueryResult;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.BatchGetReservationsResult;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.CreatePaymentTransactItemOrder;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.LowLevelDynamoDbPaymentRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.BatchGetItemHelper;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.MerchantPaymentQueryResult;
@@ -39,6 +40,8 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
@@ -123,10 +126,11 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         ArgumentCaptor<TransactWriteItemsRequest> captor = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
         verify(client).transactWriteItems(captor.capture());
         List<TransactWriteItem> items = captor.getValue().transactItems();
-        assertThat(items).hasSize(3);
-        assertThat(items.getFirst().put().conditionExpression()).isNull();
-        assertThat(items.get(1).put().conditionExpression()).isNull();
-        assertThat(items.get(2).put().conditionExpression()).isEqualTo("attribute_not_exists(PK)");
+        assertThat(items).hasSize(CreatePaymentTransactItemOrder.values().length);
+        assertThat(items.get(CreatePaymentTransactItemOrder.STREAM_HEAD.index()).put().conditionExpression()).isNull();
+        assertThat(items.get(CreatePaymentTransactItemOrder.FIRST_EVENT.index()).put().conditionExpression()).isNull();
+        assertThat(items.get(CreatePaymentTransactItemOrder.IDEMPOTENCY.index()).put().conditionExpression())
+                .isEqualTo("attribute_not_exists(PK)");
     }
 
     @Test
@@ -388,6 +392,73 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
+    void scanExpiredActiveReservations_whenResultsSpanMultiplePages_shouldFilterAndPaginate() {
+        Reservation first = buildReservation("acc_1", "res_a");
+        first.setExpiresAt(1000L);
+        Reservation second = buildReservation("acc_1", "res_b");
+        second.setExpiresAt(1001L);
+        Map<String, AttributeValue> lastEvaluatedKey = Map.of(
+                "PK", AttributeValue.builder().s(Account.KEY_PREFIX + "acc_1").build(),
+                "SK", AttributeValue.builder().s(Reservation.KEY_PREFIX + "res_a").build());
+
+        when(client.scan(any(ScanRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(ScanResponse.builder()
+                                .items(List.of(RESERVATION_SCHEMA.itemToMap(first, false)))
+                                .lastEvaluatedKey(lastEvaluatedKey)
+                                .build()),
+                        CompletableFuture.completedFuture(ScanResponse.builder()
+                                .items(List.of(RESERVATION_SCHEMA.itemToMap(second, false)))
+                                .build()));
+
+        List<Reservation> result = repository.scanExpiredActiveReservations(1234L, 2).join();
+
+        assertThat(result).extracting(Reservation::getReservationId).containsExactly("res_a", "res_b");
+
+        ArgumentCaptor<ScanRequest> captor = ArgumentCaptor.forClass(ScanRequest.class);
+        verify(client, times(2)).scan(captor.capture());
+        List<ScanRequest> requests = captor.getAllValues();
+        assertThat(requests.getFirst().filterExpression())
+                .isEqualTo("entityType = :res AND #s = :active AND expiresAt <= :now");
+        assertThat(requests.getFirst().expressionAttributeNames()).containsEntry("#s", "status");
+        assertThat(requests.getFirst().expressionAttributeValues())
+                .containsEntry(":res", AttributeValue.builder().s(Reservation.ENTITY_TYPE).build())
+                .containsEntry(":active", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build())
+                .containsEntry(":now", AttributeValue.builder().n("1234").build());
+        assertThat(requests.getFirst().limit()).isEqualTo(100);
+        assertThat(requests.getFirst().exclusiveStartKey()).isEmpty();
+        assertThat(requests.get(1).exclusiveStartKey()).isEqualTo(lastEvaluatedKey);
+    }
+
+    @Test
+    void releaseReservationTransaction_whenReservationReleased_shouldBuildReleaseTransactItems() {
+        when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
+
+        repository.releaseReservationTransaction(
+                buildReservation("acc_1", "res_pay_1"),
+                buildAccount("acc_1"),
+                new BigDecimal("100")
+        ).join();
+
+        ArgumentCaptor<TransactWriteItemsRequest> captor = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(client).transactWriteItems(captor.capture());
+
+        List<TransactWriteItem> items = captor.getValue().transactItems();
+        assertThat(items).hasSize(2);
+        assertThat(items.getFirst().update().updateExpression()).isEqualTo("SET #s = :newStatus");
+        assertThat(items.getFirst().update().conditionExpression()).isEqualTo("#s = :expectedStatus");
+        assertThat(items.getFirst().update().expressionAttributeValues())
+                .containsEntry(":newStatus", AttributeValue.builder().s(ReservationStatus.RELEASED.name()).build())
+                .containsEntry(":expectedStatus", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build());
+        assertThat(items.get(1).update().updateExpression())
+                .isEqualTo("SET availableBalance = availableBalance + :amt, version = version + :one");
+        assertThat(items.get(1).update().conditionExpression()).isEqualTo("version = :expectedVersion");
+        assertThat(items.get(1).update().expressionAttributeValues())
+                .containsEntry(":amt", AttributeValue.builder().n("100").build())
+                .containsEntry(":expectedVersion", AttributeValue.builder().n("1").build());
+    }
+
+    @Test
     void queryMerchantPayments_whenPaginating_shouldReturnNextTokenAndReuseItAsExclusiveStartKey() {
         PaymentStreamHead head = buildStreamHead("pay_1", 1, "RECEIVED");
         Map<String, AttributeValue> lastEvaluatedKey = Map.of(
@@ -461,6 +532,51 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     void queryMerchantPaymentsByState_whenNextTokenInvalid_shouldThrow() {
         assertThatThrownBy(() -> repository.queryMerchantPaymentsByState(
                 "merch_1", "COMPLETED", 1, false, "bad-token").join())
+                .isInstanceOf(InvalidPaginationTokenException.class)
+                .hasMessage("Invalid pagination token");
+    }
+
+    @Test
+    void queryMerchantPayments_whenTokenFromAnotherMerchant_shouldThrow() {
+        PaymentStreamHead head = buildStreamHead("pay_1", 1, "RECEIVED");
+        Map<String, AttributeValue> lastEvaluatedKey = Map.of(
+                "merchantId", AttributeValue.builder().s("merch_1").build(),
+                "createdAtUtc", AttributeValue.builder().s("2026-03-18T10:15:30Z").build(),
+                "paymentId", AttributeValue.builder().s("pay_1").build());
+
+        when(client.query(any(QueryRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(QueryResponse.builder()
+                        .items(List.of(STREAM_HEAD_SCHEMA.itemToMap(head, false)))
+                        .lastEvaluatedKey(lastEvaluatedKey)
+                        .build()));
+
+        String tokenForMerch1 = repository.queryMerchantPayments("merch_1", 1, false, null).join().nextToken();
+
+        // A token issued for merch_1 must not paginate merch_2. Reject as 400 rather than letting DynamoDB 500.
+        assertThatThrownBy(() -> repository.queryMerchantPayments("merch_2", 1, false, tokenForMerch1).join())
+                .isInstanceOf(InvalidPaginationTokenException.class)
+                .hasMessage("Invalid pagination token");
+    }
+
+    @Test
+    void queryMerchantPaymentsByState_whenTokenFromAnotherMerchant_shouldThrow() {
+        PaymentStreamHead head = buildStreamHead("pay_2", 2, "COMPLETED");
+        Map<String, AttributeValue> lastEvaluatedKey = Map.of(
+                "merchantId", AttributeValue.builder().s("merch_1").build(),
+                "aggregateState", AttributeValue.builder().s("COMPLETED").build(),
+                "createdAtUtc", AttributeValue.builder().s("2026-03-18T10:16:00Z").build());
+
+        when(client.query(any(QueryRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(QueryResponse.builder()
+                        .items(List.of(STREAM_HEAD_SCHEMA.itemToMap(head, false)))
+                        .lastEvaluatedKey(lastEvaluatedKey)
+                        .build()));
+
+        String tokenForMerch1 = repository
+                .queryMerchantPaymentsByState("merch_1", "COMPLETED", 1, true, null).join().nextToken();
+
+        assertThatThrownBy(() -> repository
+                .queryMerchantPaymentsByState("merch_2", "COMPLETED", 1, true, tokenForMerch1).join())
                 .isInstanceOf(InvalidPaginationTokenException.class)
                 .hasMessage("Invalid pagination token");
     }
@@ -547,6 +663,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         reservation.setAmount(new BigDecimal("100"));
         reservation.setStatus(ReservationStatus.ACTIVE.name());
         reservation.setCreatedAtUtc(Instant.now());
+        reservation.setExpiresAt(Instant.now().getEpochSecond() + 900);
         return reservation;
     }
 

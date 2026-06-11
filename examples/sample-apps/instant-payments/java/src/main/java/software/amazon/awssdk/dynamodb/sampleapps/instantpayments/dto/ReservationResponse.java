@@ -9,8 +9,7 @@ import java.time.Instant;
  * @param reservationId unique reservation identifier
  * @param paymentId     the payment this reservation was created for
  * @param amount        reserved amount
- * @param status        lifecycle status ({@code ACTIVE} or {@code CONSUMED}; {@code RELEASED} is not
- *                      implemented in this sample)
+ * @param status        lifecycle status. One of {@code ACTIVE}, {@code CONSUMED}, or {@code RELEASED}
  * @param createdAtUtc UTC instant when the reservation was created, ISO-8601 with {@code Z} in JSON
  */
 public record ReservationResponse(

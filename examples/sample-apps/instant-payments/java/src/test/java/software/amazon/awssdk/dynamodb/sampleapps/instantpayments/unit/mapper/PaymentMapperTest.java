@@ -9,7 +9,6 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutboundPaymentRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutboundPaymentResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentProjection;
@@ -32,13 +31,11 @@ public class PaymentMapperTest {
     private PaymentMapper mapper;
 
     /**
-     * Instantiates the mapper and sets a fixed idempotency TTL so idempotency record tests stay deterministic.
+     * Creates a fresh {@link PaymentMapper} before each test.
      */
     @BeforeEach
     void setUpMapper() {
         mapper = new PaymentMapper();
-        ReflectionTestUtils.setField(mapper, "idempotencyTtlSeconds", 2_592_000L);
-        ReflectionTestUtils.invokeMethod(mapper, "validateIdempotencyTtlConfiguration");
     }
 
     @Test
@@ -198,13 +195,13 @@ public class PaymentMapperTest {
 
     @Test
     void toIdempotencyItem_whenIdempotencyRecordProvided_shouldMapKeysRequestHashAndSnapshot() {
-        // Mapper requires expiresAt > Instant.now(); a fixed historical instant eventually falls past TTL.
-        Instant createdAt = Instant.now();
+        Instant createdAt = Instant.parse("2026-03-18T10:15:30Z");
+        long expiresAtEpochSecond = createdAt.getEpochSecond() + 86_400L;
         CreateOutboundPaymentResponse responseSnapshot = new CreateOutboundPaymentResponse(
                 "pay_123", "RECEIVED", "corr_456", createdAt);
 
         IdempotencyRecord record = mapper.toIdempotencyItem(
-                "idem-key-1", "abc123hash", responseSnapshot, createdAt);
+                "idem-key-1", "abc123hash", responseSnapshot, createdAt, expiresAtEpochSecond);
 
         assertThat(record.getIdempotencyRecordKey()).isEqualTo("IDEMPOTENCY#idem-key-1");
         assertThat(record.getEntityKey()).isEqualTo("IDEMPOTENCY");
@@ -213,6 +210,6 @@ public class PaymentMapperTest {
         assertThat(record.getResponseSnapshot()).isEqualTo(responseSnapshot);
         assertThat(record.getResponseSnapshot().paymentId()).isEqualTo("pay_123");
         assertThat(record.getCreatedAtUtc()).isEqualTo(createdAt);
-        assertThat(record.getExpiresAtEpochSecond()).isEqualTo(createdAt.getEpochSecond() + 2_592_000L);
+        assertThat(record.getExpiresAtEpochSecond()).isEqualTo(expiresAtEpochSecond);
     }
 }

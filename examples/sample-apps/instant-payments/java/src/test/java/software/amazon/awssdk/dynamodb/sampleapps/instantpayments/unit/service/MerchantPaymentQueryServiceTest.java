@@ -67,7 +67,7 @@ public class MerchantPaymentQueryServiceTest {
                         new MerchantPaymentQueryResult(List.of(head1, head2), "token-1")));
 
         MerchantPaymentsPage result =
-                merchantPaymentQueryService.listMerchantPayments("merch_1", null, null, null);
+                merchantPaymentQueryService.listMerchantPayments("merch_1", null, null, null).join();
 
         assertThat(result.nextToken()).isEqualTo("token-1");
         assertThat(result.items()).hasSize(2);
@@ -93,7 +93,7 @@ public class MerchantPaymentQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
         MerchantPaymentsPage result =
-                merchantPaymentQueryService.listMerchantPayments("merch_empty", null, null, null);
+                merchantPaymentQueryService.listMerchantPayments("merch_empty", null, null, null).join();
 
         assertThat(result.items()).isEmpty();
         assertThat(result.nextToken()).isNull();
@@ -180,7 +180,8 @@ public class MerchantPaymentQueryServiceTest {
                         new MerchantPaymentQueryResult(List.of(head), "token-2")));
 
         MerchantPaymentsPage result =
-                merchantPaymentQueryService.listMerchantPaymentsByState("merch_1", "completed", null, null, null);
+                merchantPaymentQueryService.listMerchantPaymentsByState("merch_1", "completed", null, null, null)
+                        .join();
 
         assertThat(result.nextToken()).isEqualTo("token-2");
         assertThat(result.items()).hasSize(1);
@@ -215,7 +216,8 @@ public class MerchantPaymentQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentQueryResult(List.of(), null)));
 
         MerchantPaymentsPage result =
-                merchantPaymentQueryService.listMerchantPaymentsByState("merch_1", "RECEIVED", null, null, null);
+                merchantPaymentQueryService.listMerchantPaymentsByState("merch_1", "RECEIVED", null, null, null)
+                        .join();
 
         assertThat(result.items()).isEmpty();
         assertThat(result.nextToken()).isNull();

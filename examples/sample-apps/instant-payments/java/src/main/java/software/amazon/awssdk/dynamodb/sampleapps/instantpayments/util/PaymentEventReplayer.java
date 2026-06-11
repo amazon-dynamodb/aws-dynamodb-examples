@@ -106,7 +106,7 @@ public class PaymentEventReplayer {
     }
 
     /**
-     * Transition {@link PaymentState#RECEIVED} → {@link PaymentState#FUNDS_RESERVED}.
+     * Transition from {@link PaymentState#RECEIVED} to {@link PaymentState#FUNDS_RESERVED}.
      */
     private static Payment applyReserved(Payment p, PaymentEvent event) {
         if (!PaymentState.RECEIVED.name().equals(p.getState())) {
@@ -120,7 +120,7 @@ public class PaymentEventReplayer {
     }
 
     /**
-     * Transition {@link PaymentState#FUNDS_RESERVED} → {@link PaymentState#COMPLETED}.
+     * Transition from {@link PaymentState#FUNDS_RESERVED} to {@link PaymentState#COMPLETED}.
      */
     private static Payment applyCompleted(Payment p, PaymentEvent event) {
         if (!PaymentState.FUNDS_RESERVED.name().equals(p.getState())) {

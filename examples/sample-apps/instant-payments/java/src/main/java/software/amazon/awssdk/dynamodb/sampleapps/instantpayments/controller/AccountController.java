@@ -5,11 +5,17 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.util.concurrent.CompletableFuture;
+
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,23 +26,36 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.BatchGetRe
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.BatchGetReservationsResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.ErrorResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.GetAccountResponse;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.GlobalExceptionHandler;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.AccountQueryService;
 
 /**
- * REST controller for account balance and reservation queries.
+ * REST controller for account read APIs.
  *
- * <p>Exposes:
+ * <p>Routes:
  * <ul>
- *   <li>{@code GET /api/v1/accounts/{accountId}} (read account balances and reservations)</li>
- *   <li>{@code POST /api/v1/accounts/{accountId}/batch-get-reservations} (batch load named reservations)</li>
+ *   <li>{@code GET /api/v1/accounts/{accountId}} returns balances and reservations</li>
+ *   <li>{@code POST /api/v1/accounts/{accountId}/batch-get-reservations} loads selected reservations</li>
  * </ul>
+ *
+ * <p>The {@code accountId} path variable accepts only {@value #ID_PATTERN} and up to
+ * {@value #ID_MAX_LENGTH} characters. Example valid value: {@code acc_usd_1}.
+ * Class-level {@link Validated} enforces this before the value reaches DynamoDB.
+ * Invalid values return HTTP 400 with {@code VALIDATION_ERROR} via
+ * {@link GlobalExceptionHandler#handleConstraintViolation(ConstraintViolationException)}.
  */
 @RestController
 @RequestMapping("/api/v1/accounts")
+@Validated
 @Tag(name = "Accounts", description = "Query account balances and reservations")
 public class AccountController {
 
     private static final Logger logger = LoggerFactory.getLogger(AccountController.class);
+
+    /** Allowed character set for {@code accountId}. Length is enforced by {@link #ID_MAX_LENGTH}. */
+    static final String ID_PATTERN = "^[A-Za-z0-9_-]+$";
+    /** Maximum accepted length for the {@code accountId} path variable. */
+    static final int ID_MAX_LENGTH = 64;
 
     /** Read-model service for account and reservation queries. */
     private final AccountQueryService accountQueryService;
@@ -58,22 +77,31 @@ public class AccountController {
     @Operation(
             summary = "Get account with reservations",
             description = """
-                    Loads the ACCOUNT row and all RESERVATION items under the same partition key \
-                    (item collection pattern). Reservations are sorted by sort key. Available \
-                    balance reflects active reservations. Current balance reflects posted debits.""")
+                    Returns current and available balances plus all open fund reservations for the account. \
+                    Reservations are loaded with the account in one partition query (item collection pattern).""")
     @ApiResponse(responseCode = "200", description = "Account found",
             content = @Content(schema = @Schema(implementation = GetAccountResponse.class)))
     @ApiResponse(responseCode = "404", description = "Account not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error",
+    @ApiResponse(responseCode = "400", description = "Invalid accountId",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttling or transient fault",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/{accountId}")
-    public ResponseEntity<GetAccountResponse> getAccount(@PathVariable String accountId) {
+    public CompletableFuture<ResponseEntity<GetAccountResponse>> getAccount(
+            @PathVariable
+            @Size(max = ID_MAX_LENGTH)
+            @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
+            String accountId) {
         logger.debug("Get account: accountId={}", accountId);
-        GetAccountResponse body = accountQueryService.getAccount(accountId);
-        return ResponseEntity.ok(body);
+        return accountQueryService.getAccount(accountId)
+                .thenApply(ResponseEntity::ok);
     }
 
     /**
@@ -91,28 +119,29 @@ public class AccountController {
     @Operation(
             summary = "Batch get reservations for an account",
             description = """
-                    Loads RESERVATION rows with BatchGetItem for the path account. Duplicate ids in \
-                    the JSON body are allowed but deduplicated before the repository call, so \
-                    repeated values never produce duplicate response rows. Any id without a row \
-                    appears in missingReservationIds. Found reservations follow the first-seen \
-                    order from the request after deduplication.""")
+                    Loads the requested reservations for one account. Missing identifiers are listed separately \
+                    so callers can reconcile partial results. Duplicate ids in the body are deduplicated before \
+                    lookup. Implemented with DynamoDB BatchGetItem.""")
     @ApiResponse(responseCode = "200", description = "Partial or full success",
             content = @Content(schema = @Schema(implementation = BatchGetReservationsResponse.class)))
-    @ApiResponse(responseCode = "400", description = """
-            Bad request. ErrorResponse.error is usually VALIDATION_ERROR after Bean Validation (for example \
-            empty reservationIds, a blank id, or more than 100 ids) or INVALID_BATCH_GET_RESERVATIONS_REQUEST \
-            when no distinct reservation id remains after deduplication.""",
+    @ApiResponse(responseCode = "400", description = "Invalid accountId or request body",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping(value = "/{accountId}/batch-get-reservations", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<BatchGetReservationsResponse> batchGetReservations(
-            @PathVariable String accountId,
+    public CompletableFuture<ResponseEntity<BatchGetReservationsResponse>> batchGetReservations(
+            @PathVariable
+            @Size(max = ID_MAX_LENGTH)
+            @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
+            String accountId,
             @Valid @RequestBody BatchGetReservationsRequest request) {
         logger.debug("Batch get reservations: accountId={}, count={}", accountId, request.reservationIds().size());
-        BatchGetReservationsResponse responseBody = accountQueryService.batchGetReservations(accountId, request);
-        return ResponseEntity.ok(responseBody);
+        return accountQueryService.batchGetReservations(accountId, request)
+                .thenApply(ResponseEntity::ok);
     }
 }

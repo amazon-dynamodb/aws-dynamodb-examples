@@ -18,7 +18,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.SeedAcc
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.AbstractIntegrationTest;
 
 /**
- * Smoke tests for account query endpoints - verifies the endpoints return balances and
+ * Smoke tests for account query endpoints. Verifies the endpoints return balances and
  * metadata that match {@link SeedAccountsData}.
  *
  * <p>Streams are disabled so {@code POST .../process} is the only driver of payment lifecycle here.
@@ -43,7 +43,7 @@ public class AccountSmokeTest extends AbstractIntegrationTest {
 
     @Test
     void getAccount_whenSeededAccount_shouldReturnBalances() throws Exception {
-        mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
+        performAsync(get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value("acc_usd_1"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
@@ -83,7 +83,7 @@ public class AccountSmokeTest extends AbstractIntegrationTest {
         List<String> statuses = List.of(
                 "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED");
 
-        ResultActions result = mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        ResultActions result = performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(batchGetReservationsRequestBody(reservationIds)))
                 .andExpect(status().isOk())

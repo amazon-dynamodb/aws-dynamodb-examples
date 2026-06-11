@@ -50,7 +50,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void processPayment_whenCreatedAndProcessed_shouldCompletePayment() throws Exception {
         String paymentId = createPayment("acc_usd_1", "100");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("COMPLETED"))
@@ -63,10 +63,24 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void getOutboundPayment_whenPaymentIdMalformed_shouldReturn400ValidationError() throws Exception {
+        performAsync(get("/api/v1/payments/outbound/pay$bad"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void processPayment_whenPaymentIdTooLong_shouldReturn400ValidationError() throws Exception {
+        performAsync(post("/api/v1/payments/outbound/" + "a".repeat(65) + "/process"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
     void processPayment_whenCreatedAndProcessedWithHighLevelClient_shouldIncrementAccountVersionExactlyTwice() throws Exception {
         String paymentId = createPayment("acc_usd_1", "100");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("COMPLETED"));
@@ -81,7 +95,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void processPayment_whenInsufficientFunds_shouldReject() throws Exception {
         String paymentId = createPayment("acc_eur_1", "999999");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("REJECTED"))
@@ -94,7 +108,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void processPayment_whenInsufficientFundsWithHighLevelClient_shouldNotIncrementAccountVersion() throws Exception {
         String paymentId = createPayment("acc_eur_1", "999999");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("REJECTED"))
@@ -108,14 +122,14 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void processPayment_whenPaymentMissing_shouldReturn404() throws Exception {
-        mockMvc.perform(post("/api/v1/payments/outbound/pay_nonexistent/process"))
+        performAsync(post("/api/v1/payments/outbound/pay_nonexistent/process"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PAYMENT_NOT_FOUND"));
     }
 
     @Test
     void getOutboundPayment_whenPaymentMissing_shouldReturn404() throws Exception {
-        mockMvc.perform(get("/api/v1/payments/outbound/pay_no_such_id"))
+        performAsync(get("/api/v1/payments/outbound/pay_no_such_id"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PAYMENT_NOT_FOUND"));
     }
@@ -124,7 +138,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void getOutboundPayment_whenPaymentCreated_shouldReturnAggregateConsistentWithStateAndStream() throws Exception {
         String paymentId = createPayment("acc_usd_1", "10");
 
-        MvcResult result = mockMvc.perform(get("/api/v1/payments/outbound/" + paymentId))
+        MvcResult result = performAsync(get("/api/v1/payments/outbound/" + paymentId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.debtorAccountId").value("acc_usd_1"))
@@ -149,11 +163,11 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void getOutboundPayment_whenPaymentProcessed_shouldReturnCompletedAndHistory() throws Exception {
         String paymentId = createPayment("acc_usd_4", "15");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("COMPLETED"));
 
-        mockMvc.perform(get("/api/v1/payments/outbound/" + paymentId))
+        performAsync(get("/api/v1/payments/outbound/" + paymentId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("COMPLETED"))
@@ -173,7 +187,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void processPayment_whenAlreadyCompleted_shouldBeIdempotent() throws Exception {
         String paymentId = createPayment("acc_usd_2", "50");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("COMPLETED"));
 
@@ -182,7 +196,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
         BigDecimal availableAfterFirst = new BigDecimal(accountAfterFirst.get("availableBalance").n());
         int versionAfterFirst = Integer.parseInt(accountAfterFirst.get("version").n());
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("COMPLETED"));
 
@@ -206,14 +220,14 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void processPayment_whenAlreadyRejected_shouldBeIdempotent() throws Exception {
         String paymentId = createPayment("acc_eur_1", "999999");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("REJECTED"));
 
         int seqAfterFirst = Integer.parseInt(
                 getStreamHeadItem(paymentId).get("lastSequence").n());
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("REJECTED"));
 
@@ -228,11 +242,11 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
     void processPayment_whenProcessedTwiceFromReceived_shouldCompleteOnceWithCorrectBalances() throws Exception {
         String paymentId = createPayment("acc_usd_3", "100");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("COMPLETED"));
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("COMPLETED"));
 
@@ -270,7 +284,7 @@ public class PaymentProcessingIntegrationTest extends AbstractIntegrationTest {
                   "currency": "USD"
                 }""".formatted(idempotencyKey, debtorAccountId, amount);
 
-        MvcResult result = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult result = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())

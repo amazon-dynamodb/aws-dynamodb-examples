@@ -6,6 +6,8 @@ Instant Payments is an application that models a focused slice of a real-time pa
 
 The application demonstrates key DynamoDB capabilities, including multi-item atomicity with **TransactWriteItems**, **conditional writes** for idempotency and state transitions, and asynchronous event processing with **DynamoDB Streams** (**NEW_IMAGE**). It uses **Global Secondary Indexes** for query access patterns, **Time to Live (TTL)** for idempotency record expiry, and **optimistic locking** for safe concurrent updates. The system follows a **single-table design**, organizing entities with **composite keys**, and provides interchangeable implementations using both a **low-level DynamoDB client** and a **high-level document or enhanced client** (configurable at application startup).
 
+For simplicity, the automatic stream-driven processing tracks its progress in memory, so if the application restarts a payment created during that brief window may not be picked up automatically. No payment is lost: it can always be completed by re-triggering processing for that payment, and the application can be configured to replay from the beginning of the stream history, which catches missed payments but reprocesses everything in the retention window.
+
 ---
 
 ## Why DynamoDB?
@@ -15,6 +17,8 @@ An instant payment flow is a short-lived state machine (accept a command, reserv
 Each payment's stream head and events live under one partition key, and each account's balance, reservations, and ledger entries live under another, so a single `Query` retrieves an entire aggregate without cross-table joins. Events are stored with sorted keys (`EVENT#0001`, `EVENT#0002`, ...) that give an append-only, replayable log per payment - no separate event store needed. Each lifecycle step bundles two to five items across these entity types into one `TransactWriteItems` call, and condition expressions inside that transaction enforce the state machine: sequence checks on the stream head, version guards on the account, status gates on reservations, and write-once constraints on ledger entries. Concurrent processors that lose a race receive an immediate conditional failure rather than corrupting state, which is exactly what an at-least-once delivery model (HTTP retries, DynamoDB Streams) needs.
 
 Beyond correctness, DynamoDB Streams triggers the processing lifecycle automatically when the first payment event is inserted, removing the need for a separate message broker. Idempotency records are created atomically alongside the payment and expire via TTL after a configurable window, so deduplication cleanup requires no scheduled jobs. On-demand capacity absorbs payment volume spikes without throughput planning, and single-partition `GetItem` reads stay in the low single-digit milliseconds regardless of table size.
+
+One cost trade-off comes with the single-table design: a raw DynamoDB stream carries every table change and offers no server-side filter, so the stream consumer reads all records and filters in code to payment-created events, paying `GetRecords` cost on account, ledger, and idempotency writes it then discards. The per-payment event volume here is small, but on a busy table this adds up. A workload that needs server-side filtering can use Kinesis Data Streams for DynamoDB, which supports consumer-side stream filters, instead of raw DynamoDB Streams.
 
 ---
 

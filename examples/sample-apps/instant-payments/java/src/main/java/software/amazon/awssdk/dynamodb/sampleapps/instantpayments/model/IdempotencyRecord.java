@@ -24,9 +24,9 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
  * The stream head and first event in that transaction are unconditional puts.
  *
  * <p>The client idempotency key is only encoded in {@code PK} ({@link #KEY_PREFIX} + key).
- * Payment id is available from {@link #getResponseSnapshot()} when needed.
+ * Payment id is available from {@link #responseSnapshot} when needed.
  *
- * <p>{@link #getExpiresAtEpochSecond()} is written to the DynamoDB attribute {@code ttl}: Unix
+ * <p>{@link #expiresAtEpochSecond} is written to the DynamoDB attribute {@code ttl}. Unix
  * epoch <strong>second</strong> (instant) when this item becomes eligible for TTL deletion. Deletion is
  * <strong>eventual</strong> (not immediate). After the item is removed, reusing the same client
  * idempotency key represents a <strong>new</strong> logical create. Align

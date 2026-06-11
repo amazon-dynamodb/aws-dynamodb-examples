@@ -1,7 +1,12 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -50,6 +55,15 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
  * Production workloads should use the Kinesis Client Library (KCL) for shard management,
  * checkpointing, and fault tolerance.
  *
+ * @apiNote The poller calls {@link OutboundPaymentProcessor#processPayment(String)} with
+ * {@code .join()} on its dedicated scheduler thread. That blocking is acceptable here: it is not a
+ * Tomcat worker thread, and sequential per-record processing matches this sample's consumption model.
+ *
+ * <p><strong>Shard discovery:</strong> {@code DescribeStream} returns at most 100 shards per page
+ * and sets {@code lastEvaluatedShardId} when more exist. The poller pages with
+ * {@code exclusiveStartShardId} until {@code lastEvaluatedShardId} is null, so shards beyond the
+ * first page are not skipped on a heavily resharded table.
+ *
  * <p>Shard iterator type is configurable via {@code dynamodb.streams.iterator-type} (default
  * {@link ShardIteratorType#LATEST}). Set {@link ShardIteratorType#TRIM_HORIZON} when you need reads from the
  * start of the stream retention window (for example in environments where {@code LATEST} would miss records).
@@ -61,15 +75,25 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
  * retention window every second. Expired iterators are renewed with
  * {@link ShardIteratorType#AFTER_SEQUENCE_NUMBER}. If data was trimmed, it falls back to the
  * configured iterator type. Checkpoints are not persisted. Process restart may re-read the stream
- * from the configured starting position.
+ * from the configured starting position. Checkpoints for shards no longer returned by
+ * {@code DescribeStream} are pruned after each discovery pass so closed-shard entries do not accumulate.
  *
  * <p><strong>Poison-pill protection:</strong> If a record fails processing {@link #MAX_PROCESS_RETRIES}
  * times, it is skipped so the shard can make progress. The failure is logged at {@code ERROR} for
  * operational alerting. Retry counts are kept in memory per payment id and cleaned up on success or
- * after exhaustion.
+ * after exhaustion. An id that fails transiently and never reappears is bounded by an access-ordered
+ * LRU capped at {@link #MAX_RETRY_COUNT_ENTRIES}, so the retry map stays flat on a long-running pod.
  *
  * <p>{@link #MAX_GET_RECORDS_ROUNDS_PER_SHARD} caps {@code GetRecords} iterations per shard per poll tick so one busy shard
  * cannot starve the scheduler.
+ *
+ * <p><strong>Read cost:</strong> a raw DynamoDB stream carries <em>every</em> table change, and DynamoDB
+ * Streams has no server-side filter. This poller therefore reads all records and filters in code
+ * ({@link #processStreamRecord} keeps only {@link PaymentEvent#ENTITY_TYPE} inserts of
+ * {@link PaymentEventType#OUTBOUND_PAYMENT_CREATED}), so it pays {@code GetRecords} cost on account,
+ * ledger, and idempotency writes that it then discards. The per-payment event count is small here, but on
+ * a busy table this is a real cost. If server-side filtering matters, use Kinesis Data Streams for
+ * DynamoDB, which supports consumer-side stream filters, instead of raw DynamoDB Streams.
  */
 @Component
 @ConditionalOnProperty(name = "dynamodb.streams.enabled", havingValue = "true", matchIfMissing = true)
@@ -84,18 +108,63 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
 
     /**
      * Maximum records requested per {@code GetRecords} call (DynamoDB Streams cap applies per call).
+     *
+     * <p><strong>Why 100.</strong> DynamoDB Streams accepts up to {@code 1000} records per
+     * {@code GetRecords} call, so this value is deliberately conservative. For this low-volume sample
+     * a single payment produces only a handful of events, so {@code 100} drains a shard within one
+     * poll tick while keeping each call small and predictable, and it lets the per-tick round cap
+     * {@link #MAX_GET_RECORDS_ROUNDS_PER_SHARD} stay meaningful instead of being reached in a single
+     * round. A production poller on a busy table would raise this toward {@code 1000} to drain hot
+     * shards in fewer calls. Note that {@link #MAX_RETRY_COUNT_ENTRIES} sizing assumes this value.
      */
     private static final int POLL_LIMIT = 100;
 
     /**
      * Upper bound on {@code GetRecords} iterations per shard per scheduler tick so one hot shard cannot starve others.
+     *
+     * <p><strong>Why 512.</strong> The poller runs on a single-thread scheduler, so without a cap a
+     * continuously busy shard could loop on {@code GetRecords} forever and never yield to other
+     * shards. At {@link #POLL_LIMIT} (100) records per round, {@code 512} rounds drain up to about
+     * fifty thousand records from one shard in a single tick, far above anything this sample
+     * produces, while still guaranteeing the loop returns control to the scheduler so the remaining
+     * shards are polled. It is a fairness backstop rather than a throughput target.
      */
     private static final int MAX_GET_RECORDS_ROUNDS_PER_SHARD = 512;
 
     /**
      * After this many processing failures for the same {@code paymentId}, the record is skipped so the shard advances.
+     *
+     * <p><strong>Why 3.</strong> Processing failures here are typically transient (a throttled
+     * dependent write or a brief network blip), which a small number of retries clears. Three
+     * attempts give a genuine poison pill enough chances to succeed on a recoverable error while
+     * keeping a permanently failing record from blocking shard progress for long. The skip is logged
+     * at {@code ERROR} so operators are alerted rather than the failure being silently swallowed.
      */
     public static final int MAX_PROCESS_RETRIES = 3;
+
+    /**
+     * Upper bound, in seconds, that {@link #stop} waits for the poller thread to finish its current pass before
+     * returning. An in-flight {@code GetRecords} or processor call is itself bounded by the SDK {@code apiCallTimeout}
+     * (see {@code DynamoDbConfig}), so this wait drains comfortably inside {@code spring.lifecycle.timeout-per-shutdown-phase}.
+     */
+    private static final long SHUTDOWN_AWAIT_SECONDS = 10;
+
+    /**
+     * Upper bound on the number of {@code paymentId} entries kept in {@link #processingFailureCounts} before the
+     * least-recently-touched one is evicted. Entries normally self-remove on success or after
+     * {@link #MAX_PROCESS_RETRIES}, so the only entry that can linger is a payment that failed transiently (one or
+     * two times, under the limit) and then never reappeared on the stream, an exceptional case rather than normal
+     * flow.
+     *
+     * <p><strong>Why 1024.</strong> The poller reads at most {@link #POLL_LIMIT} (100) records per second per
+     * shard. Even under a pessimistic sustained one-percent transient-failure-then-never-return rate (about one
+     * lingering entry per second), 1024 entries cover roughly seventeen minutes of continuous pathological leakage
+     * before the oldest is evicted, by which point the {@code ERROR} poison-pill logs would have alerted operators
+     * many times over. It is therefore far above any healthy steady state for this low-volume sample while bounding
+     * the map to a few hundred kilobytes, and a power of two so it maps cleanly onto the backing
+     * {@link LinkedHashMap} capacity.
+     */
+    private static final int MAX_RETRY_COUNT_ENTRIES = 1024;
 
     /** Resolves table to stream ARN via {@code DescribeTable}. */
     private final DynamoDbAsyncClient dynamoDbClient;
@@ -110,15 +179,32 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
 
     /** Whether the poller lifecycle is active. */
     private final AtomicBoolean running = new AtomicBoolean(false);
-    /** Per-shard in-memory iterator and sequence checkpoints. */
+    /**
+     * Per-shard in-memory iterator and sequence checkpoints. Pruned after each {@link #discoverShards} pass via
+     * {@code keySet().retainAll(activeShardIds)} so entries for closed shards no longer present on the stream do
+     * not accumulate over the lifetime of a long-running pod.
+     */
     private final ConcurrentHashMap<String, ShardCheckpoint> checkpoints = new ConcurrentHashMap<>();
-    /** Processing failure counts per payment id for poison-pill handling. */
-    private final ConcurrentHashMap<String, Integer> retryCounts = new ConcurrentHashMap<>();
+    /**
+     * Processing failure counts per payment id for poison-pill handling. Entries self-remove on success or after
+     * {@link #MAX_PROCESS_RETRIES}. An access-ordered LRU bounded at {@link #MAX_RETRY_COUNT_ENTRIES} evicts the
+     * least-recently-touched id so a transient failure that never returns cannot grow the map without limit.
+     */
+    private final Map<String, Integer> processingFailureCounts = Collections.synchronizedMap(
+            new LinkedHashMap<>(64, 0.75f, true) {
+                /**
+                 * Evicts the least recently used payment id when the map exceeds {@code MAX_RETRY_COUNT_ENTRIES}.
+                 */
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Integer> eldest) {
+                    return size() > MAX_RETRY_COUNT_ENTRIES;
+                }
+            });
     /** Single-thread scheduler that drives {@link #pollLoop}. */
     private ScheduledExecutorService scheduler;
 
     /**
-     * @param dynamoDbClient      resolves table → stream ARN
+     * @param dynamoDbClient      resolves the table name to a stream ARN
      * @param streamsClient       shard iterators and records
      * @param processor           runs {@link OutboundPaymentProcessor#processPayment} for new payments
      * @param tableName           configured single-table name
@@ -175,7 +261,17 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
     /**
      * {@inheritDoc}
      *
-     * <p>Stops scheduling and interrupts an in-flight poll.
+     * <p><strong>Graceful-shutdown contract.</strong> On a SIGTERM the application is configured for graceful
+     * shutdown ({@code server.shutdown=graceful}, {@code spring.lifecycle.timeout-per-shutdown-phase}), so Spring
+     * stops this {@link SmartLifecycle} bean before tearing the context down. This method flips {@link #running}
+     * to false so the poll loop reschedules no further work, calls {@code shutdownNow} to interrupt the poller
+     * thread, then waits up to {@link #SHUTDOWN_AWAIT_SECONDS} for it to finish its current pass.
+     *
+     * <p>A {@code CompletableFuture.join} on an in-flight {@code GetRecords} or processor call does not honor the
+     * interrupt, but each such call is bounded by the SDK {@code apiCallTimeout} (see {@code DynamoDbConfig}), so the
+     * in-flight call fails fast rather than pinning the poller until the operating-system socket timeout. The bounded
+     * wait therefore drains the current pass well inside the configured shutdown window. If the wait elapses, a
+     * warning is logged and shutdown proceeds.
      */
     @Override
     public void stop() {
@@ -183,6 +279,14 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
             logger.info("Stopping DynamoDB Streams poller: tableName={}", tableName);
             if (scheduler != null) {
                 scheduler.shutdownNow();
+                try {
+                    if (!scheduler.awaitTermination(SHUTDOWN_AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                        logger.warn("DynamoDB Streams poller did not finish within {}s of shutdown; "
+                                + "proceeding with context close: tableName={}", SHUTDOWN_AWAIT_SECONDS, tableName);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -247,16 +351,55 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
         }
     }
 
-    /** Open shards for this poll cycle. */
+    /**
+     * Open shards for this poll cycle.
+     *
+     * <p>Pages {@code DescribeStream} with {@code exclusiveStartShardId} until
+     * {@code lastEvaluatedShardId} is null or blank, accumulating shards from every page. DynamoDB
+     * returns at most 100 shards per page, so a heavily resharded table can expose more shards than
+     * a single page carries. Paging ensures shards beyond the first page are not skipped. A null or
+     * blank {@code lastEvaluatedShardId} marks the last page and terminates the loop, so the poller
+     * never re-requests the first page indefinitely.
+     *
+     * <p>On the success path, {@link #checkpoints} is pruned to the discovered shard ids
+     * ({@code keySet().retainAll(activeShardIds)}) so entries for closed shards no longer present on
+     * the stream are dropped. A describe failure returns an empty list without pruning, so a transient
+     * error never wipes live checkpoints.
+     */
     private List<Shard> discoverShards(String streamArn) {
         try {
-            var response = streamsClient.describeStream(
-                    DescribeStreamRequest.builder().streamArn(streamArn).build()).join();
-            return response.streamDescription().shards();
+            List<Shard> shards = new ArrayList<>();
+            String exclusiveStartShardId = null;
+            do {
+                var response = streamsClient.describeStream(
+                        DescribeStreamRequest.builder()
+                                .streamArn(streamArn)
+                                .exclusiveStartShardId(exclusiveStartShardId)
+                                .build())
+                        .join();
+                shards.addAll(response.streamDescription().shards());
+                exclusiveStartShardId = response.streamDescription().lastEvaluatedShardId();
+            } while (exclusiveStartShardId != null && !exclusiveStartShardId.isBlank());
+
+            pruneStaleCheckpoints(shards);
+            return shards;
         } catch (Exception e) {
             logger.error("Failed to describe stream: streamArn={}", streamArn, e);
             return List.of();
         }
+    }
+
+    /**
+     * Drops {@link #checkpoints} entries for shards that are no longer present in the freshly discovered
+     * shard set, so closed-shard checkpoints do not accumulate. Called only on a successful discovery so a
+     * transient describe failure never clears live checkpoints.
+     */
+    private void pruneStaleCheckpoints(List<Shard> activeShards) {
+        Set<String> activeShardIds = new HashSet<>();
+        for (Shard shard : activeShards) {
+            activeShardIds.add(shard.shardId());
+        }
+        checkpoints.keySet().retainAll(activeShardIds);
     }
 
     /**
@@ -438,18 +581,18 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
         if (paymentIdAttr == null) return;
 
         String paymentId = paymentIdAttr.s();
-        logger.info("Outbound payment created event detected on stream: paymentId={}", paymentId);
+        logger.debug("Outbound payment created event detected on stream: paymentId={}", paymentId);
 
         try {
-            processor.processPayment(paymentId);
-            retryCounts.remove(paymentId);
+            processor.processPayment(paymentId).join();
+            processingFailureCounts.remove(paymentId);
         } catch (Exception e) {
-            int attempt = retryCounts.merge(paymentId, 1, Integer::sum);
+            int attempt = processingFailureCounts.merge(paymentId, 1, Integer::sum);
             if (attempt >= MAX_PROCESS_RETRIES) {
                 logger.error("Outbound payment processing exhausted retries, skipping poison pill: "
                                 + "paymentId={}, attemptCount={}",
                         paymentId, attempt, e);
-                retryCounts.remove(paymentId);
+                processingFailureCounts.remove(paymentId);
             } else {
                 logger.warn("Outbound payment processing failed, will retry: paymentId={}, attempt={}/{}",
                         paymentId, attempt, MAX_PROCESS_RETRIES, e);

@@ -44,6 +44,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BatchGetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
 
 /**
  * High-level {@link PaymentRepository} implementation using {@link DynamoDbEnhancedAsyncClient}.
@@ -66,6 +67,18 @@ import software.amazon.awssdk.services.dynamodb.model.KeysAndAttributes;
 public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(HighLevelDynamoDbPaymentRepository.class);
+
+    /**
+     * Page size for the expired-reservation {@code Scan}. The sweeper accumulates filtered matches across
+     * pages, so this only bounds how many items each {@code Scan} call reads, not how many are released.
+     */
+    private static final int RESERVATION_SCAN_PAGE_SIZE = 100;
+
+    /**
+     * Upper bound on {@code Scan} pages walked in one expired-reservation sweep so a large table cannot make
+     * a single sweep unbounded. Any remaining expired holds are picked up on the next sweep.
+     */
+    private static final int MAX_RESERVATION_SCAN_PAGES = 10;
 
     /** Enhanced async client for typed table and transaction APIs. */
     private final DynamoDbEnhancedAsyncClient enhancedClient;
@@ -134,17 +147,23 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
                 .expression("attribute_not_exists(PK)")
                 .build();
 
-        TransactWriteItemsEnhancedRequest request = TransactWriteItemsEnhancedRequest.builder()
-                .addPutItem(streamHeadTable, streamHead)
-                .addPutItem(eventTable, firstEvent)
-                .addPutItem(idempotencyTable,
+        // Items are added in CreateTransactItem order so the transact item contract is defined once and
+        // shared with the consumer that reads cancellation reasons by the same index.
+        TransactWriteItemsEnhancedRequest.Builder builder = TransactWriteItemsEnhancedRequest.builder();
+        for (CreatePaymentTransactItemOrder item : CreatePaymentTransactItemOrder.values()) {
+            switch (item) {
+                case STREAM_HEAD -> builder.addPutItem(streamHeadTable, streamHead);
+                case FIRST_EVENT -> builder.addPutItem(eventTable, firstEvent);
+                case IDEMPOTENCY -> builder.addPutItem(idempotencyTable,
                         TransactPutItemEnhancedRequest.builder(IdempotencyRecord.class)
                                 .item(idempotency)
                                 .conditionExpression(idempotencyCondition)
-                                .build())
-                .build();
+                                .build());
+                default -> throw new IllegalStateException("Unhandled create transact item: " + item);
+            }
+        }
 
-        return enhancedClient.transactWriteItems(request);
+        return enhancedClient.transactWriteItems(builder.build());
     }
 
     /** {@inheritDoc} */
@@ -165,10 +184,12 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         String pk = Payment.KEY_PREFIX + paymentId;
 
         CompletableFuture<PaymentStreamHead> headFuture = streamHeadTable.getItem(r -> r.key(
-                Key.builder().partitionValue(pk).sortValue(PaymentStreamHead.SORT_KEY).build()));
+                Key.builder().partitionValue(pk).sortValue(PaymentStreamHead.SORT_KEY).build())
+                .consistentRead(true));
 
         CompletableFuture<List<PaymentEvent>> eventsFuture = collectQueryItems(
                 eventTable.query(QueryEnhancedRequest.builder()
+                        .consistentRead(true)
                         .queryConditional(QueryConditional.sortBeginsWith(
                                 Key.builder().partitionValue(pk).sortValue(PaymentEvent.KEY_PREFIX).build()))
                         .build()));
@@ -341,6 +362,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
                     exclusiveStartKey,
                     PaginationTokenCodec.GSI_MERCHANT_PAYMENTS_DISCRIMINATOR,
                     nextToken);
+            PaginationTokenCodec.requireMatchingMerchantId(exclusiveStartKey, merchantId, nextToken);
             builder.exclusiveStartKey(exclusiveStartKey);
         }
 
@@ -377,6 +399,7 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
                     exclusiveStartKey,
                     PaginationTokenCodec.GSI_MERCHANT_STATE_PAYMENTS_DISCRIMINATOR,
                     nextToken);
+            PaginationTokenCodec.requireMatchingMerchantId(exclusiveStartKey, merchantId, nextToken);
             builder.exclusiveStartKey(exclusiveStartKey);
         }
 
@@ -398,6 +421,78 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
                 .addUpdateItem(streamHeadTable, buildStreamHeadReject(
                         streamHead, expectedSeq, newSeq, now, reasonCode))
                 .addPutItem(eventTable, event)
+                .build();
+
+        return enhancedClient.transactWriteItems(request);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The {@code Scan} runs on the underlying {@link DynamoDbAsyncClient} (same instance behind
+     * {@link #enhancedClient}) so the accumulate-up-to-{@code limit} paging stays a plain
+     * {@code CompletableFuture} chain, then maps matched rows through the {@link Reservation} schema.
+     */
+    @Override
+    public CompletableFuture<List<Reservation>> scanExpiredActiveReservations(long nowEpochSecond, int limit) {
+        return scanExpiredActiveReservationsPage(nowEpochSecond, limit, null, new ArrayList<>(), 0);
+    }
+
+    /**
+     * Recursively pages the expired-reservation {@code Scan}, accumulating matches until {@code limit} rows are
+     * collected, the table is exhausted, or {@link #MAX_RESERVATION_SCAN_PAGES} pages have been read.
+     *
+     * @param nowEpochSecond    expiry cutoff as a Unix epoch second
+     * @param limit             maximum reservations to accumulate
+     * @param exclusiveStartKey pagination token, or {@code null} for the first page
+     * @param acc               mutable accumulator across pages
+     * @param page              0-based page index for the page cap
+     * @return completed future of the accumulated expired reservations
+     */
+    private CompletableFuture<List<Reservation>> scanExpiredActiveReservationsPage(
+            long nowEpochSecond,
+            int limit,
+            Map<String, AttributeValue> exclusiveStartKey,
+            List<Reservation> acc,
+            int page) {
+        ScanRequest.Builder builder = ScanRequest.builder()
+                .tableName(tableName)
+                .filterExpression("entityType = :res AND #s = :active AND expiresAt <= :now")
+                .expressionAttributeNames(Map.of("#s", "status"))
+                .expressionAttributeValues(Map.of(
+                        ":res", AttributeValue.builder().s(Reservation.ENTITY_TYPE).build(),
+                        ":active", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build(),
+                        ":now", AttributeValue.builder().n(Long.toString(nowEpochSecond)).build()))
+                .limit(RESERVATION_SCAN_PAGE_SIZE);
+        if (exclusiveStartKey != null) {
+            builder.exclusiveStartKey(exclusiveStartKey);
+        }
+        return dynamoDbAsyncClient.scan(builder.build())
+                .thenCompose(response -> {
+                    for (Map<String, AttributeValue> item : response.items()) {
+                        if (acc.size() >= limit) {
+                            break;
+                        }
+                        acc.add(reservationTable.tableSchema().mapToItem(item));
+                    }
+                    boolean morePages = response.hasLastEvaluatedKey() && !response.lastEvaluatedKey().isEmpty();
+                    if (acc.size() < limit && morePages && page + 1 < MAX_RESERVATION_SCAN_PAGES) {
+                        return scanExpiredActiveReservationsPage(
+                                nowEpochSecond, limit, response.lastEvaluatedKey(), acc, page + 1);
+                    }
+                    return CompletableFuture.completedFuture(List.copyOf(acc));
+                });
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public CompletableFuture<Void> releaseReservationTransaction(Reservation reservation,
+                                                                 Account account,
+                                                                 BigDecimal amount) {
+        TransactWriteItemsEnhancedRequest request = TransactWriteItemsEnhancedRequest.builder()
+                .addUpdateItem(reservationTable, buildReservationStatusUpdate(
+                        reservation, ReservationStatus.RELEASED.name()))
+                .addUpdateItem(accountTable, buildAccountIncrementAvailable(account, amount))
                 .build();
 
         return enhancedClient.transactWriteItems(request);
@@ -606,6 +701,25 @@ public class HighLevelDynamoDbPaymentRepository implements PaymentRepository {
         partial.setAccountKey(account.getAccountKey());
         partial.setEntityKey(account.getEntityKey());
         partial.setCurrentBalance(account.getCurrentBalance().subtract(amount));
+        partial.setVersion(account.getVersion());
+
+        return TransactUpdateItemEnhancedRequest.builder(Account.class)
+                .item(partial)
+                .ignoreNulls(true)
+                .build();
+    }
+
+    /**
+     * Increments available balance when releasing an expired hold. The enhanced-client versioning extension guards
+     * the optimistic {@code version} transition, and no balance floor is needed because returning held funds only
+     * increases the balance.
+     */
+    private TransactUpdateItemEnhancedRequest<Account> buildAccountIncrementAvailable(Account account,
+                                                                                      BigDecimal amount) {
+        Account partial = new Account();
+        partial.setAccountKey(account.getAccountKey());
+        partial.setEntityKey(account.getEntityKey());
+        partial.setAvailableBalance(account.getAvailableBalance().add(amount));
         partial.setVersion(account.getVersion());
 
         return TransactUpdateItemEnhancedRequest.builder(Account.class)

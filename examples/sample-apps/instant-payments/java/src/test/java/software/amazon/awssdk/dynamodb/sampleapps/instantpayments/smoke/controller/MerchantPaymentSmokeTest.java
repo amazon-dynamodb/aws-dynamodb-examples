@@ -34,13 +34,13 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
     void listMerchantPayments_whenPaymentCreated_shouldIncludeCreatedPayment() throws Exception {
         String paymentId = createOutboundPaymentForMerchant("acc_usd_1", 77);
 
-        MvcResult listResult = mockMvc.perform(get("/api/v1/merchants/merch_1/payments"))
+        MvcResult listResult = performAsync(get("/api/v1/merchants/merch_1/payments"))
                 .andExpect(status().isOk())
                 .andReturn();
 
         assertListContainsPaymentId(listResult.getResponse().getContentAsString(), paymentId);
 
-        MvcResult oldestFirst = mockMvc.perform(
+        MvcResult oldestFirst = performAsync(
                         get("/api/v1/merchants/merch_1/payments?scanIndexForward=true"))
                 .andExpect(status().isOk())
                 .andReturn();
@@ -53,7 +53,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
         createOutboundPaymentForMerchant("acc_usd_1", 11);
         createOutboundPaymentForMerchant("acc_usd_1", 12);
 
-        MvcResult firstPage = mockMvc.perform(get("/api/v1/merchants/merch_1/payments?limit=1"))
+        MvcResult firstPage = performAsync(get("/api/v1/merchants/merch_1/payments?limit=1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.nextToken").isString())
@@ -63,7 +63,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
         String firstPaymentId = JsonPathSupport.read(firstJson, "$.items[0].paymentId");
         String nextToken = JsonPathSupport.read(firstJson, "$.nextToken");
 
-        MvcResult secondPage = mockMvc.perform(
+        MvcResult secondPage = performAsync(
                         get("/api/v1/merchants/merch_1/payments?limit=1&nextToken=" + nextToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
@@ -79,12 +79,12 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
         int amountUsd = 88;
         String paymentId = createOutboundPaymentForMerchant("acc_usd_2", amountUsd);
 
-        MvcResult aggregate = mockMvc.perform(get("/api/v1/payments/outbound/" + paymentId))
+        MvcResult aggregate = performAsync(get("/api/v1/payments/outbound/" + paymentId))
                 .andExpect(status().isOk())
                 .andReturn();
         String state = JsonPathSupport.read(aggregate.getResponse().getContentAsString(), "$.state");
 
-        MvcResult listResult = mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/" + state))
+        MvcResult listResult = performAsync(get("/api/v1/merchants/merch_1/payments/state/" + state))
                 .andExpect(status().isOk())
                 .andReturn();
 
@@ -100,7 +100,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
         String paymentId2 = createOutboundPaymentForMerchant("acc_usd_1", 14);
         processPayment(paymentId2);
 
-        MvcResult firstPage = mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?limit=1"))
+        MvcResult firstPage = performAsync(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?limit=1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.nextToken").isString())
@@ -110,7 +110,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
         String firstPaymentId = JsonPathSupport.read(firstJson, "$.items[0].paymentId");
         String nextToken = JsonPathSupport.read(firstJson, "$.nextToken");
 
-        MvcResult secondPage = mockMvc.perform(get(
+        MvcResult secondPage = performAsync(get(
                         "/api/v1/merchants/merch_1/payments/state/COMPLETED?limit=1&nextToken=" + nextToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
@@ -124,7 +124,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
 
     @Test
     void listMerchantPaymentsByState_whenStateInvalid_shouldReturn400() throws Exception {
-        MvcResult result = mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
+        MvcResult result = performAsync(get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAYMENT_STATE"))
                 .andExpect(jsonPath("$.message").value("Invalid payment state: BOGUS"))
@@ -135,7 +135,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
 
     @Test
     void listMerchantPayments_whenNextTokenInvalid_shouldReturn400() throws Exception {
-        MvcResult result = mockMvc.perform(get("/api/v1/merchants/merch_1/payments?nextToken=bad-token"))
+        MvcResult result = performAsync(get("/api/v1/merchants/merch_1/payments?nextToken=bad-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"))
                 .andExpect(jsonPath("$.message").value("Invalid pagination token"))
@@ -146,7 +146,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
 
     @Test
     void listMerchantPaymentsByState_whenNextTokenInvalid_shouldReturn400() throws Exception {
-        MvcResult result = mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=bad-token"))
+        MvcResult result = performAsync(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=bad-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"))
                 .andExpect(jsonPath("$.message").value("Invalid pagination token"))
@@ -176,7 +176,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
                   "currency": "USD"
                 }""".formatted(idempotencyKey, debtorAccountId, amount);
 
-        MvcResult create = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult create = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -196,7 +196,7 @@ public class MerchantPaymentSmokeTest extends AbstractIntegrationTest {
      * @throws Exception when the HTTP request fails or returns a non-200 status
      */
     protected void processPayment(String paymentId) throws Exception {
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk());
     }
 

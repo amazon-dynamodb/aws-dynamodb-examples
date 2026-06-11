@@ -3,11 +3,13 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto;
 import java.math.BigDecimal;
 import java.time.Instant;
 
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
+
 /**
  * Read-only projection of a payment for merchant-level list queries.
  *
- * <p>Backed by the {@code PaymentStreamHead} item indexed via
- * {@code GSI_MERCHANT_PAYMENTS} and {@code GSI_MERCHANT_STATE_PAYMENTS}.
+ * <p>Backed by the {@link PaymentStreamHead} item indexed via
+ * {@link PaymentStreamHead#GSI_MERCHANT_PAYMENTS} and {@link PaymentStreamHead#GSI_MERCHANT_STATE_PAYMENTS}.
  *
  * @param paymentId     payment identifier
  * @param state         current lifecycle state

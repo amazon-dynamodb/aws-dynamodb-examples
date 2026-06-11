@@ -34,7 +34,7 @@ public class OutboundPaymentSmokeTest extends AbstractIntegrationTest {
                   "currency": "USD"
                 }""".formatted(UUID.randomUUID().toString());
 
-        MvcResult created = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult created = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -60,7 +60,7 @@ public class OutboundPaymentSmokeTest extends AbstractIntegrationTest {
                   "currency": "USD"
                 }""".formatted(UUID.randomUUID().toString());
 
-        MvcResult create = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult create = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -68,7 +68,7 @@ public class OutboundPaymentSmokeTest extends AbstractIntegrationTest {
 
         String paymentId = JsonPathSupport.read(create.getResponse().getContentAsString(), "$.paymentId");
 
-        MvcResult getResult = mockMvc.perform(get("/api/v1/payments/outbound/" + paymentId))
+        MvcResult getResult = performAsync(get("/api/v1/payments/outbound/" + paymentId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andReturn();

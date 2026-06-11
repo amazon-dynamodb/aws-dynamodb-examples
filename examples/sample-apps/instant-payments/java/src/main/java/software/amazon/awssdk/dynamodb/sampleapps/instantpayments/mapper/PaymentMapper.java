@@ -3,8 +3,6 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.mapper;
 import java.time.Instant;
 import java.util.List;
 
-import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutboundPaymentRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.CreateOutboundPaymentResponse;
@@ -29,41 +27,12 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Reservat
  * <p>Covers write-path items (stream initialization + first event), account and payment read models,
  * and {@link MerchantPaymentProjection} for merchant GSI list endpoints.
  *
- * <p>Spring injects {@code dynamodb.idempotency-ttl-seconds} into {@code idempotencyTtlSeconds} (default {@code 2592000}
- * seconds in the property placeholder). {@link #validateIdempotencyTtlConfiguration()} enforces the inclusive range
- * {@link #MIN_IDEMPOTENCY_TTL_SECONDS}-{@link #MAX_IDEMPOTENCY_TTL_SECONDS}.
+ * <p>This class is a pure, stateless transformer. It holds no configuration properties, performs no
+ * validation, and has no Spring lifecycle hooks. Callers compute and validate values such as idempotency
+ * expiry before passing them in.
  */
 @Component
 public class PaymentMapper {
-
-    /**
-     * Minimum allowed idempotency TTL configuration: one hour (seconds).
-     */
-    private static final long MIN_IDEMPOTENCY_TTL_SECONDS = 3_600L;
-
-    /**
-     * Maximum allowed idempotency TTL configuration: {@code 31_536_000} seconds (365 × 24 × 3,600).
-     */
-    private static final long MAX_IDEMPOTENCY_TTL_SECONDS = 31_536_000L;
-
-    /** TTL in seconds for idempotency items, from {@code dynamodb.idempotency-ttl-seconds}. */
-    @Value("${dynamodb.idempotency-ttl-seconds:2592000}")
-    private final long idempotencyTtlSeconds = 2_592_000L;
-
-    /**
-     * Ensures {@code dynamodb.idempotency-ttl-seconds} is within the allowed range after injection.
-     *
-     * @throws IllegalStateException if the configured TTL is outside bounds
-     */
-    @PostConstruct
-    void validateIdempotencyTtlConfiguration() {
-        if (idempotencyTtlSeconds < MIN_IDEMPOTENCY_TTL_SECONDS
-                || idempotencyTtlSeconds > MAX_IDEMPOTENCY_TTL_SECONDS) {
-            throw new IllegalStateException("dynamodb.idempotency-ttl-seconds must be between "
-                    + MIN_IDEMPOTENCY_TTL_SECONDS + " and " + MAX_IDEMPOTENCY_TTL_SECONDS
-                    + " inclusive, got: " + idempotencyTtlSeconds);
-        }
-    }
 
     /**
      * Builds the initial {@link PaymentStreamHead} for a new payment partition.
@@ -132,28 +101,20 @@ public class PaymentMapper {
     }
 
     /**
-     * Builds an {@link IdempotencyRecord} for conditional-write duplicate detection.
+     * Builds an {@link IdempotencyRecord} for conditional write duplicate detection.
      *
-     * @param idempotencyKey    client key (stored only as {@code PK} suffix via {@link IdempotencyRecord#KEY_PREFIX})
-     * @param requestHash       SHA-256 of the serialized create request
-     * @param responseSnapshot  body to return on idempotent retries (includes {@code paymentId})
-     * @param createdAtUtc         wall-clock time of first create (aligned with {@code responseSnapshot})
+     * @param idempotencyKey        client key (stored only as {@code PK} suffix via {@link IdempotencyRecord#KEY_PREFIX})
+     * @param requestHash           SHA-256 of the serialized create request
+     * @param responseSnapshot      body to return on idempotent retries (includes {@code paymentId})
+     * @param createdAtUtc          wall-clock time of first create (aligned with {@code responseSnapshot})
+     * @param expiresAtEpochSecond  pre-computed DynamoDB TTL epoch second, validated by the caller as in the future
      */
     public IdempotencyRecord toIdempotencyItem(String idempotencyKey,
                                                String requestHash,
                                                CreateOutboundPaymentResponse responseSnapshot,
-                                               Instant createdAtUtc) {
+                                               Instant createdAtUtc,
+                                               long expiresAtEpochSecond) {
         String key = IdempotencyRecord.KEY_PREFIX + idempotencyKey;
-
-        long expiresAtEpochSecond = createdAtUtc.getEpochSecond() + idempotencyTtlSeconds;
-        long nowEpoch = Instant.now().getEpochSecond();
-        if (expiresAtEpochSecond <= nowEpoch) {
-            throw new IllegalStateException(
-                    "Idempotency expiresAtEpochSecond must be after now: expiresAtEpochSecond="
-                            + expiresAtEpochSecond
-                            + ", nowEpochSecond="
-                            + nowEpoch);
-        }
 
         IdempotencyRecord record = new IdempotencyRecord();
         record.setIdempotencyRecordKey(key);

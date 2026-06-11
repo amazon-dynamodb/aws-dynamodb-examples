@@ -28,7 +28,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getAccount_whenSeededAccount_shouldReturnBalances() throws Exception {
-        mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
+        performAsync(get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value("acc_usd_1"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
@@ -41,9 +41,23 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getAccount_whenAccountMissing_shouldReturn404() throws Exception {
-        mockMvc.perform(get("/api/v1/accounts/acc_nonexistent"))
+        performAsync(get("/api/v1/accounts/acc_nonexistent"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("ACCOUNT_NOT_FOUND"));
+    }
+
+    @Test
+    void getAccount_whenAccountIdMalformed_shouldReturn400ValidationError() throws Exception {
+        performAsync(get("/api/v1/accounts/acc$bad"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void getAccount_whenAccountIdTooLong_shouldReturn400ValidationError() throws Exception {
+        performAsync(get("/api/v1/accounts/" + "a".repeat(65)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -51,7 +65,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         String paymentId = createPayment("acc_usd_1", "100", "Integration Test");
         processPayment(paymentId);
 
-        mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
+        performAsync(get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value("acc_usd_1"))
                 .andExpect(jsonPath("$.currentBalance").value(9900))
@@ -66,7 +80,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         String paymentId = createPayment("acc_eur_1", "999999", "Integration Test");
         processPayment(paymentId);
 
-        mockMvc.perform(get("/api/v1/accounts/acc_eur_1"))
+        performAsync(get("/api/v1/accounts/acc_eur_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value("acc_eur_1"))
                 .andExpect(jsonPath("$.currentBalance").value(10000))
@@ -77,7 +91,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
     void getAccount_whenPaymentCreatedBeforeProcess_shouldReturnEmptyReservations() throws Exception {
         createPayment("acc_usd_1", "50", "Integration Test");
 
-        mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
+        performAsync(get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currentBalance").value(10000))
                 .andExpect(jsonPath("$.availableBalance").value(10000))
@@ -90,7 +104,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         processPayment(paymentId);
         String reservationId = reservationIdForPayment(paymentId);
 
-        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reservationIds\":[\"" + reservationId + "\"]}"))
                 .andExpect(status().isOk())
@@ -122,7 +136,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         reservationIds.add("res_fake");
         reservationIds.add("res_fake_2");
 
-        ResultActions result = mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        ResultActions result = performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(batchGetReservationsRequestBody(reservationIds)))
                 .andExpect(status().isOk())
@@ -171,7 +185,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         List<String> statuses = List.of(
                 "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED", "CONSUMED");
 
-        ResultActions result = mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        ResultActions result = performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(batchGetReservationsRequestBody(reservationIds)))
                 .andExpect(status().isOk())
@@ -221,7 +235,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         List<String> statuses = List.of(
                 "ACTIVE", "CONSUMED", "CONSUMED", "ACTIVE", "CONSUMED", "CONSUMED", "ACTIVE");
 
-        ResultActions result = mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        ResultActions result = performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(batchGetReservationsRequestBody(reservationIds)))
                 .andExpect(status().isOk())
@@ -256,7 +270,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         List<String> requestIds = List.of(
                 r6, r4, r4, r2, r2, "res_missing", r0, r1, r1, r3, r5, r5);
 
-        ResultActions result = mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        ResultActions result = performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(batchGetReservationsRequestBody(requestIds)))
                 .andExpect(status().isOk())
@@ -281,7 +295,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void batchGetReservations_whenReservationIdsEmpty_shouldReturn400ValidationError() throws Exception {
-        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reservationIds\":[]}"))
                 .andExpect(status().isBadRequest())
@@ -290,7 +304,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void batchGetReservations_whenReservationIdBlank_shouldReturn400ValidationError() throws Exception {
-        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reservationIds\":[\"res_ok\",\"  \"]}"))
                 .andExpect(status().isBadRequest())
@@ -304,7 +318,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
             ids.add("res_" + i);
         }
 
-        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(batchGetReservationsRequestBody(ids)))
                 .andExpect(status().isBadRequest())
@@ -322,7 +336,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
                 "res_nonexistent_6",
                 "res_nonexistent_7");
 
-        mockMvc.perform(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
+        performAsync(post("/api/v1/accounts/acc_usd_1/batch-get-reservations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(batchGetReservationsRequestBody(missingIds)))
                 .andExpect(status().isOk())
@@ -338,7 +352,7 @@ public class AccountQueryIntegrationTest extends AbstractIntegrationTest {
         String paymentId2 = createPayment("acc_usd_1", "200", "Integration Test");
         processPayment(paymentId2);
 
-        mockMvc.perform(get("/api/v1/accounts/acc_usd_1"))
+        performAsync(get("/api/v1/accounts/acc_usd_1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currentBalance").value(9700))
                 .andExpect(jsonPath("$.availableBalance").value(9700))

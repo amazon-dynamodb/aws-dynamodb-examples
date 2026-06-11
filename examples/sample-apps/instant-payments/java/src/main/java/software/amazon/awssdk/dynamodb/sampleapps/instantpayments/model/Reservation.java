@@ -13,9 +13,16 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
  *
  * <p>Key pattern: {@code PK=ACCOUNT#{accountId}, SK=RESERVATION#{reservationId}}
  *
- * <p>Lifecycle: {@code ACTIVE → CONSUMED} when the payment completes. A {@code RELEASED} transition
- * is not implemented in this sample. Shares the same partition key as {@link Account} so both are
- * retrieved in a single Query (item collection pattern).
+ * <p>Lifecycle: {@code ACTIVE} becomes {@code CONSUMED} when the payment completes, or
+ * {@code ACTIVE} becomes {@code RELEASED} when the hold expires and the expiry sweeper restores
+ * the available balance. Shares the same
+ * partition key as {@link Account} so both are retrieved in a single Query (item collection pattern).
+ *
+ * <p>{@code expiresAt} is a Unix epoch <strong>second</strong> equal to {@code createdAtUtc} plus the
+ * configured {@code dynamodb.reservation-timeout-seconds}. It is a plain numeric attribute, deliberately
+ * <strong>not</strong> the table TTL attribute ({@code ttl}), so DynamoDB never deletes an expired
+ * reservation. The sweeper instead transitions it to {@link ReservationStatus#RELEASED} in place, which
+ * restores the held funds while keeping the row for audit.
  *
  * <p>UTC instants such as {@code createdAtUtc} use ISO-8601 with {@code Z} when represented as string attributes in DynamoDB.
  */
@@ -43,6 +50,8 @@ public class Reservation {
     private String status;
     /** UTC instant when the reservation was created. */
     private Instant createdAtUtc;
+    /** Unix epoch second after which an {@code ACTIVE} hold is eligible for expiry release. */
+    private Long expiresAt;
 
     @DynamoDbPartitionKey
     @DynamoDbAttribute("PK")
@@ -110,5 +119,14 @@ public class Reservation {
 
     public void setCreatedAtUtc(Instant createdAtUtc) {
         this.createdAtUtc = createdAtUtc;
+    }
+
+    @DynamoDbAttribute("expiresAt")
+    public Long getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(Long expiresAt) {
+        this.expiresAt = expiresAt;
     }
 }

@@ -53,11 +53,25 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         createPayment(UUID.randomUUID().toString(), merchant2, "acc_usd_1", "30");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchant1 + "/payments"))
+                performAsync(get("/api/v1/merchants/" + merchant1 + "/payments"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.items.length()").value(2))
                         .andExpect(jsonPath("$.items[0].merchantId").value(merchant1))
                         .andExpect(jsonPath("$.items[1].merchantId").value(merchant1)));
+    }
+
+    @Test
+    void listMerchantPayments_whenMerchantIdMalformed_shouldReturn400ValidationError() throws Exception {
+        performAsync(get("/api/v1/merchants/merch$bad/payments"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void listMerchantPaymentsByState_whenStateMalformed_shouldReturn400ValidationError() throws Exception {
+        performAsync(get("/api/v1/merchants/merch_1/payments/state/COMPLETED$bad"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -68,7 +82,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "20");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
-            MvcResult result = mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments"))
+            MvcResult result = performAsync(get("/api/v1/merchants/" + merchantId + "/payments"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.items.length()").value(2))
                     .andReturn();
@@ -91,7 +105,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "20");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
-            MvcResult result = mockMvc.perform(
+            MvcResult result = performAsync(
                             get("/api/v1/merchants/" + merchantId + "/payments?scanIndexForward=true"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.items.length()").value(2))
@@ -116,7 +130,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "30");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments?limit=2"))
+                performAsync(get("/api/v1/merchants/" + merchantId + "/payments?limit=2"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.items.length()").value(2))
                         .andExpect(jsonPath("$.nextToken").isString()));
@@ -135,7 +149,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         String nextToken = JsonPathSupport.read(firstPageJson, "$.nextToken");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
-            MvcResult secondPage = mockMvc.perform(get(
+            MvcResult secondPage = performAsync(get(
                             "/api/v1/merchants/" + merchantId + "/payments?limit=1&nextToken=" + nextToken))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.items.length()").value(1))
@@ -149,7 +163,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void listMerchantPayments_whenNextTokenInvalid_shouldReturn400() throws Exception {
-        mockMvc.perform(get("/api/v1/merchants/merch_1/payments?nextToken=not-base64"))
+        performAsync(get("/api/v1/merchants/merch_1/payments?nextToken=not-base64"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
@@ -164,7 +178,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         String firstPageJson = awaitFirstMerchantStatePageWithNextToken(merchantId, "RECEIVED");
         String wrongRouteToken = JsonPathSupport.read(firstPageJson, "$.nextToken");
 
-        mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments?limit=1&nextToken=" + wrongRouteToken))
+        performAsync(get("/api/v1/merchants/" + merchantId + "/payments?limit=1&nextToken=" + wrongRouteToken))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
@@ -177,16 +191,52 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "20");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments?limit=1"))
+                performAsync(get("/api/v1/merchants/" + merchantId + "/payments?limit=1"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.nextToken").isString()));
 
         String firstPageJson = awaitFirstMerchantPageWithNextToken(merchantId);
         String wrongRouteToken = JsonPathSupport.read(firstPageJson, "$.nextToken");
 
-        mockMvc.perform(get(
+        performAsync(get(
                         "/api/v1/merchants/" + merchantId + "/payments/state/RECEIVED?limit=1&nextToken="
                                 + wrongRouteToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
+    }
+
+    @Test
+    void listMerchantPayments_whenTokenFromAnotherMerchant_shouldReturn400() throws Exception {
+        String merchantA = "merch_" + UUID.randomUUID();
+        String merchantB = "merch_" + UUID.randomUUID();
+
+        createPayment(UUID.randomUUID().toString(), merchantA, "acc_usd_1", "10");
+        createPayment(UUID.randomUUID().toString(), merchantA, "acc_usd_1", "20");
+
+        String firstPageJson = awaitFirstMerchantPageWithNextToken(merchantA);
+        String tokenForMerchantA = JsonPathSupport.read(firstPageJson, "$.nextToken");
+
+        // Replaying merchant A's token on merchant B's route is a 400, not a 500 from a rejected start key.
+        performAsync(get(
+                        "/api/v1/merchants/" + merchantB + "/payments?limit=1&nextToken=" + tokenForMerchantA))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
+    }
+
+    @Test
+    void listMerchantPaymentsByState_whenTokenFromAnotherMerchant_shouldReturn400() throws Exception {
+        String merchantA = "merch_" + UUID.randomUUID();
+        String merchantB = "merch_" + UUID.randomUUID();
+
+        createPayment(UUID.randomUUID().toString(), merchantA, "acc_usd_1", "10");
+        createPayment(UUID.randomUUID().toString(), merchantA, "acc_usd_1", "20");
+
+        String firstPageJson = awaitFirstMerchantStatePageWithNextToken(merchantA, "RECEIVED");
+        String tokenForMerchantA = JsonPathSupport.read(firstPageJson, "$.nextToken");
+
+        performAsync(get(
+                        "/api/v1/merchants/" + merchantB + "/payments/state/RECEIVED?limit=1&nextToken="
+                                + tokenForMerchantA))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
@@ -198,14 +248,14 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments"))
+                performAsync(get("/api/v1/merchants/" + merchantId + "/payments"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.items.length()").value(1)));
     }
 
     @Test
     void listMerchantPayments_whenNoPaymentsExist_shouldReturnEmptyArray() throws Exception {
-        mockMvc.perform(get("/api/v1/merchants/merch_nonexistent/payments"))
+        performAsync(get("/api/v1/merchants/merch_nonexistent/payments"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items").isArray())
                 .andExpect(jsonPath("$.items").isEmpty())
@@ -221,12 +271,12 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         String correlationId1 = JsonPathSupport.read(created1.getResponse().getContentAsString(), "$.correlationId");
         processPayment(paymentId1);
 
-        // Amount far exceeds seeded balance so async stream processing rejects instead of completing —
-        // otherwise both payments would end up COMPLETED and this filter assertion would be wrong.
+        // Amount far exceeds seeded balance so async stream processing rejects instead of completing.
+        // Otherwise both payments would end up COMPLETED and this filter assertion would be wrong.
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "999999");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments/state/COMPLETED"))
+                performAsync(get("/api/v1/merchants/" + merchantId + "/payments/state/COMPLETED"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.items.length()").value(1))
                         .andExpect(jsonPath("$.items[0].paymentId").value(paymentId1))
@@ -253,12 +303,12 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         processPayment(paymentId2);
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments/state/COMPLETED"))
+                performAsync(get("/api/v1/merchants/" + merchantId + "/payments/state/COMPLETED"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.items.length()").value(2)));
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
-            MvcResult result = mockMvc.perform(get(
+            MvcResult result = performAsync(get(
                             "/api/v1/merchants/" + merchantId
                                     + "/payments/state/COMPLETED?scanIndexForward=true"))
                     .andExpect(status().isOk())
@@ -294,7 +344,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         String nextToken = JsonPathSupport.read(firstPageJson, "$.nextToken");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
-            MvcResult secondPage = mockMvc.perform(get(
+            MvcResult secondPage = performAsync(get(
                             "/api/v1/merchants/" + merchantId
                                     + "/payments/state/COMPLETED?limit=1&nextToken=" + nextToken))
                     .andExpect(status().isOk())
@@ -310,7 +360,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void listMerchantPaymentsByState_whenNextTokenInvalid_shouldReturn400() throws Exception {
-        mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=not-base64"))
+        performAsync(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=not-base64"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
@@ -324,7 +374,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         processPayment(paymentId);
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments/state/completed"))
+                performAsync(get("/api/v1/merchants/" + merchantId + "/payments/state/completed"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.items.length()").value(1))
                         .andExpect(jsonPath("$.items[0].paymentId").value(paymentId)));
@@ -332,7 +382,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void listMerchantPaymentsByState_whenStateInvalid_shouldReturn400() throws Exception {
-        mockMvc.perform(get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
+        performAsync(get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAYMENT_STATE"));
     }
@@ -344,7 +394,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
         createPayment(UUID.randomUUID().toString(), merchantId, "acc_usd_1", "10");
 
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments/state/FUNDS_RESERVED"))
+                performAsync(get("/api/v1/merchants/" + merchantId + "/payments/state/FUNDS_RESERVED"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.items").isArray())
                         .andExpect(jsonPath("$.items").isEmpty())
@@ -360,7 +410,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     private String awaitFirstMerchantPageWithNextToken(String merchantId) {
         final String[] firstPageJson = new String[1];
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
-            MvcResult result = mockMvc.perform(get("/api/v1/merchants/" + merchantId + "/payments?limit=1"))
+            MvcResult result = performAsync(get("/api/v1/merchants/" + merchantId + "/payments?limit=1"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.items.length()").value(1))
                     .andExpect(jsonPath("$.nextToken").isString())
@@ -380,7 +430,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
     private String awaitFirstMerchantStatePageWithNextToken(String merchantId, String state) {
         final String[] firstPageJson = new String[1];
         await().atMost(READ_MODEL_TIMEOUT).pollInterval(READ_MODEL_POLL).untilAsserted(() -> {
-            MvcResult result = mockMvc.perform(get(
+            MvcResult result = performAsync(get(
                             "/api/v1/merchants/" + merchantId + "/payments/state/" + state + "?limit=1"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.items.length()").value(1))
@@ -414,7 +464,7 @@ public class MerchantPaymentIntegrationTest extends AbstractIntegrationTest {
                     "currency": "USD"
                 }
                 """.formatted(idempotencyKey, merchantId, accountId, amount);
-        return mockMvc.perform(post("/api/v1/payments/outbound")
+        return performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isCreated())

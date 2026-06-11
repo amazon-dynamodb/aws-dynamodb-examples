@@ -14,9 +14,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEv
  *
  * <p>Key pattern: {@code PK=PAYMENT#{paymentId}, SK=EVENT#{zero-padded sequence}}
  *
- * <p>Lifecycle and audit narrative are carried by {@link #getEventType()} ({@link PaymentEventType}):
+ * <p>Lifecycle and audit narrative are carried by {@link #eventType} ({@link PaymentEventType}):
  * {@code OUTBOUND_PAYMENT_CREATED}, {@code FUNDS_RESERVED}, {@code COMPLETED}, {@code REJECTED}.
- * Optional {@link #getReasonCode()} explains terminal failure for {@code REJECTED}. DynamoDB may
+ * Optional {@link #reasonCode} explains terminal failure for {@code REJECTED}. DynamoDB may
  * still return historical attributes (e.g. legacy transition columns). They are not mapped on this
  * bean and do not affect {@link PaymentEventReplayer}.
  *

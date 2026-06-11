@@ -52,7 +52,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = createRequestBody(idempotencyKey, "acc_usd_1", "100");
 
-        MvcResult result = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult result = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -116,7 +116,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = createRequestBody(idempotencyKey, "acc_usd_1", "50");
 
-        MvcResult createResult = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult createResult = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -135,7 +135,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
                         ":t", AttributeValue.builder().s("LEGacy_TO").build()))
                 .build()).join();
 
-        mockMvc.perform(get("/api/v1/payments/outbound/" + paymentId))
+        performAsync(get("/api/v1/payments/outbound/" + paymentId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("RECEIVED"))
@@ -147,7 +147,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
         String idempotencyKey = UUID.randomUUID().toString();
         String requestBody = createRequestBody(idempotencyKey, "acc_usd_2", "200");
 
-        MvcResult firstResult = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult firstResult = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -155,7 +155,7 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
 
         String firstPaymentId = JsonPathSupport.read(firstResult.getResponse().getContentAsString(), "$.paymentId");
 
-        MvcResult retryResult = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult retryResult = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isOk())
@@ -171,13 +171,13 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
         String idempotencyKey = UUID.randomUUID().toString();
 
         String firstRequest = createRequestBody(idempotencyKey, "acc_usd_1", "100");
-        mockMvc.perform(post("/api/v1/payments/outbound")
+        performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(firstRequest))
                 .andExpect(status().isCreated());
 
         String differentRequest = createRequestBody(idempotencyKey, "acc_usd_1", "999");
-        mockMvc.perform(post("/api/v1/payments/outbound")
+        performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(differentRequest))
                 .andExpect(status().isConflict())
@@ -189,11 +189,35 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
         String requestBody = """
                 {"idempotencyKey": "key-1", "merchantId": "merch_1"}""";
 
-        mockMvc.perform(post("/api/v1/payments/outbound")
+        performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void createOutboundPayment_whenSeparatorInjectedDistinctPayloadsShareKey_shouldConflictNotReplay() throws Exception {
+        String idempotencyKey = UUID.randomUUID().toString();
+
+        // Two distinct payloads under the same idempotency key. Under a plain U+001F separator join
+        // they canonicalize to the same string, the creditorIban/creditorName values are split across
+        // the separator boundary, so the second request would be mis-classified as an idempotent
+        // replay and return the first payment's cached response. Length-prefix encoding keeps the two
+        // canonical forms distinct, so the second request is correctly a conflict.
+        String requestA = injectionBody(idempotencyKey, "i", "x\\u001Fy");
+        String requestB = injectionBody(idempotencyKey, "i\\u001Fx", "y");
+
+        performAsync(post("/api/v1/payments/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestA))
+                .andExpect(status().isCreated());
+
+        performAsync(post("/api/v1/payments/outbound")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestB))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("IDEMPOTENCY_CONFLICT"));
     }
 
     /**
@@ -215,5 +239,27 @@ public class OutboundPaymentIntegrationTest extends AbstractIntegrationTest {
                   "amount": %s,
                   "currency": "USD"
                 }""".formatted(idempotencyKey, debtorAccountId, amount);
+    }
+
+    /**
+     * Builds a create request body with caller-supplied {@code creditorIban} and {@code creditorName}
+     * so a test can craft values that probe the idempotency canonicalization boundary.
+     *
+     * @param idempotencyKey idempotency key for the request
+     * @param creditorIban creditor IBAN value (may contain JSON escapes such as {@code \\u001F})
+     * @param creditorName creditor name value (may contain JSON escapes such as {@code \\u001F})
+     * @return formatted JSON request body with fixed merchant, debtor, amount, and currency
+     */
+    private String injectionBody(String idempotencyKey, String creditorIban, String creditorName) {
+        return """
+                {
+                  "idempotencyKey": "%s",
+                  "merchantId": "merch_1",
+                  "debtorAccountId": "acc_usd_1",
+                  "creditorIban": "%s",
+                  "creditorName": "%s",
+                  "amount": 100,
+                  "currency": "USD"
+                }""".formatted(idempotencyKey, creditorIban, creditorName);
     }
 }

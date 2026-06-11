@@ -1,6 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.GetOutboundPaymentResponse;
@@ -9,7 +10,6 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.mapper.Payment
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Payment;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentStreamHead;
-import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentPartitionQueryResult;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
 
@@ -18,6 +18,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEv
  *
  * <p>Loads the payment partition via {@link PaymentRepository#queryPaymentPartition(String)} and
  * folds {@link PaymentEvent} records.
+ *
+ * <p>Returns {@link CompletableFuture} so async MVC controllers can compose without blocking Tomcat
+ * worker threads.
  */
 @Service
 public class OutboundPaymentQueryService {
@@ -46,16 +49,18 @@ public class OutboundPaymentQueryService {
      * Returns the payment read model with ordered event history.
      *
      * @param paymentId logical payment id
-     * @throws PaymentNotFoundException if no stream exists for the id
+     * @return response DTO future
      */
-    public GetOutboundPaymentResponse getOutboundPayment(String paymentId) {
-        PaymentPartitionQueryResult partition = paymentRepository.queryPaymentPartition(paymentId).join();
-        if (partition == null) {
-            throw new PaymentNotFoundException(paymentId);
-        }
-        Payment folded = paymentEventReplayer.fold(paymentId, partition.events());
-        assertHeadMatchesFold(partition.streamHead(), folded);
-        return paymentMapper.toGetOutboundPaymentResponse(folded, partition.events());
+    public CompletableFuture<GetOutboundPaymentResponse> getOutboundPayment(String paymentId) {
+        return paymentRepository.queryPaymentPartition(paymentId)
+                .thenApply(partition -> {
+                    if (partition == null) {
+                        throw new PaymentNotFoundException(paymentId);
+                    }
+                    Payment folded = paymentEventReplayer.fold(paymentId, partition.events());
+                    assertHeadMatchesFold(partition.streamHead(), folded);
+                    return paymentMapper.toGetOutboundPaymentResponse(folded, partition.events());
+                });
     }
 
     /**

@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -24,10 +25,12 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.controller.Mer
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentProjection;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentsPage;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.GlobalExceptionHandler;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.WebMvcAsyncConfig;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.InvalidPaginationTokenException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.InvalidPaymentStateException;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.integration.utils.JsonPathSupport;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.MerchantPaymentQueryService;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.support.AsyncMockMvcTestSupport;
 
 /**
  * Unit tests for {@link MerchantPaymentController}.
@@ -37,7 +40,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.Mercha
  */
 @Tag("unit")
 @WebMvcTest(MerchantPaymentController.class)
-@Import(GlobalExceptionHandler.class)
+@Import({GlobalExceptionHandler.class, WebMvcAsyncConfig.class})
 public class MerchantPaymentControllerTest {
 
     @Autowired
@@ -60,9 +63,9 @@ public class MerchantPaymentControllerTest {
                 Instant.parse("2026-03-18T10:16:05Z"), "INSUFFICIENT_FUNDS");
 
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), isNull(), isNull()))
-                .thenReturn(new MerchantPaymentsPage(List.of(p1, p2), "token-1"));
+                .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentsPage(List.of(p1, p2), "token-1")));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(2))
                 .andExpect(jsonPath("$.nextToken").value("token-1"))
@@ -83,9 +86,9 @@ public class MerchantPaymentControllerTest {
     @Test
     void listMerchantPayments_whenScanIndexForwardAndNextTokenProvided_shouldDelegateToService() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), eq(true), eq("token-1")))
-                .thenReturn(new MerchantPaymentsPage(List.of(), null));
+                .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentsPage(List.of(), null)));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments?scanIndexForward=true&nextToken=token-1"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments?scanIndexForward=true&nextToken=token-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(0))
                 .andExpect(jsonPath("$.nextToken").doesNotExist());
@@ -96,9 +99,9 @@ public class MerchantPaymentControllerTest {
     @Test
     void listMerchantPayments_whenNoPaymentsExist_shouldReturn200WithEmptyItems() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), isNull(), isNull()))
-                .thenReturn(new MerchantPaymentsPage(List.of(), null));
+                .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentsPage(List.of(), null)));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(0))
                 .andExpect(jsonPath("$.nextToken").doesNotExist());
@@ -107,9 +110,9 @@ public class MerchantPaymentControllerTest {
     @Test
     void listMerchantPayments_whenNextTokenInvalid_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), isNull(), eq("bad-token")))
-                .thenThrow(new InvalidPaginationTokenException("bad-token"));
+                .thenReturn(CompletableFuture.failedFuture(new InvalidPaginationTokenException("bad-token")));
 
-        MvcResult result = mvc.perform(get("/api/v1/merchants/merch_1/payments?nextToken=bad-token"))
+        MvcResult result = AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments?nextToken=bad-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"))
                 .andExpect(jsonPath("$.message").value("Invalid pagination token"))
@@ -121,9 +124,10 @@ public class MerchantPaymentControllerTest {
     @Test
     void listMerchantPayments_whenCrossGsiTokenProvided_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPayments(eq("merch_1"), isNull(), isNull(), eq("gsi-merchant-state-payments-token")))
-                .thenThrow(new InvalidPaginationTokenException("gsi-merchant-state-payments-token"));
+                .thenReturn(CompletableFuture.failedFuture(
+                        new InvalidPaginationTokenException("gsi-merchant-state-payments-token")));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments?nextToken=gsi-merchant-state-payments-token"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments?nextToken=gsi-merchant-state-payments-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
@@ -138,9 +142,9 @@ public class MerchantPaymentControllerTest {
 
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("COMPLETED"), isNull(), isNull(), isNull()))
-                .thenReturn(new MerchantPaymentsPage(List.of(p1), "token-2"));
+                .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentsPage(List.of(p1), "token-2")));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments/state/COMPLETED"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.nextToken").value("token-2"))
@@ -160,9 +164,9 @@ public class MerchantPaymentControllerTest {
     void listMerchantPaymentsByState_whenNextTokenProvided_shouldDelegateToService() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("COMPLETED"), isNull(), eq(true), eq("token-2")))
-                .thenReturn(new MerchantPaymentsPage(List.of(), null));
+                .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentsPage(List.of(), null)));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?scanIndexForward=true&nextToken=token-2"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments/state/COMPLETED?scanIndexForward=true&nextToken=token-2"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(0))
                 .andExpect(jsonPath("$.nextToken").doesNotExist());
@@ -175,9 +179,9 @@ public class MerchantPaymentControllerTest {
     void listMerchantPaymentsByState_whenNextTokenInvalid_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("COMPLETED"), isNull(), isNull(), eq("bad-token")))
-                .thenThrow(new InvalidPaginationTokenException("bad-token"));
+                .thenReturn(CompletableFuture.failedFuture(new InvalidPaginationTokenException("bad-token")));
 
-        MvcResult result = mvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=bad-token"))
+        MvcResult result = AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=bad-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"))
                 .andExpect(jsonPath("$.message").value("Invalid pagination token"))
@@ -190,9 +194,10 @@ public class MerchantPaymentControllerTest {
     void listMerchantPaymentsByState_whenCrossGsiTokenProvided_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("COMPLETED"), isNull(), isNull(), eq("gsi-merchant-payments-token")))
-                .thenThrow(new InvalidPaginationTokenException("gsi-merchant-payments-token"));
+                .thenReturn(CompletableFuture.failedFuture(
+                        new InvalidPaginationTokenException("gsi-merchant-payments-token")));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=gsi-merchant-payments-token"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments/state/COMPLETED?nextToken=gsi-merchant-payments-token"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAGINATION_TOKEN"));
     }
@@ -201,9 +206,9 @@ public class MerchantPaymentControllerTest {
     void listMerchantPaymentsByState_whenStateInvalid_shouldReturn400() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("BOGUS"), isNull(), isNull(), isNull()))
-                .thenThrow(new InvalidPaymentStateException("BOGUS"));
+                .thenReturn(CompletableFuture.failedFuture(new InvalidPaymentStateException("BOGUS")));
 
-        MvcResult result = mvc.perform(get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
+        MvcResult result = AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments/state/BOGUS"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("INVALID_PAYMENT_STATE"))
                 .andExpect(jsonPath("$.message").value("Invalid payment state: BOGUS"))
@@ -216,11 +221,33 @@ public class MerchantPaymentControllerTest {
     void listMerchantPaymentsByState_whenNoPaymentsExist_shouldReturn200WithEmptyItems() throws Exception {
         when(merchantPaymentQueryService.listMerchantPaymentsByState(
                 eq("merch_1"), eq("RECEIVED"), isNull(), isNull(), isNull()))
-                .thenReturn(new MerchantPaymentsPage(List.of(), null));
+                .thenReturn(CompletableFuture.completedFuture(new MerchantPaymentsPage(List.of(), null)));
 
-        mvc.perform(get("/api/v1/merchants/merch_1/payments/state/RECEIVED"))
+        AsyncMockMvcTestSupport.performAsync(mvc, get("/api/v1/merchants/merch_1/payments/state/RECEIVED"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(0))
                 .andExpect(jsonPath("$.nextToken").doesNotExist());
+    }
+
+    @Test
+    void listMerchantPayments_whenMerchantIdMalformed_shouldReturn400() throws Exception {
+        mvc.perform(get("/api/v1/merchants/merch$bad/payments"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void listMerchantPayments_whenMerchantIdTooLong_shouldReturn400() throws Exception {
+        String tooLong = "a".repeat(65);
+        mvc.perform(get("/api/v1/merchants/" + tooLong + "/payments"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void listMerchantPaymentsByState_whenStateMalformed_shouldReturn400() throws Exception {
+        mvc.perform(get("/api/v1/merchants/merch_1/payments/state/COMPLETED$bad"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
     }
 }

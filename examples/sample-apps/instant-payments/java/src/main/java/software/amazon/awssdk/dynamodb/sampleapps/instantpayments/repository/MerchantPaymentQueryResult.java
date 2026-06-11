@@ -12,6 +12,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentS
  */
 public record MerchantPaymentQueryResult(List<PaymentStreamHead> items, String nextToken) {
 
+    /**
+     * Defensive copy so callers cannot mutate the list backing this page.
+     */
     public MerchantPaymentQueryResult {
         items = List.copyOf(items);
     }

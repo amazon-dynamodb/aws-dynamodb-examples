@@ -13,6 +13,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record MerchantPaymentsPage(List<MerchantPaymentProjection> items, String nextToken) {
 
+    /**
+     * Defensive copy so callers cannot mutate the list backing this page.
+     */
     public MerchantPaymentsPage {
         items = List.copyOf(items);
     }

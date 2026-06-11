@@ -34,7 +34,7 @@ public class PaymentProcessingSmokeTest extends AbstractIntegrationTest {
                   "currency": "USD"
                 }""".formatted(idempotencyKey);
 
-        MvcResult createResult = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult createResult = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -43,12 +43,12 @@ public class PaymentProcessingSmokeTest extends AbstractIntegrationTest {
 
         String paymentId = JsonPathSupport.read(createResult.getResponse().getContentAsString(), "$.paymentId");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("COMPLETED"));
 
-        mockMvc.perform(get("/api/v1/payments/outbound/" + paymentId))
+        performAsync(get("/api/v1/payments/outbound/" + paymentId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("COMPLETED"))
                 .andExpect(jsonPath("$.events.length()").value(3));
@@ -68,7 +68,7 @@ public class PaymentProcessingSmokeTest extends AbstractIntegrationTest {
                   "currency": "EUR"
                 }""".formatted(idempotencyKey);
 
-        MvcResult createResult = mockMvc.perform(post("/api/v1/payments/outbound")
+        MvcResult createResult = performAsync(post("/api/v1/payments/outbound")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isCreated())
@@ -77,7 +77,7 @@ public class PaymentProcessingSmokeTest extends AbstractIntegrationTest {
 
         String paymentId = JsonPathSupport.read(createResult.getResponse().getContentAsString(), "$.paymentId");
 
-        mockMvc.perform(post("/api/v1/payments/outbound/" + paymentId + "/process"))
+        performAsync(post("/api/v1/payments/outbound/" + paymentId + "/process"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentId").value(paymentId))
                 .andExpect(jsonPath("$.state").value("REJECTED"))

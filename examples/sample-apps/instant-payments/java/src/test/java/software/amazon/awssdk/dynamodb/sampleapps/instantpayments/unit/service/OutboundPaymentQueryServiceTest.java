@@ -9,8 +9,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,7 +29,6 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.Pay
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentQueryService;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * Unit tests for {@link OutboundPaymentQueryService}, verifying event-stream replay into API
@@ -51,21 +50,16 @@ public class OutboundPaymentQueryServiceTest {
     @InjectMocks
     private OutboundPaymentQueryService queryService;
 
-    /** Sets idempotency TTL on the spy mapper so injected configuration matches production defaults. */
-    @BeforeEach
-    void wirePaymentMapperTtl() {
-        ReflectionTestUtils.setField(paymentMapper, "idempotencyTtlSeconds", 2_592_000L);
-        ReflectionTestUtils.invokeMethod(paymentMapper, "validateIdempotencyTtlConfiguration");
-    }
-
     @Test
     void getOutboundPayment_whenPartitionMissing_shouldThrowNotFound() {
         when(paymentRepository.queryPaymentPartition(eq("pay_x")))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_x"))
-                .isInstanceOf(PaymentNotFoundException.class)
-                .hasFieldOrPropertyWithValue("paymentId", "pay_x");
+        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_x").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(PaymentNotFoundException.class)
+                        .hasFieldOrPropertyWithValue("paymentId", "pay_x"));
     }
 
     @Test
@@ -108,7 +102,7 @@ public class OutboundPaymentQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(
                         new PaymentPartitionQueryResult(head, List.of(ev))));
 
-        GetOutboundPaymentResponse response = queryService.getOutboundPayment("pay_m1");
+        GetOutboundPaymentResponse response = queryService.getOutboundPayment("pay_m1").join();
 
         assertThat(response.paymentId()).isEqualTo("pay_m1");
         assertThat(response.state()).isEqualTo("RECEIVED");
@@ -146,9 +140,11 @@ public class OutboundPaymentQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(
                         new PaymentPartitionQueryResult(head, List.of())));
 
-        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_empty"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Cannot fold empty event stream");
+        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_empty").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("Cannot fold empty event stream"));
     }
 
     @Test
@@ -191,9 +187,11 @@ public class OutboundPaymentQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(
                         new PaymentPartitionQueryResult(head, List.of(ev))));
 
-        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_mismatch_seq"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Stream head does not match replayed aggregate");
+        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_mismatch_seq").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("Stream head does not match replayed aggregate"));
     }
 
     @Test
@@ -236,8 +234,10 @@ public class OutboundPaymentQueryServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(
                         new PaymentPartitionQueryResult(head, List.of(ev))));
 
-        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_mismatch_state"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Stream head does not match replayed aggregate");
+        assertThatThrownBy(() -> queryService.getOutboundPayment("pay_mismatch_state").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("Stream head does not match replayed aggregate"));
     }
 }

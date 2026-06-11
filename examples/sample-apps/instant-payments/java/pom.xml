@@ -61,6 +61,13 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>dynamodb-enhanced</artifactId>
         </dependency>
+        <!-- Netty async HTTP client: pulled transitively by dynamodb at runtime scope, declared
+             explicitly so DynamoDbConfig can tune NettyNioAsyncHttpClient (maxConcurrency,
+             connectionAcquisitionTimeout) at compile time. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>netty-nio-client</artifactId>
+        </dependency>
 
         <!-- OpenAPI / Swagger -->
         <dependency>
