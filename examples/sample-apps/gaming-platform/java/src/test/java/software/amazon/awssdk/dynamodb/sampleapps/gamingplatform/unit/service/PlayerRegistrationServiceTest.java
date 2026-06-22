@@ -25,10 +25,14 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerWal
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.PlayerRegistrationService;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.PlayerSnapshotService;
+import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -126,6 +130,52 @@ class PlayerRegistrationServiceTest {
                 .isInstanceOf(PlayerAlreadyExistsException.class);
     }
 
+    @Test
+    void registerPlayer_whenTransactionConflictThenSuccess_shouldRetryAndCreate() {
+        RegisterPlayerRequest request = new RegisterPlayerRequest("PC", "steam-123", "TestPlayer");
+        PlayerProfile draft = buildProfile("player-1", "PC", "steam-123");
+        PlayerSettings defaultSettings = new PlayerSettings();
+        PlayerWallet defaultWallet = new PlayerWallet();
+        PlayerSnapshot snapshot = sampleSnapshot("player-1", "TestPlayer", 0, 1);
+
+        when(mapper.toProfile(request)).thenReturn(draft);
+        when(settingsMapper.defaultSettings("player-1")).thenReturn(defaultSettings);
+        when(walletMapper.defaultWallet("player-1")).thenReturn(defaultWallet);
+        when(repository.createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet))
+                .thenReturn(CompletableFuture.failedFuture(transactionConflict()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(playerSnapshotService.load("player-1")).thenReturn(snapshot);
+
+        RegisterPlayerResponse result = service.registerPlayer(request);
+
+        assertThat(result.created()).isTrue();
+        verify(repository, times(2))
+                .createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet);
+        // A conflict is retried, not treated as an existing player, so no read-back occurs.
+        verify(repository, never()).getPlayer(any());
+    }
+
+    @Test
+    void registerPlayer_whenConflictPersists_shouldExhaustRetriesAndThrow() {
+        RegisterPlayerRequest request = new RegisterPlayerRequest("PC", "steam-123", "TestPlayer");
+        PlayerProfile draft = buildProfile("player-1", "PC", "steam-123");
+        PlayerSettings defaultSettings = new PlayerSettings();
+        PlayerWallet defaultWallet = new PlayerWallet();
+
+        when(mapper.toProfile(request)).thenReturn(draft);
+        when(settingsMapper.defaultSettings("player-1")).thenReturn(defaultSettings);
+        when(walletMapper.defaultWallet("player-1")).thenReturn(defaultWallet);
+        when(repository.createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet))
+                .thenReturn(CompletableFuture.failedFuture(transactionConflict()));
+
+        assertThatThrownBy(() -> service.registerPlayer(request))
+                .isInstanceOf(TransactionCanceledException.class);
+
+        verify(repository, times(3))
+                .createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet);
+        verify(repository, never()).getPlayer(any());
+    }
+
     /**
      * Builds a {@link PlayerSnapshot} fixture returned after registration completes.
      *
@@ -174,6 +224,21 @@ class PlayerRegistrationServiceTest {
     private static TransactionCanceledException transactionCanceled() {
         return TransactionCanceledException.builder()
                 .message("Transaction cancelled")
+                .build();
+    }
+
+    /**
+     * Builds a {@link TransactionCanceledException} whose reasons indicate a serializable conflict.
+     *
+     * @return cancellation carrying {@code TransactionConflict} reasons
+     */
+    private static TransactionCanceledException transactionConflict() {
+        return TransactionCanceledException.builder()
+                .message("Transaction cancelled")
+                .cancellationReasons(
+                        CancellationReason.builder().code("TransactionConflict").build(),
+                        CancellationReason.builder().code("TransactionConflict").build(),
+                        CancellationReason.builder().code("TransactionConflict").build())
                 .build();
     }
 }

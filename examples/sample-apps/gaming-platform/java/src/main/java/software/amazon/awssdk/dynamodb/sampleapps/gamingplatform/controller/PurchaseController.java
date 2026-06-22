@@ -7,11 +7,14 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -35,10 +38,17 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.Purchas
  */
 @RestController
 @RequestMapping("/api/v1")
+@Validated
 @Tag(name = "Purchases", description = "Atomic in-game purchases with idempotency")
 public class PurchaseController {
 
     private static final Logger logger = LoggerFactory.getLogger(PurchaseController.class);
+
+    /** Allowed character set for the {@code playerId} path variable. Length is bounded by {@link #ID_MAX_LENGTH}. */
+    static final String ID_PATTERN = "^[A-Za-z0-9_-]+$";
+
+    /** Maximum accepted length for the {@code playerId} path variable. */
+    static final int ID_MAX_LENGTH = 64;
 
     /** Cross-table purchase transaction orchestration. */
     private final PurchaseService purchaseService;
@@ -84,7 +94,10 @@ public class PurchaseController {
     @PostMapping("/players/{playerId}/purchases")
     public ResponseEntity<PurchaseResponse> purchase(
             @Parameter(description = "Internal player id")
-            @PathVariable String playerId,
+            @PathVariable
+            @Size(max = ID_MAX_LENGTH)
+            @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
+            String playerId,
             @Valid @RequestBody PurchaseRequest request) {
         logger.debug("Received purchase request [playerId={}, itemId={}, softCurrencyCost={}, clientRequestId={}]",
                 playerId, request.itemId(), request.softCurrencyCost(), request.clientRequestId());

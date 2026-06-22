@@ -17,6 +17,8 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerProfile;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerWallet;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.WalletTransactItemOrder;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.TransactionRetry;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
@@ -69,6 +71,11 @@ public class PurchaseService {
     /**
      * Validates the player's balance and executes an atomic purchase transaction.
      *
+     * <p>A {@code TransactionConflict} cancellation (concurrent transaction on the same wallet) is
+     * retried by {@link TransactionRetry}, re-reading the wallet so each attempt rebuilds the transact
+     * with a fresh optimistic-lock version. Conditional failures (stale version, insufficient funds,
+     * idempotent replay) are not conflicts and are handled without retry.
+     *
      * @param playerId the purchasing player
      * @param request  item id, cost, and idempotency key
      * @return outcome with status, full player snapshot, and event id
@@ -78,6 +85,17 @@ public class PurchaseService {
      * @throws StaleVersionException      if the wallet version moved during the transaction
      */
     public PurchaseResponse executePurchase(String playerId, PurchaseRequest request) {
+        return TransactionRetry.runWithConflictRetry(() -> attemptPurchase(playerId, request));
+    }
+
+    /**
+     * Runs a single purchase attempt: reads the wallet, builds the event, and executes the transact.
+     *
+     * @param playerId the purchasing player
+     * @param request  item id, cost, and idempotency key
+     * @return outcome with status, full player snapshot, and event id
+     */
+    private PurchaseResponse attemptPurchase(String playerId, PurchaseRequest request) {
         PlayerProfile profile = playerStateRepository.getPlayer(playerId).join();
         if (profile == null) {
             throw new PlayerNotFoundException(playerId);
@@ -99,7 +117,7 @@ public class PurchaseService {
         logger.debug("Executing purchase transaction [playerId={}, itemId={}, cost={}, eventId={}]",
                 playerId, request.itemId(), request.softCurrencyCost(), purchaseEvent.getEventId());
 
-        // Atomic: wallet debit (index 0) + event PUT with uniqueness guard (index 1)
+        // Atomic wallet debit then event PUT with uniqueness guard, ordered by WalletTransactItemOrder
         try {
             playerStateRepository.purchaseTransaction(
                     wallet, request.softCurrencyCost(), request.itemId(), purchaseEvent
@@ -111,7 +129,7 @@ public class PurchaseService {
             throw ex;
         }
 
-        logger.info("Purchase completed [status=COMPLETED, playerId={}, itemId={}, eventId={}]",
+        logger.debug("Purchase completed [status=COMPLETED, playerId={}, itemId={}, eventId={}]",
                 playerId, request.itemId(), purchaseEvent.getEventId());
         return toPurchaseResponse(STATUS_COMPLETED, playerId, purchaseEvent.getEventId());
     }
@@ -125,7 +143,7 @@ public class PurchaseService {
      * @param wallet        the wallet snapshot read before the transaction (carries expected version)
      * @param purchaseEvent the event that was part of the transaction
      * @return an idempotent replay response when the event key already existed
-     * @throws StaleVersionException if the wallet condition check failed (index 0)
+     * @throws StaleVersionException if the wallet condition check failed ({@link WalletTransactItemOrder#WALLET})
      * @throws TransactionCanceledException if neither known index matches
      */
     private PurchaseResponse handleTransactionCancellation(TransactionCanceledException transactionCanceledException,
@@ -134,15 +152,17 @@ public class PurchaseService {
                                                            GameEvent purchaseEvent) {
         List<CancellationReason> reasons = transactionCanceledException.cancellationReasons();
 
-        // Index 1 is the event Put with attribute_not_exists condition
-        if (reasons.size() > 1 && isConditionalCheckFailed(reasons.get(1))) {
-            logger.info("Purchase idempotent replay detected [status=IDEMPOTENT_REPLAY, playerId={}, eventId={}]",
+        // The event Put carries attribute_not_exists(PK), so a failure here is a duplicate purchase id
+        int eventIndex = WalletTransactItemOrder.EVENT.index();
+        if (reasons.size() > eventIndex && isConditionalCheckFailed(reasons.get(eventIndex))) {
+            logger.debug("Purchase idempotent replay detected [status=IDEMPOTENT_REPLAY, playerId={}, eventId={}]",
                     playerId, purchaseEvent.getEventId());
             return toPurchaseResponse(STATUS_IDEMPOTENT_REPLAY, playerId, purchaseEvent.getEventId());
         }
 
-        // Index 0 is the wallet Update: could be stale version or insufficient funds
-        if (!reasons.isEmpty() && isConditionalCheckFailed(reasons.get(0))) {
+        // The wallet Update could fail on stale version or insufficient funds
+        int walletIndex = WalletTransactItemOrder.WALLET.index();
+        if (reasons.size() > walletIndex && isConditionalCheckFailed(reasons.get(walletIndex))) {
             throw new StaleVersionException(playerId, wallet.getVersion());
         }
 

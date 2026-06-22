@@ -13,6 +13,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.Leaderboard
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.LeaderboardResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.LeaderboardQueryService;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -77,5 +78,14 @@ class LeaderboardControllerTest {
                         .param("limit", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.entries").isEmpty());
+    }
+
+    @Test
+    void getLeaderboard_whenScopeHasIllegalCharacter_shouldReturn400AndNotCallService() throws Exception {
+        mockMvc.perform(get("/api/v1/leaderboards/{scope}", "bad!scope"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+
+        verifyNoInteractions(leaderboardQueryService);
     }
 }

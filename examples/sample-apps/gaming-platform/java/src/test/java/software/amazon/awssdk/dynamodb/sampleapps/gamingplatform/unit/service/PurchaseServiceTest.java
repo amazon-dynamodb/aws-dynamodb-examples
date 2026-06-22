@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -187,6 +188,70 @@ class PurchaseServiceTest {
         PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request);
 
         assertThat(response.status()).isEqualTo("IDEMPOTENT_REPLAY");
+    }
+
+    @Test
+    void executePurchase_whenTransactionConflictThenSuccess_shouldRetryAndComplete() {
+        PlayerProfile profile = buildProfile(1);
+        PlayerWallet wallet = buildWallet(5000L, 1);
+        GameEvent event = buildEvent();
+        PurchaseRequest request = new PurchaseRequest("sword-01", 500L, "req-conflict");
+        PlayerSnapshot snapshot = sampleSnapshot(4500L, 2L);
+
+        when(playerStateRepository.getPlayer(PLAYER_ID))
+                .thenReturn(CompletableFuture.completedFuture(profile));
+        when(playerStateRepository.getWallet(PLAYER_ID))
+                .thenReturn(CompletableFuture.completedFuture(wallet));
+        when(gameEventMapper.toPurchaseEvent(PLAYER_ID, request)).thenReturn(event);
+        when(playerStateRepository.purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event)))
+                .thenReturn(CompletableFuture.failedFuture(transactionConflict()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(snapshot);
+
+        PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request);
+
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        // State is re-read and the transact rebuilt on each attempt.
+        verify(playerStateRepository, times(2)).getWallet(PLAYER_ID);
+        verify(playerStateRepository, times(2))
+                .purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event));
+    }
+
+    @Test
+    void executePurchase_whenConflictPersists_shouldExhaustRetriesAndThrow() {
+        PlayerProfile profile = buildProfile(1);
+        PlayerWallet wallet = buildWallet(5000L, 1);
+        GameEvent event = buildEvent();
+        PurchaseRequest request = new PurchaseRequest("sword-01", 500L, "req-conflict-loop");
+
+        when(playerStateRepository.getPlayer(PLAYER_ID))
+                .thenReturn(CompletableFuture.completedFuture(profile));
+        when(playerStateRepository.getWallet(PLAYER_ID))
+                .thenReturn(CompletableFuture.completedFuture(wallet));
+        when(gameEventMapper.toPurchaseEvent(PLAYER_ID, request)).thenReturn(event);
+        when(playerStateRepository.purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event)))
+                .thenReturn(CompletableFuture.failedFuture(transactionConflict()));
+
+        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request))
+                .isInstanceOf(TransactionCanceledException.class);
+
+        verify(playerStateRepository, times(3))
+                .purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event));
+        verifyNoInteractions(playerSnapshotService);
+    }
+
+    /**
+     * Builds a {@link TransactionCanceledException} whose reasons indicate a serializable conflict.
+     *
+     * @return cancellation carrying {@code TransactionConflict} on both transact items
+     */
+    private static TransactionCanceledException transactionConflict() {
+        return TransactionCanceledException.builder()
+                .cancellationReasons(
+                        CancellationReason.builder().code("TransactionConflict").build(),
+                        CancellationReason.builder().code("TransactionConflict").build())
+                .message("Transaction cancelled")
+                .build();
     }
 
     /**

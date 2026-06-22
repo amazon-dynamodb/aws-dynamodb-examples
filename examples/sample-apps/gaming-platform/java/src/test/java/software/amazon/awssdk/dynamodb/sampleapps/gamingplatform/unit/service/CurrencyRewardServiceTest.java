@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -172,6 +173,61 @@ class CurrencyRewardServiceTest {
 
         assertThat(response.status()).isEqualTo("COMPLETED");
         assertThat(response.wallet().currencyBalance()).isEqualTo(350L);
+    }
+
+    @Test
+    void grantCurrency_whenTransactionConflictThenSuccess_shouldRetryAndComplete() {
+        PlayerWallet wallet = buildWallet(500L, 1L);
+        GameEvent rewardEvent = buildEvent("evt-conflict");
+
+        when(repository.getWallet(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(wallet));
+        when(gameEventMapper.toCurrencyGrantEvent(any(), anyLong(), any(), any()))
+                .thenReturn(rewardEvent);
+        when(repository.earnCurrencyTransaction(any(), anyLong(), any()))
+                .thenReturn(CompletableFuture.failedFuture(transactionConflict()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(sampleSnapshot(800L, 2L));
+
+        WalletEarnResponse response = service.grantCurrency(
+                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-conflict"));
+
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        // Wallet is re-read and the transact rebuilt on each attempt.
+        verify(repository, times(2)).getWallet(PLAYER_ID);
+        verify(repository, times(2)).earnCurrencyTransaction(any(), anyLong(), any());
+    }
+
+    @Test
+    void grantCurrency_whenConflictPersists_shouldExhaustRetriesAndThrow() {
+        PlayerWallet wallet = buildWallet(500L, 1L);
+        GameEvent rewardEvent = buildEvent("evt-loop");
+
+        when(repository.getWallet(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(wallet));
+        when(gameEventMapper.toCurrencyGrantEvent(any(), anyLong(), any(), any()))
+                .thenReturn(rewardEvent);
+        when(repository.earnCurrencyTransaction(any(), anyLong(), any()))
+                .thenReturn(CompletableFuture.failedFuture(transactionConflict()));
+
+        assertThatThrownBy(() -> service.grantCurrency(
+                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-loop")))
+                .isInstanceOf(TransactionCanceledException.class);
+
+        verify(repository, times(3)).earnCurrencyTransaction(any(), anyLong(), any());
+        verify(playerSnapshotService, never()).load(any());
+    }
+
+    /**
+     * Builds a {@link TransactionCanceledException} whose reasons indicate a serializable conflict.
+     *
+     * @return cancellation carrying {@code TransactionConflict} on both transact items
+     */
+    private static TransactionCanceledException transactionConflict() {
+        return TransactionCanceledException.builder()
+                .message("Transaction cancelled")
+                .cancellationReasons(List.of(
+                        CancellationReason.builder().code("TransactionConflict").build(),
+                        CancellationReason.builder().code("TransactionConflict").build()))
+                .build();
     }
 
     /**

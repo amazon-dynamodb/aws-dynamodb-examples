@@ -10,6 +10,8 @@ Unlike the Instant Payments sample's **single-table** layout, this module splits
 
 It provides interchangeable repository implementations using both the **low-level DynamoDbAsyncClient** and the **high-level DynamoDbEnhancedAsyncClient** (selected at startup via `dynamodb.client-type`).
 
+For simplicity, the stream-driven leaderboard projection tracks its progress in memory, so if the application restarts a match result recorded during that brief window may not be projected automatically. No event is lost: the game event is still stored, and the application can be configured to replay from the beginning of the stream history, which catches missed results but reprocesses everything in the retention window. The listener reads the whole **GameEvents** stream and acts only on **PVP_MATCH** inserts, a simple approach that trades some read cost for fewer moving parts. Kinesis Data Streams for DynamoDB adds server-side filtering when that cost matters.
+
 ---
 
 ## Why DynamoDB?

@@ -7,11 +7,14 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,10 +48,17 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.PlayerW
  */
 @RestController
 @RequestMapping("/api/v1")
+@Validated
 @Tag(name = "Player Wallet", description = "Read wallet balance and credit soft currency")
 public class PlayerWalletController {
 
     private static final Logger logger = LoggerFactory.getLogger(PlayerWalletController.class);
+
+    /** Allowed character set for the {@code playerId} path variable. Length is bounded by {@link #ID_MAX_LENGTH}. */
+    static final String ID_PATTERN = "^[A-Za-z0-9_-]+$";
+
+    /** Maximum accepted length for the {@code playerId} path variable. */
+    static final int ID_MAX_LENGTH = 64;
 
     /** Wallet read operations. */
     private final PlayerWalletService playerWalletService;
@@ -96,7 +106,10 @@ public class PlayerWalletController {
     @GetMapping("/players/{playerId}/wallet")
     public ResponseEntity<GetWalletResponse> getWallet(
             @Parameter(description = "Internal player id")
-            @PathVariable String playerId) {
+            @PathVariable
+            @Size(max = ID_MAX_LENGTH)
+            @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
+            String playerId) {
         logger.debug("Received get player wallet request [playerId={}]", playerId);
         return ResponseEntity.ok(playerWalletService.getWallet(playerId));
     }
@@ -142,7 +155,10 @@ public class PlayerWalletController {
     @PostMapping("/players/{playerId}/wallet/earn")
     public ResponseEntity<WalletEarnResponse> earnCurrency(
             @Parameter(description = "Internal player id")
-            @PathVariable String playerId,
+            @PathVariable
+            @Size(max = ID_MAX_LENGTH)
+            @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
+            String playerId,
             @Valid @RequestBody WalletEarnRequest request) {
         logger.debug("Received earn currency request [playerId={}, amount={}, reason={}, clientRequestId={}]",
                 playerId, request.amount(), request.reason(), request.clientRequestId());

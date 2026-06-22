@@ -1,18 +1,34 @@
 server:
   port: 8080
+  shutdown: graceful          # on SIGTERM, drain in-flight HTTP requests before closing the context
 
 spring:
   application:
     name: gaming-platform
+  lifecycle:
+    timeout-per-shutdown-phase: 20s   # upper bound for each shutdown phase to drain in-flight work
+
+# Actuator is locked down so only /actuator/health is web-exposed and a profile override cannot
+# accidentally surface env, heapdump, or configprops. Health shows status only without component or
+# disk details to avoid leaking infrastructure information to unauthenticated callers.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health     # only health is published over HTTP
+  endpoint:
+    health:
+      show-details: never   # status only, no component or disk detail
 
 dynamodb:
   endpoint: http://localhost:8000     # required: local or https://dynamodb.{region}.amazonaws.com
   region: eu-west-1                   # required
   client-type: high-level             # required: high-level | low-level
+  create-resources: true              # local dev: create tables, enable TTL, seed demo data at startup. Set false in production so the app only verifies tables exist (schema lives in IaC)
   player-state-table-name: JavaGamingPlayerState
   game-events-table-name: JavaGamingGameEvents
   leaderboard-table-name: JavaGamingLeaderboard
-  game-events-ttl-seconds: 7776000
+  game-events-ttl-seconds: 7776000    # event TTL in seconds, allowed range 60 to 31536000, enforced at startup
   streams:
     iterator-type: LATEST             # optional: LATEST (default) | TRIM_HORIZON - sample tests use TRIM_HORIZON
 
@@ -25,3 +41,19 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     operations-sorter: method
+
+---
+# Production profile (spring.profiles.active=prod) turns off the interactive API docs. Swagger UI and
+# the OpenAPI JSON are a teaching feature here and stay on by default, but in production they are
+# usually disabled so the API surface is not advertised.
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+springdoc:
+  api-docs:
+    enabled: false      # disable serving the OpenAPI JSON in production
+  swagger-ui:
+    enabled: false      # disable serving the Swagger UI in production
+

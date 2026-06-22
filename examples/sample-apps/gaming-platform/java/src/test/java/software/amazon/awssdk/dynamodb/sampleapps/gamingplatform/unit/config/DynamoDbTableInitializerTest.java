@@ -1,8 +1,10 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,12 +27,15 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableResponse;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableResponse;
 import software.amazon.awssdk.services.dynamodb.model.GlobalSecondaryIndex;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.ResourceInUseException;
+import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
 import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveResponse;
 
@@ -65,6 +70,7 @@ class DynamoDbTableInitializerTest {
     void run_whenApplicationStarts_shouldIssueCreatesTtlAndSeeds() {
         contextRunner
                 .withPropertyValues(
+                        "dynamodb.create-resources=true",
                         "dynamodb.player-state-table-name=TblPlayerState",
                         "dynamodb.game-events-table-name=TblGameEvents",
                         "dynamodb.leaderboard-table-name=TblLeaderboard")
@@ -88,6 +94,7 @@ class DynamoDbTableInitializerTest {
     void buildPlayerStateGsi_whenConfigured_shouldHaveCompositeSortKeyWithLastUpdatedAtAndPlayerId() {
         contextRunner
                 .withPropertyValues(
+                        "dynamodb.create-resources=true",
                         "dynamodb.player-state-table-name=TblPlayerState",
                         "dynamodb.game-events-table-name=TblGameEvents",
                         "dynamodb.leaderboard-table-name=TblLeaderboard")
@@ -137,12 +144,81 @@ class DynamoDbTableInitializerTest {
 
         contextRunner
                 .withPropertyValues(
+                        "dynamodb.create-resources=true",
                         "dynamodb.player-state-table-name=P",
                         "dynamodb.game-events-table-name=G",
                         "dynamodb.leaderboard-table-name=L")
                 .run(context -> context.getBean("initializeDynamoDbTables", CommandLineRunner.class).run());
 
         verify(dynamoDbAsyncClient, times(15)).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void run_whenCreateResourcesFalse_shouldVerifyTablesAndNotCreateOrSeed() {
+        when(dynamoDbAsyncClient.describeTable(any(DescribeTableRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(DescribeTableResponse.builder().build()));
+
+        contextRunner
+                .withPropertyValues(
+                        "dynamodb.create-resources=false",
+                        "dynamodb.player-state-table-name=P",
+                        "dynamodb.game-events-table-name=G",
+                        "dynamodb.leaderboard-table-name=L")
+                .run(context -> {
+                    assertThat(context.containsBean("initializeDynamoDbTables")).isFalse();
+                    context.getBean("verifyDynamoDbTables", CommandLineRunner.class).run();
+                });
+
+        verify(dynamoDbAsyncClient, times(3)).describeTable(any(DescribeTableRequest.class));
+        verify(dynamoDbAsyncClient, never()).createTable(any(CreateTableRequest.class));
+        verify(dynamoDbAsyncClient, never()).putItem(any(PutItemRequest.class));
+    }
+
+    @Test
+    void run_whenCreateResourcesMissing_shouldDefaultToVerifyOnly() {
+        when(dynamoDbAsyncClient.describeTable(any(DescribeTableRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(DescribeTableResponse.builder().build()));
+
+        contextRunner
+                .withPropertyValues(
+                        "dynamodb.player-state-table-name=P",
+                        "dynamodb.game-events-table-name=G",
+                        "dynamodb.leaderboard-table-name=L")
+                .run(context -> {
+                    assertThat(context.containsBean("initializeDynamoDbTables")).isFalse();
+                    assertThat(context.containsBean("verifyDynamoDbTables")).isTrue();
+                    context.getBean("verifyDynamoDbTables", CommandLineRunner.class).run();
+                });
+
+        verify(dynamoDbAsyncClient, times(3)).describeTable(any(DescribeTableRequest.class));
+        verify(dynamoDbAsyncClient, never()).createTable(any(CreateTableRequest.class));
+    }
+
+    @Test
+    void run_whenVerifyAndTableMissing_shouldFailFast() {
+        ResourceNotFoundException cause = ResourceNotFoundException.builder()
+                .message("Requested resource not found")
+                .build();
+        CompletableFuture<DescribeTableResponse> failed = new CompletableFuture<>();
+        failed.completeExceptionally(cause);
+        when(dynamoDbAsyncClient.describeTable(any(DescribeTableRequest.class)))
+                .thenReturn(failed);
+
+        contextRunner
+                .withPropertyValues(
+                        "dynamodb.create-resources=false",
+                        "dynamodb.player-state-table-name=P",
+                        "dynamodb.game-events-table-name=G",
+                        "dynamodb.leaderboard-table-name=L")
+                .run(context -> {
+                    CommandLineRunner verifyRunner =
+                            context.getBean("verifyDynamoDbTables", CommandLineRunner.class);
+                    assertThatThrownBy(verifyRunner::run)
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("Required DynamoDB table not found");
+                });
+
+        verify(dynamoDbAsyncClient, never()).createTable(any(CreateTableRequest.class));
     }
 
     /**

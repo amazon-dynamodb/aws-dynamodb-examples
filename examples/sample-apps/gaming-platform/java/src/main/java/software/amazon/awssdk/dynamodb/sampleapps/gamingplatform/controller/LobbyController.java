@@ -7,11 +7,14 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,10 +40,17 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.LobbySe
  */
 @RestController
 @RequestMapping("/api/v1")
+@Validated
 @Tag(name = "Lobby", description = "Batch player summaries and platform browse queries")
 public class LobbyController {
 
     private static final Logger logger = LoggerFactory.getLogger(LobbyController.class);
+
+    /** Allowed character set for the {@code platform} path variable. Length is bounded by {@link #PLATFORM_MAX_LENGTH}. */
+    static final String PLATFORM_PATTERN = "^[A-Za-z0-9_-]+$";
+
+    /** Maximum accepted length for the {@code platform} path variable. */
+    static final int PLATFORM_MAX_LENGTH = 64;
 
     /** Batch reads and platform-scoped queries. */
     private final LobbyService lobbyService;
@@ -106,7 +116,10 @@ public class LobbyController {
     @GetMapping("/lobbies/platform/{platform}")
     public ResponseEntity<PlatformPlayersResponse> getPlayersByPlatform(
             @Parameter(description = "Platform filter. Valid values are PC, IOS, and ANDROID")
-            @PathVariable String platform,
+            @PathVariable
+            @Size(max = PLATFORM_MAX_LENGTH)
+            @Pattern(regexp = PLATFORM_PATTERN, message = "must match " + PLATFORM_PATTERN)
+            String platform,
             @Parameter(description = "Maximum results. Defaults to 20. Clamped to the range 1 through 50")
             @RequestParam(defaultValue = "20") int limit) {
         logger.debug("Received browse platform players request [platform={}, limit={}]",

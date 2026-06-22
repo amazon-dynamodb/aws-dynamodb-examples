@@ -7,11 +7,14 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,10 +42,17 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.PlayerS
  */
 @RestController
 @RequestMapping("/api/v1")
+@Validated
 @Tag(name = "Player Settings", description = "Read and update player preference items")
 public class PlayerSettingsController {
 
     private static final Logger logger = LoggerFactory.getLogger(PlayerSettingsController.class);
+
+    /** Allowed character set for the {@code playerId} path variable. Length is bounded by {@link #ID_MAX_LENGTH}. */
+    static final String ID_PATTERN = "^[A-Za-z0-9_-]+$";
+
+    /** Maximum accepted length for the {@code playerId} path variable. */
+    static final int ID_MAX_LENGTH = 64;
 
     /** Settings read and update operations. */
     private final PlayerSettingsService playerSettingsService;
@@ -80,7 +90,10 @@ public class PlayerSettingsController {
     @GetMapping("/players/{playerId}/settings")
     public ResponseEntity<GetSettingsResponse> getSettings(
             @Parameter(description = "Internal player id")
-            @PathVariable String playerId) {
+            @PathVariable
+            @Size(max = ID_MAX_LENGTH)
+            @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
+            String playerId) {
         logger.debug("Received get player settings request [playerId={}]", playerId);
         return ResponseEntity.ok(playerSettingsService.getSettings(playerId));
     }
@@ -116,7 +129,10 @@ public class PlayerSettingsController {
     @PatchMapping("/players/{playerId}/settings")
     public ResponseEntity<UpdatePlayerSettingsResponse> updateSettings(
             @Parameter(description = "Internal player id")
-            @PathVariable String playerId,
+            @PathVariable
+            @Size(max = ID_MAX_LENGTH)
+            @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
+            String playerId,
             @Valid @RequestBody UpdatePlayerSettingsRequest request) {
         logger.debug("Received update player settings request [playerId={}, expectedVersion={}]",
                 playerId, request.expectedVersion());

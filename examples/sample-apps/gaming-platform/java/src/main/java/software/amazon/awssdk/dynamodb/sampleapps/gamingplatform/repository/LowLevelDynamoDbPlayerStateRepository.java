@@ -206,8 +206,9 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
     /**
      * {@inheritDoc}
      *
-     * @implNote Builds a two-item {@code TransactWriteItems} request. Index 0 debits the wallet.
-     *           Index 1 conditionally puts the purchase event.
+     * @implNote Builds a two-item {@code TransactWriteItems} request ordered by
+     *           {@link WalletTransactItemOrder}: the wallet debit then the conditional purchase event
+     *           put.
      */
     @Override
     public CompletableFuture<Void> purchaseTransaction(PlayerWallet currentWallet, long softCurrencyCost,
@@ -222,7 +223,7 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
                 ":expectedVersion", AttributeValue.fromN(String.valueOf(currentWallet.getVersion())),
                 ":one", AttributeValue.fromN("1"));
 
-        // Index 0: wallet debit with funds guard and version check
+        // Wallet debit with funds guard and version check
         Update updateWallet = Update.builder()
                 .tableName(tableName)
                 .key(walletKey)
@@ -231,7 +232,7 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
                 .expressionAttributeValues(purchaseValues)
                 .build();
 
-        // Index 1: purchase event put fails when the same event id was already written
+        // Purchase event put fails when the same event id was already written
         Map<String, AttributeValue> eventItem = EVENT_SCHEMA.itemToMap(purchaseEvent, true);
 
         Put putEvent = Put.builder()
@@ -240,10 +241,14 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
                 .conditionExpression("attribute_not_exists(PK)")
                 .build();
 
+        TransactWriteItem[] transactItems = new TransactWriteItem[WalletTransactItemOrder.values().length];
+        transactItems[WalletTransactItemOrder.WALLET.index()] =
+                TransactWriteItem.builder().update(updateWallet).build();
+        transactItems[WalletTransactItemOrder.EVENT.index()] =
+                TransactWriteItem.builder().put(putEvent).build();
+
         TransactWriteItemsRequest txRequest = TransactWriteItemsRequest.builder()
-                .transactItems(
-                        TransactWriteItem.builder().update(updateWallet).build(),
-                        TransactWriteItem.builder().put(putEvent).build())
+                .transactItems(transactItems)
                 .build();
 
         return dynamoDbAsyncClient.transactWriteItems(txRequest)
@@ -255,9 +260,10 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
      * {@inheritDoc}
      *
      * @implNote Uses a raw {@code ADD currencyBalance :amount} expression so the increment is
-     *           server-side atomic with no risk of overwrites from concurrent credits.
-     *           Index 0 is the wallet ADD (guarded by {@code attribute_exists(PK)}).
-     *           Index 1 is the event PUT (guarded by {@code attribute_not_exists(PK)} for idempotency).
+     *           server-side atomic with no risk of overwrites from concurrent credits. The two items
+     *           are ordered by {@link WalletTransactItemOrder}: the wallet ADD (guarded by
+     *           {@code attribute_exists(PK)}) then the event PUT (guarded by
+     *           {@code attribute_not_exists(PK)} for idempotency).
      */
     @Override
     public CompletableFuture<Void> earnCurrencyTransaction(String playerId, long amount,
@@ -269,7 +275,7 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
         Map<String, AttributeValue> earnValues = Map.of(
                 ":amount", AttributeValue.fromN(String.valueOf(amount)));
 
-        // Index 0: atomic ADD on currencyBalance, guarded only by item existence
+        // Atomic ADD on currencyBalance, guarded only by item existence
         Update addCurrency = Update.builder()
                 .tableName(tableName)
                 .key(walletKey)
@@ -278,7 +284,7 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
                 .expressionAttributeValues(earnValues)
                 .build();
 
-        // Index 1: idempotency guard rejects duplicate earn events via attribute_not_exists(PK)
+        // Idempotency guard rejects duplicate earn events via attribute_not_exists(PK)
         Map<String, AttributeValue> eventItem = EVENT_SCHEMA.itemToMap(rewardEvent, true);
 
         Put putEvent = Put.builder()
@@ -287,10 +293,14 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
                 .conditionExpression("attribute_not_exists(PK)")
                 .build();
 
+        TransactWriteItem[] transactItems = new TransactWriteItem[WalletTransactItemOrder.values().length];
+        transactItems[WalletTransactItemOrder.WALLET.index()] =
+                TransactWriteItem.builder().update(addCurrency).build();
+        transactItems[WalletTransactItemOrder.EVENT.index()] =
+                TransactWriteItem.builder().put(putEvent).build();
+
         TransactWriteItemsRequest txRequest = TransactWriteItemsRequest.builder()
-                .transactItems(
-                        TransactWriteItem.builder().update(addCurrency).build(),
-                        TransactWriteItem.builder().put(putEvent).build())
+                .transactItems(transactItems)
                 .build();
 
         return dynamoDbAsyncClient.transactWriteItems(txRequest)

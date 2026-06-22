@@ -74,4 +74,47 @@ class PaginationHelperTest {
                 .isInstanceOf(InvalidPaginationTokenException.class)
                 .hasMessage("Invalid pagination token: " + tampered);
     }
+
+    @Test
+    void decodePaginationToken_whenPartitionMatches_shouldDecode() {
+        Map<String, AttributeValue> original = new LinkedHashMap<>();
+        original.put("PK", AttributeValue.fromS("USER#p1"));
+        original.put("SK", AttributeValue.fromS("EVT#2026-04-03T12:10:00Z#e5"));
+        String token = PaginationHelper.encodePaginationToken(original);
+
+        Map<String, AttributeValue> decoded = PaginationHelper.decodePaginationToken(token, "USER#p1");
+
+        assertThat(decoded).isNotNull();
+        assertThat(decoded.get("PK").s()).isEqualTo("USER#p1");
+    }
+
+    @Test
+    void decodePaginationToken_whenPartitionMismatches_shouldThrow() {
+        Map<String, AttributeValue> original = new LinkedHashMap<>();
+        original.put("PK", AttributeValue.fromS("USER#p2"));
+        original.put("SK", AttributeValue.fromS("EVT#2026-04-03T12:10:00Z#e5"));
+        String token = PaginationHelper.encodePaginationToken(original);
+
+        assertThatThrownBy(() -> PaginationHelper.decodePaginationToken(token, "USER#p1"))
+                .isInstanceOf(InvalidPaginationTokenException.class)
+                .hasMessage("Invalid pagination token: " + token);
+    }
+
+    @Test
+    void decodePaginationToken_whenExpectedPartitionNull_shouldSkipBinding() {
+        Map<String, AttributeValue> original = new LinkedHashMap<>();
+        original.put("PK", AttributeValue.fromS("USER#p2"));
+        original.put("SK", AttributeValue.fromS("EVT#2026-04-03T12:10:00Z#e5"));
+        String token = PaginationHelper.encodePaginationToken(original);
+
+        Map<String, AttributeValue> decoded = PaginationHelper.decodePaginationToken(token, null);
+
+        assertThat(decoded).isNotNull();
+        assertThat(decoded.get("PK").s()).isEqualTo("USER#p2");
+    }
+
+    @Test
+    void decodePaginationToken_whenTokenBlankWithExpectedPartition_shouldReturnNull() {
+        assertThat(PaginationHelper.decodePaginationToken("   ", "USER#p1")).isNull();
+    }
 }

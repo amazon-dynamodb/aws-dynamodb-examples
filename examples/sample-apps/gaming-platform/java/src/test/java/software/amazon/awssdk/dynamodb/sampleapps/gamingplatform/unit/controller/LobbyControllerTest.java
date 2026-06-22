@@ -18,6 +18,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.LobbySe
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -116,5 +117,14 @@ class LobbyControllerTest {
 
         mockMvc.perform(get("/api/v1/lobbies/platform/XBOX"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void browseByPlatform_whenPlatformHasIllegalCharacter_shouldReturn400AndNotCallService() throws Exception {
+        mockMvc.perform(get("/api/v1/lobbies/platform/{platform}", "PC!"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+
+        verifyNoInteractions(lobbyService);
     }
 }

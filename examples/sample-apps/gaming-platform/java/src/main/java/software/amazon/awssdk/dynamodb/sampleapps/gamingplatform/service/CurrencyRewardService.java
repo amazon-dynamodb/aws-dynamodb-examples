@@ -15,6 +15,8 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEventType;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerWallet;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.WalletTransactItemOrder;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.TransactionRetry;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
@@ -27,14 +29,17 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
  * audit event. The caller-supplied {@code clientRequestId} is embedded in the event sort key so
  * duplicate calls return {@code IDEMPOTENT_REPLAY} without crediting the player twice.
  *
- * <p><strong>Transaction index contract:</strong>
- * <ul>
- *   <li>Index 0: wallet {@code ADD} guarded by {@code attribute_exists(PK)}. Fails only when the
- *       wallet item does not exist (registration incomplete).</li>
- *   <li>Index 1: event {@code PUT} guarded by {@code attribute_not_exists(PK)}. Fails when the
- *       same {@code clientRequestId} has been processed before (idempotent replay).</li>
- * </ul>
- */
+     * <p><strong>Transaction index contract:</strong> the two transact items are ordered by
+     * {@link WalletTransactItemOrder}.
+     * <ul>
+     *   <li>{@link WalletTransactItemOrder#WALLET}: wallet {@code ADD} guarded by
+     *       {@code attribute_exists(PK)}. Fails only when the wallet item does not exist
+     *       (registration incomplete).</li>
+     *   <li>{@link WalletTransactItemOrder#EVENT}: event {@code PUT} guarded by
+     *       {@code attribute_not_exists(PK)}. Fails when the same {@code clientRequestId} has been
+     *       processed before (idempotent replay).</li>
+     * </ul>
+     */
 @Service
 public class CurrencyRewardService {
 
@@ -77,12 +82,27 @@ public class CurrencyRewardService {
      * Idempotent: supplying the same {@code clientRequestId} returns {@code IDEMPOTENT_REPLAY}
      * with the current wallet state and the original event id.
      *
+     * <p>A {@code TransactionConflict} cancellation (concurrent transaction on the same wallet) is
+     * retried by {@link TransactionRetry}, re-reading the wallet between attempts. An idempotent
+     * replay or a missing wallet is not a conflict and is handled without retry.
+     *
      * @param playerId the player to credit
      * @param request  amount, reason, and idempotency key
      * @return outcome with status, full player snapshot, and event id
      * @throws WalletNotFoundException if no wallet exists for the given player id
      */
     public WalletEarnResponse grantCurrency(String playerId, WalletEarnRequest request) {
+        return TransactionRetry.runWithConflictRetry(() -> attemptGrantCurrency(playerId, request));
+    }
+
+    /**
+     * Runs a single earn attempt: reads the wallet, builds the event, and executes the transact.
+     *
+     * @param playerId the player to credit
+     * @param request  amount, reason, and idempotency key
+     * @return outcome with status, full player snapshot, and event id
+     */
+    private WalletEarnResponse attemptGrantCurrency(String playerId, WalletEarnRequest request) {
         PlayerWallet wallet = playerStateRepository.getWallet(playerId).join();
         if (wallet == null) {
             throw new WalletNotFoundException(playerId);
@@ -94,7 +114,7 @@ public class CurrencyRewardService {
         logger.debug("Granting currency [playerId={}, amount={}, reason={}, eventId={}]",
                 playerId, request.amount(), request.reason(), rewardEvent.getEventId());
 
-        // Atomic: wallet ADD (index 0) + event PUT with uniqueness guard (index 1)
+        // Atomic wallet ADD then event PUT with uniqueness guard, ordered by WalletTransactItemOrder
         try {
             playerStateRepository.earnCurrencyTransaction(playerId, request.amount(), rewardEvent).join();
         } catch (CompletionException ex) {
@@ -104,7 +124,7 @@ public class CurrencyRewardService {
             throw ex;
         }
 
-        logger.info("Currency granted [status=COMPLETED, playerId={}, amount={}, reason={}, eventId={}]",
+        logger.debug("Currency granted [status=COMPLETED, playerId={}, amount={}, reason={}, eventId={}]",
                 playerId, request.amount(), request.reason(), rewardEvent.getEventId());
         return toEarnResponse(STATUS_COMPLETED, playerId, rewardEvent.getEventId());
     }
@@ -125,13 +145,14 @@ public class CurrencyRewardService {
 
     /**
      * Inspects the transaction cancellation to distinguish between an idempotent replay
-     * (index 1, duplicate event key) and a missing wallet (index 0).
+     * ({@link WalletTransactItemOrder#EVENT}, duplicate event key) and a missing wallet
+     * ({@link WalletTransactItemOrder#WALLET}).
      *
      * @param transactionCanceledException the transaction cancellation from DynamoDB
      * @param playerId    the player whose earn was attempted
      * @param rewardEvent the event that was part of the transaction
      * @return an idempotent replay response when the event key already existed
-     * @throws WalletNotFoundException if the wallet condition check failed (index 0)
+     * @throws WalletNotFoundException if the wallet condition check failed ({@link WalletTransactItemOrder#WALLET})
      * @throws TransactionCanceledException if neither known index matches
      */
     private WalletEarnResponse handleTransactionCancellation(TransactionCanceledException transactionCanceledException,
@@ -139,15 +160,17 @@ public class CurrencyRewardService {
                                                             GameEvent rewardEvent) {
         List<CancellationReason> reasons = transactionCanceledException.cancellationReasons();
 
-        // Index 1: event PUT failed. Duplicate clientRequestId means idempotent replay.
-        if (reasons.size() > 1 && isConditionalCheckFailed(reasons.get(1))) {
-            logger.info("Currency grant idempotent replay detected [status=IDEMPOTENT_REPLAY, playerId={}, eventId={}]",
+        // Event PUT failed. A duplicate clientRequestId means idempotent replay.
+        int eventIndex = WalletTransactItemOrder.EVENT.index();
+        if (reasons.size() > eventIndex && isConditionalCheckFailed(reasons.get(eventIndex))) {
+            logger.debug("Currency grant idempotent replay detected [status=IDEMPOTENT_REPLAY, playerId={}, eventId={}]",
                     playerId, rewardEvent.getEventId());
             return toEarnResponse(STATUS_IDEMPOTENT_REPLAY, playerId, rewardEvent.getEventId());
         }
 
-        // Index 0: wallet ADD failed because the wallet item does not exist.
-        if (!reasons.isEmpty() && isConditionalCheckFailed(reasons.get(0))) {
+        // Wallet ADD failed because the wallet item does not exist.
+        int walletIndex = WalletTransactItemOrder.WALLET.index();
+        if (reasons.size() > walletIndex && isConditionalCheckFailed(reasons.get(walletIndex))) {
             throw new WalletNotFoundException(playerId);
         }
 

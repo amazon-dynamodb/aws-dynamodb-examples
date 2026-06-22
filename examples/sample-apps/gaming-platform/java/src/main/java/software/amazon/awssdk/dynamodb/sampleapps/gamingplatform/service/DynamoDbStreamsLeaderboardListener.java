@@ -1,9 +1,13 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -14,6 +18,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +77,18 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
  *
  * <p>For each {@code PVP_MATCH} event, the listener writes one leaderboard row using
  * {@code playerScore} as the numeric score (no accumulation across multiple matches).
+ *
+ * <p><strong>In-code filtering cost:</strong> the poller reads every record on the stream and keeps
+ * only {@link GameEventType#PVP_MATCH} inserts. {@code GetRecords} is therefore paid on non-matching
+ * records such as purchases or currency grants. For a high non-match volume, Kinesis Data Streams for
+ * DynamoDB supports server-side filtering.
+ *
+ * <p><strong>Restart behavior:</strong> checkpoints are in-memory and are not persisted across
+ * restarts. On restart the poller resumes from {@code dynamodb.streams.iterator-type}. With the
+ * default {@link ShardIteratorType#LATEST}, records inserted during the restart window are not
+ * reprocessed. Set {@code dynamodb.streams.iterator-type=TRIM_HORIZON} to replay from the stream
+ * retention window. Durable checkpoints or KCL are the production answer and are out of scope for
+ * this sample.
  */
 @Component
 public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
@@ -87,10 +104,21 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
     /** Interval for checking whether an async call should be cancelled during shutdown. */
     private static final long ASYNC_JOIN_POLL_INTERVAL_MS = 500;
 
-    /** Maximum records per {@code GetRecords} call. */
+    /**
+     * Maximum records requested per {@code GetRecords} call.
+     *
+     * <p>DynamoDB allows up to 1000 records per call. This sample asks for 100 to bound per-call
+     * latency and memory and to stop one shard from starving the single poller thread. Raise it
+     * toward 1000 for higher throughput.
+     */
     private static final int POLL_LIMIT = 100;
 
-    /** Safety cap on inner {@code GetRecords} loops per shard per tick. */
+    /**
+     * Safety cap on inner {@code GetRecords} loops per shard per poll tick.
+     *
+     * <p>It bounds the records drained from one shard in a single tick to {@link #POLL_LIMIT}
+     * multiplied by 512. This keeps a hot shard from monopolizing the scheduler thread.
+     */
     private static final int MAX_GET_RECORDS_ROUNDS_PER_SHARD = 512;
 
     /**
@@ -98,6 +126,17 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
      * so the shard advances.
      */
     public static final int MAX_PROCESS_RETRIES = 3;
+
+    /**
+     * Upper bound on distinct record keys tracked in {@link #retryCounts}.
+     *
+     * <p>A retry entry is created when a record fails processing and is removed on success or when it
+     * is treated as a poison pill. An entry whose record fails once and never recurs would otherwise
+     * sit forever, so the access-ordered map evicts the least recently used key past this bound. The
+     * value is generous because real backlogs are small. It only guards against unbounded growth on a
+     * long-running instance.
+     */
+    private static final int MAX_RETRY_COUNT_ENTRIES = 1024;
 
     /** Default leaderboard scope written from stream-derived PVP scores. */
     public static final String DEFAULT_SCOPE = "SEASON#default#MODE#ranked";
@@ -123,8 +162,15 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
     /** Per-shard iterator and sequence checkpoints (in-memory only). */
     private final ConcurrentHashMap<String, ShardCheckpoint> checkpoints = new ConcurrentHashMap<>();
 
-    /** Counts failed processing attempts per logical record key for poison-pill handling. */
-    private final ConcurrentHashMap<String, Integer> retryCounts = new ConcurrentHashMap<>();
+    /**
+     * Counts failed processing attempts per logical record key for poison-pill handling.
+     *
+     * <p>Access-ordered and bounded to {@link #MAX_RETRY_COUNT_ENTRIES} so stale entries from
+     * transient failures that never recur are evicted (LRU) instead of accumulating. Wrapped in a
+     * synchronized map because the poller thread mutates it through {@code merge} and {@code remove}.
+     */
+    private final Map<String, Integer> retryCounts = Collections.synchronizedMap(
+            new BoundedLruMap<>(MAX_RETRY_COUNT_ENTRIES));
 
     /** Single-thread scheduler that runs {@link #pollLoop}. */
     private ScheduledExecutorService scheduler;
@@ -278,6 +324,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
             }
 
             List<Shard> shards = discoverShards(streamArn);
+            pruneStaleCheckpoints(shards);
             for (Shard shard : shards) {
                 if (!running.get()) break;
                 pollShard(streamArn, shard);
@@ -326,16 +373,31 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
     }
 
     /**
-     * Lists open shards for the stream.
+     * Lists open shards for the stream, paging through every {@code DescribeStream} response.
+     *
+     * <p>A single {@code DescribeStream} response returns at most 100 shards and sets
+     * {@code lastEvaluatedShardId} when more exist. The loop continues with
+     * {@code exclusiveStartShardId} until that marker is null or blank, so shards beyond the first
+     * page are not dropped on a table that has been resharded many times. The {@code running} flag is
+     * checked between pages so shutdown still exits promptly.
      *
      * @param streamArn stream to describe
-     * @return shard list, possibly empty on error
+     * @return shard list across all pages, possibly empty on error
      */
     private List<Shard> discoverShards(String streamArn) {
         try {
-            var response = joinIfRunning(streamsClient.describeStream(
-                    DescribeStreamRequest.builder().streamArn(streamArn).build()));
-            return response.streamDescription().shards();
+            List<Shard> shards = new ArrayList<>();
+            String exclusiveStartShardId = null;
+            do {
+                var response = joinIfRunning(streamsClient.describeStream(
+                        DescribeStreamRequest.builder()
+                                .streamArn(streamArn)
+                                .exclusiveStartShardId(exclusiveStartShardId)
+                                .build()));
+                shards.addAll(response.streamDescription().shards());
+                exclusiveStartShardId = response.streamDescription().lastEvaluatedShardId();
+            } while (exclusiveStartShardId != null && !exclusiveStartShardId.isBlank() && running.get());
+            return shards;
         } catch (CancellationException e) {
             return List.of();
         } catch (Exception e) {
@@ -345,6 +407,22 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
             }
             return List.of();
         }
+    }
+
+    /**
+     * Drops in-memory checkpoints for shards that are no longer reported by shard discovery.
+     *
+     * <p>A closed shard eventually disappears from {@code DescribeStream}. Without pruning, its
+     * checkpoint entry would live forever, so a long-running instance would accumulate dead state.
+     * When discovery returns no shards, all checkpoints are cleared.
+     *
+     * @param shards the shards returned by the latest {@link #discoverShards} call
+     */
+    private void pruneStaleCheckpoints(List<Shard> shards) {
+        Set<String> activeShardIds = shards.stream()
+                .map(Shard::shardId)
+                .collect(Collectors.toSet());
+        checkpoints.keySet().retainAll(activeShardIds);
     }
 
     /**
@@ -522,6 +600,44 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
 
         /** Last applied sequence for {@link ShardIteratorType#AFTER_SEQUENCE_NUMBER} renewals. */
         volatile String lastSequenceNumber;
+    }
+
+    /**
+     * Access-ordered {@link LinkedHashMap} that evicts the least recently used entry once it grows
+     * past {@code maxEntries}. Used to bound {@link #retryCounts} so transient poison-pill tracking
+     * cannot grow without limit on a long-running poller.
+     *
+     * @param <K> key type
+     * @param <V> value type
+     */
+    private static final class BoundedLruMap<K, V> extends LinkedHashMap<K, V> {
+
+        /** Serialization id required because {@link LinkedHashMap} is {@link java.io.Serializable}. */
+        private static final long serialVersionUID = 1L;
+
+        /** Maximum number of entries retained before the eldest is evicted. */
+        private final int maxEntries;
+
+        /**
+         * Creates an access-ordered map bounded to {@code maxEntries}.
+         *
+         * @param maxEntries maximum entries retained before eviction
+         */
+        BoundedLruMap(int maxEntries) {
+            super(16, 0.75f, true);
+            this.maxEntries = maxEntries;
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * @param eldest the least recently accessed entry
+         * @return {@code true} when the map has grown past {@code maxEntries}
+         */
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+            return size() > maxEntries;
+        }
     }
 
     /**

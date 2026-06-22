@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
@@ -16,6 +17,7 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BillingMode;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.GlobalSecondaryIndex;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
@@ -23,6 +25,7 @@ import software.amazon.awssdk.services.dynamodb.model.Projection;
 import software.amazon.awssdk.services.dynamodb.model.ProjectionType;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.ResourceInUseException;
+import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 import software.amazon.awssdk.services.dynamodb.model.StreamSpecification;
 import software.amazon.awssdk.services.dynamodb.model.StreamViewType;
@@ -30,11 +33,20 @@ import software.amazon.awssdk.services.dynamodb.model.TimeToLiveSpecification;
 import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
 
 /**
- * Creates all three DynamoDB tables, enables TTL and Streams, and seeds sample data at startup.
+ * Creates DynamoDB tables, enables TTL, and seeds sample data at startup, gated by the
+ * {@code dynamodb.create-resources} flag.
  *
- * <p>Table creation is idempotent. {@link ResourceInUseException} is caught and logged when
- * the table already exists. Seed inserts use {@code attribute_not_exists(PK)} to avoid
+ * <p>When {@code dynamodb.create-resources} is {@code true} (the local development default), the
+ * {@link #initializeDynamoDbTables(DynamoDbAsyncClient)} runner creates all three tables, enables TTL,
+ * and seeds demo data. Table creation is idempotent. {@link ResourceInUseException} is caught and
+ * logged when the table already exists, and seed inserts use {@code attribute_not_exists(PK)} to avoid
  * overwriting existing data on restarts.
+ *
+ * <p>When the flag is {@code false} or absent (the production default), the
+ * {@link #verifyDynamoDbTables(DynamoDbAsyncClient)} runner only checks each table exists and fails
+ * fast with an {@link IllegalStateException} if one is missing. It never creates tables or seeds data,
+ * so production credentials do not need control-plane permissions. Schema management belongs in
+ * infrastructure as code there.
  */
 @Configuration
 public class DynamoDbTableInitializer {
@@ -54,12 +66,14 @@ public class DynamoDbTableInitializer {
     private String leaderboardTableName;
 
     /**
-     * Runs table initialization on application startup.
+     * Runs table creation, TTL enablement, and demo seeding on startup when
+     * {@code dynamodb.create-resources} is {@code true}.
      *
      * @param dynamoDbAsyncClient low-level client for control-plane calls
      * @return runner executed after the context starts
      */
     @Bean
+    @ConditionalOnProperty(name = "dynamodb.create-resources", havingValue = "true")
     public CommandLineRunner initializeDynamoDbTables(DynamoDbAsyncClient dynamoDbAsyncClient) {
         return args -> {
             createPlayerStateTable(dynamoDbAsyncClient);
@@ -68,6 +82,44 @@ public class DynamoDbTableInitializer {
             createLeaderboardTable(dynamoDbAsyncClient);
             seedPlayerData(dynamoDbAsyncClient);
         };
+    }
+
+    /**
+     * Verifies that all three tables exist on startup when {@code dynamodb.create-resources} is
+     * {@code false} or absent. Never creates tables or seeds data, so production startup does not need
+     * control-plane permissions.
+     *
+     * @param dynamoDbAsyncClient low-level client for {@code DescribeTable} calls
+     * @return runner executed after the context starts
+     */
+    @Bean
+    @ConditionalOnProperty(name = "dynamodb.create-resources", havingValue = "false", matchIfMissing = true)
+    public CommandLineRunner verifyDynamoDbTables(DynamoDbAsyncClient dynamoDbAsyncClient) {
+        return args -> {
+            verifyTableExists(dynamoDbAsyncClient, playerStateTableName);
+            verifyTableExists(dynamoDbAsyncClient, gameEventsTableName);
+            verifyTableExists(dynamoDbAsyncClient, leaderboardTableName);
+        };
+    }
+
+    /**
+     * Confirms a single table exists, failing fast with a clear error when it does not.
+     *
+     * @param client    DynamoDB client
+     * @param tableName table to describe
+     * @throws IllegalStateException when the table is missing or the describe call fails
+     */
+    private void verifyTableExists(DynamoDbAsyncClient client, String tableName) {
+        try {
+            client.describeTable(DescribeTableRequest.builder().tableName(tableName).build()).join();
+            logger.info("Verified DynamoDB table exists [tableName={}]", tableName);
+        } catch (Exception e) {
+            if (e.getCause() instanceof ResourceNotFoundException) {
+                throw new IllegalStateException("Required DynamoDB table not found: " + tableName
+                        + ". Provision it out of band, or set dynamodb.create-resources=true for local development", e);
+            }
+            throw new IllegalStateException("Failed to verify DynamoDB table " + tableName, e);
+        }
     }
 
     /**

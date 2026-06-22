@@ -26,6 +26,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.GameEventDt
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.RecordEventRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.RecordEventResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.PlayerNotFoundException;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.InvalidPaginationTokenException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.GameEventMapper;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerProfile;
@@ -33,6 +34,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.Game
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.GameEventRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.GameEventService;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.PaginationHelper;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
@@ -161,6 +163,23 @@ class GameEventServiceTest {
         assertThat(response.events()).isEmpty();
         assertThat(response.nextToken()).isNull();
         verify(gameEventRepository).queryEventsByPlayer(PLAYER_ID, 20, true, null);
+    }
+
+    @Test
+    void queryEventsByPlayer_whenTokenBoundToDifferentPlayer_shouldThrowAndNotQuery() {
+        PlayerProfile profile = buildProfile();
+        when(playerStateRepository.getPlayer(PLAYER_ID))
+                .thenReturn(CompletableFuture.completedFuture(profile));
+
+        Map<String, AttributeValue> foreignKey = Map.of(
+                "PK", AttributeValue.fromS(GameEvent.PK_PREFIX + "other-player"),
+                "SK", AttributeValue.fromS(GameEvent.SK_PREFIX + "2026-01-02T00:00:00Z#evt-x"));
+        String foreignToken = PaginationHelper.encodePaginationToken(foreignKey);
+
+        assertThatThrownBy(() -> gameEventService.getEvents(PLAYER_ID, 20, null, foreignToken))
+                .isInstanceOf(InvalidPaginationTokenException.class);
+
+        verifyNoInteractions(gameEventRepository);
     }
 
     /**

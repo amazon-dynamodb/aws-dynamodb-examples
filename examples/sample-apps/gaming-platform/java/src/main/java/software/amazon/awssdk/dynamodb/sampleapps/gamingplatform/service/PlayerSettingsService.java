@@ -102,7 +102,7 @@ public class PlayerSettingsService {
 
         try {
             playerStateRepository.updateSettings(current).join();
-            logger.info("Player settings updated [playerId={}]", playerId);
+            logger.debug("Player settings updated [playerId={}]", playerId);
             var snapshot = playerSnapshotService.load(playerId);
             return new UpdatePlayerSettingsResponse(
                     snapshot.playerId(),

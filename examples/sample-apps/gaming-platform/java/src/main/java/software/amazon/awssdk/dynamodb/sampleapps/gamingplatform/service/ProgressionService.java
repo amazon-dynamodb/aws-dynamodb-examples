@@ -104,7 +104,7 @@ public class ProgressionService {
                     request.expectedVersion()
             ).join();
 
-            logger.info("Progression updated [playerId={}, newLevel={}, profileVersion={}]",
+            logger.debug("Progression updated [playerId={}, newLevel={}, profileVersion={}]",
                     playerId, newLevel, updated.getVersion());
 
             if (leveledUp) {
@@ -112,7 +112,7 @@ public class ProgressionService {
                 try {
                     currencyRewardService.grantCurrency(
                             playerId, LEVEL_UP_BONUS, CurrencyEarnReason.LEVEL_UP_BONUS, bonusRequestId);
-                    logger.info("Level-up bonus granted [playerId={}, newLevel={}, bonusAmount={}]",
+                    logger.debug("Level-up bonus granted [playerId={}, newLevel={}, bonusAmount={}]",
                             playerId, newLevel, LEVEL_UP_BONUS);
                 } catch (Exception ex) {
                     // Best-effort level-up bonus. Progression write already committed, so log only.

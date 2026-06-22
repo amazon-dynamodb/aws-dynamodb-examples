@@ -89,7 +89,7 @@ public class GameEventService {
 
         gameEventRepository.appendEvent(event).join();
 
-        logger.info("Game event recorded [eventId={}, playerId={}, eventType={}]",
+        logger.debug("Game event recorded [eventId={}, playerId={}, eventType={}]",
                 event.getEventId(), playerId, request.eventType());
 
         return gameEventMapper.toRecordEventResponse(event);
@@ -106,13 +106,17 @@ public class GameEventService {
      * {@code ExclusiveStartKey}, and delegates to the repository. The resulting
      * {@code LastEvaluatedKey} is re-encoded into the response {@code nextToken} for the caller.
      *
+     * <p>The decoded token is bound to {@code USER#<playerId>}. A token minted for a different
+     * player is rejected as {@link InvalidPaginationTokenException} (HTTP 400) before any DynamoDB
+     * call, rather than letting DynamoDB reject the mismatched start key as a server error.
+     *
      * @param playerId          the player whose events to query
      * @param limit             maximum number of events per page (clamped to [{@value MIN_PAGE_SIZE}, {@value MAX_PAGE_SIZE}])
      * @param scanIndexForward  optional. {@code true} for ascending Query order per DynamoDB
      * @param nextToken         opaque pagination token, or {@code null} or blank for the first page
      * @return a page of {@code events} with an optional {@code nextToken}
      * @throws PlayerNotFoundException        if no profile exists for the given player id
-     * @throws InvalidPaginationTokenException if {@code nextToken} is malformed
+     * @throws InvalidPaginationTokenException if {@code nextToken} is malformed or bound to a different player
      */
     public EventsPageResponse getEvents(String playerId, int limit, Boolean scanIndexForward, String nextToken) {
         var profile = playerStateRepository.getPlayer(playerId).join();
@@ -122,7 +126,9 @@ public class GameEventService {
 
         int clampedLimit = Math.max(MIN_PAGE_SIZE, Math.min(limit, MAX_PAGE_SIZE));
         boolean forward = effectiveScanIndexForward(scanIndexForward);
-        Map<String, AttributeValue> exclusiveStartKey = PaginationHelper.decodePaginationToken(nextToken);
+        String expectedPartitionKey = GameEvent.PK_PREFIX + playerId;
+        Map<String, AttributeValue> exclusiveStartKey =
+                PaginationHelper.decodePaginationToken(nextToken, expectedPartitionKey);
 
         logger.debug("Querying game event history [playerId={}, limit={}, scanIndexForward={}, hasNextToken={}]",
                 playerId, clampedLimit, forward, exclusiveStartKey != null);

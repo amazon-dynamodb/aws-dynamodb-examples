@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -20,12 +21,16 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.Lead
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.DynamoDbStreamsLeaderboardListener;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.DescribeStreamRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeStreamResponse;
 import software.amazon.awssdk.services.dynamodb.model.GetRecordsRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetRecordsResponse;
 import software.amazon.awssdk.services.dynamodb.model.GetShardIteratorRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetShardIteratorResponse;
 import software.amazon.awssdk.services.dynamodb.model.OperationType;
 import software.amazon.awssdk.services.dynamodb.model.Record;
+import software.amazon.awssdk.services.dynamodb.model.Shard;
+import software.amazon.awssdk.services.dynamodb.model.StreamDescription;
 import software.amazon.awssdk.services.dynamodb.model.StreamRecord;
 import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException;
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClient;
@@ -34,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -265,6 +271,144 @@ class DynamoDbStreamsLeaderboardListenerTest {
                 .hasRootCauseMessage("throttle");
     }
 
+    @Test
+    void pollLimit_whenConfigured_shouldStayWithinGetRecordsMaximum() {
+        int pollLimit = (Integer) ReflectionTestUtils.getField(
+                DynamoDbStreamsLeaderboardListener.class, "POLL_LIMIT");
+        assertThat(pollLimit).isPositive().isLessThanOrEqualTo(1000);
+    }
+
+    @Test
+    void maxGetRecordsRoundsPerShard_whenConfigured_shouldBePositive() {
+        int rounds = (Integer) ReflectionTestUtils.getField(
+                DynamoDbStreamsLeaderboardListener.class, "MAX_GET_RECORDS_ROUNDS_PER_SHARD");
+        assertThat(rounds).isPositive();
+    }
+
+    @Test
+    void discoverShards_whenSinglePage_shouldReturnAllShardsInOneCall() {
+        DescribeStreamResponse page = describeStreamResponse(List.of(shard("shard-A")), null);
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(page));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        markRunning(listener);
+
+        List<Shard> shards = ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        assertThat(shards).extracting(Shard::shardId).containsExactly("shard-A");
+        verify(streamsClient, times(1)).describeStream(any(DescribeStreamRequest.class));
+    }
+
+    @Test
+    void discoverShards_whenMultiplePages_shouldPageWithExclusiveStartShardId() {
+        DescribeStreamResponse page1 = describeStreamResponse(List.of(shard("shard-A")), "shard-A");
+        DescribeStreamResponse page2 = describeStreamResponse(List.of(shard("shard-B")), null);
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(page1))
+                .thenReturn(CompletableFuture.completedFuture(page2));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        markRunning(listener);
+
+        List<Shard> shards = ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        assertThat(shards).extracting(Shard::shardId).containsExactly("shard-A", "shard-B");
+
+        ArgumentCaptor<DescribeStreamRequest> captor = ArgumentCaptor.forClass(DescribeStreamRequest.class);
+        verify(streamsClient, times(2)).describeStream(captor.capture());
+        assertThat(captor.getAllValues().get(0).exclusiveStartShardId()).isNull();
+        assertThat(captor.getAllValues().get(1).exclusiveStartShardId()).isEqualTo("shard-A");
+    }
+
+    @Test
+    void discoverShards_whenStreamEmpty_shouldReturnEmptyListInOneCall() {
+        DescribeStreamResponse page = describeStreamResponse(List.of(), null);
+        when(streamsClient.describeStream(any(DescribeStreamRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(page));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        markRunning(listener);
+
+        List<Shard> shards = ReflectionTestUtils.invokeMethod(listener, "discoverShards", STREAM_ARN);
+
+        assertThat(shards).isEmpty();
+        verify(streamsClient, times(1)).describeStream(any(DescribeStreamRequest.class));
+    }
+
+    @Test
+    void pruneStaleCheckpoints_whenShardClosed_shouldDropOnlyMissingCheckpoint() throws Exception {
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Map<String, Object> checkpoints = checkpointsOf(listener);
+        checkpoints.put("shard-A", newShardCheckpoint());
+        checkpoints.put("shard-B", newShardCheckpoint());
+        checkpoints.put("shard-C", newShardCheckpoint());
+
+        ReflectionTestUtils.invokeMethod(listener, "pruneStaleCheckpoints",
+                List.of(shard("shard-A"), shard("shard-C")));
+
+        assertThat(checkpoints.keySet()).containsExactlyInAnyOrder("shard-A", "shard-C");
+    }
+
+    @Test
+    void pruneStaleCheckpoints_whenNoShards_shouldClearAllCheckpoints() throws Exception {
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Map<String, Object> checkpoints = checkpointsOf(listener);
+        checkpoints.put("shard-A", newShardCheckpoint());
+        checkpoints.put("shard-B", newShardCheckpoint());
+
+        ReflectionTestUtils.invokeMethod(listener, "pruneStaleCheckpoints", List.of());
+
+        assertThat(checkpoints).isEmpty();
+    }
+
+    @Test
+    void writeLeaderboardEntryWithRetry_whenManyDistinctFailures_shouldBoundRetryCountsToCapacity() {
+        when(leaderboardRepository.putLeaderboardEntry(any()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
+
+        int capacity = (Integer) ReflectionTestUtils.getField(
+                DynamoDbStreamsLeaderboardListener.class, "MAX_RETRY_COUNT_ENTRIES");
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+
+        for (int i = 0; i <= capacity; i++) {
+            Record record = buildPvpMatchRecord("player-" + i, "Name", 100);
+            try {
+                listener.processStreamRecord(record);
+            } catch (RuntimeException ignored) {
+                // first failure rethrows below the poison-pill limit, which is expected here
+            }
+        }
+
+        Map<String, Integer> retryCounts = retryCountsOf(listener);
+        assertThat(retryCounts).hasSize(capacity);
+        assertThat(retryCounts).doesNotContainKey("player-0#seq-001");
+    }
+
+    @Test
+    void writeLeaderboardEntryWithRetry_whenRecordLaterSucceeds_shouldRemoveRetryEntry() {
+        when(leaderboardRepository.putLeaderboardEntry(any()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Record record = buildPvpMatchRecord("player-x", "Name", 100);
+
+        try {
+            listener.processStreamRecord(record);
+        } catch (RuntimeException ignored) {
+            // first failure rethrows below the poison-pill limit
+        }
+
+        Map<String, Integer> retryCounts = retryCountsOf(listener);
+        assertThat(retryCounts).containsKey("player-x#seq-001");
+
+        listener.processStreamRecord(record);
+
+        assertThat(retryCounts).doesNotContainKey("player-x#seq-001");
+    }
+
     /**
      * Builds a minimal INSERT stream {@link Record} for a PVP match with score and names populated.
      *
@@ -302,5 +446,63 @@ class DynamoDbStreamsLeaderboardListenerTest {
         Constructor<?> ctor = inner.getDeclaredConstructor();
         ctor.setAccessible(true);
         return ctor.newInstance();
+    }
+
+    /**
+     * Builds a {@link DescribeStreamResponse} with the given shards and optional pagination marker.
+     *
+     * @param shards               shards to return on this page
+     * @param lastEvaluatedShardId pagination marker, or {@code null} for the final page
+     * @return populated describe-stream response
+     */
+    private static DescribeStreamResponse describeStreamResponse(List<Shard> shards, String lastEvaluatedShardId) {
+        return DescribeStreamResponse.builder()
+                .streamDescription(StreamDescription.builder()
+                        .shards(shards)
+                        .lastEvaluatedShardId(lastEvaluatedShardId)
+                        .build())
+                .build();
+    }
+
+    /**
+     * Builds a {@link Shard} carrying only the shard id.
+     *
+     * @param shardId shard identifier
+     * @return shard with the given id
+     */
+    private static Shard shard(String shardId) {
+        return Shard.builder().shardId(shardId).build();
+    }
+
+    /**
+     * Flips the listener's {@code running} flag so shard discovery pagination proceeds across pages.
+     *
+     * @param listener the listener under test
+     */
+    private static void markRunning(DynamoDbStreamsLeaderboardListener listener) {
+        AtomicBoolean running = (AtomicBoolean) ReflectionTestUtils.getField(listener, "running");
+        running.set(true);
+    }
+
+    /**
+     * Returns the listener's in-memory checkpoint map for direct seeding and assertions.
+     *
+     * @param listener the listener under test
+     * @return the mutable checkpoints map
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> checkpointsOf(DynamoDbStreamsLeaderboardListener listener) {
+        return (Map<String, Object>) ReflectionTestUtils.getField(listener, "checkpoints");
+    }
+
+    /**
+     * Returns the listener's bounded retry-count map for assertions.
+     *
+     * @param listener the listener under test
+     * @return the retry-count map
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Integer> retryCountsOf(DynamoDbStreamsLeaderboardListener listener) {
+        return (Map<String, Integer>) ReflectionTestUtils.getField(listener, "retryCounts");
     }
 }

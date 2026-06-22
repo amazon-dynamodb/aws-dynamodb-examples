@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.DynamoDbEndpointUtils;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClient;
@@ -18,6 +19,9 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClie
  *
  * <p>The Streams client uses a separate service endpoint from the main DynamoDB client.
  * For local endpoints the same fake credentials approach is used.
+ *
+ * <p>The client shares the {@code ClientOverrideConfiguration} bean built by the main config, so the
+ * poller carries the same retry strategy and call timeouts as the main client.
  */
 @Configuration
 public class DynamoDbStreamsConfig {
@@ -35,15 +39,21 @@ public class DynamoDbStreamsConfig {
     /**
      * Creates the DynamoDB Streams async client.
      *
-     * <p>For local endpoints, uses endpoint override and fake credentials.
-     * For AWS endpoints, relies on default credential chain and endpoint resolution.
+     * <p>For local endpoints, uses endpoint override and fake credentials. For AWS endpoints, relies
+     * on the default credential chain and endpoint resolution.
      *
+     * <p>Applies the shared {@code overrideConfiguration} so the streams client carries the same retry
+     * strategy and call timeouts as the main client. This keeps the poller consistent with the main
+     * client under throttling instead of falling back to SDK default retries.
+     *
+     * @param overrideConfiguration the shared override from {@code DynamoDbConfig.dynamoDbClientOverrideConfiguration}
      * @return streams client bean for the leaderboard listener
      */
     @Bean(destroyMethod = "close")
-    public DynamoDbStreamsAsyncClient dynamoDbStreamsAsyncClient() {
+    public DynamoDbStreamsAsyncClient dynamoDbStreamsAsyncClient(ClientOverrideConfiguration overrideConfiguration) {
         var builder = DynamoDbStreamsAsyncClient.builder()
-                .region(Region.of(region));
+                .region(Region.of(region))
+                .overrideConfiguration(overrideConfiguration);
 
         if (DynamoDbEndpointUtils.isLocalEndpoint(endpoint)) {
             builder.endpointOverride(URI.create(endpoint));
@@ -52,7 +62,7 @@ public class DynamoDbStreamsConfig {
         }
 
         DynamoDbStreamsAsyncClient client = builder.build();
-        logger.info("DynamoDB Streams async client initialized [region={}, endpoint={}]",
+        logger.debug("DynamoDB Streams async client initialized [region={}, endpoint={}]",
                 region, endpoint);
         return client;
     }

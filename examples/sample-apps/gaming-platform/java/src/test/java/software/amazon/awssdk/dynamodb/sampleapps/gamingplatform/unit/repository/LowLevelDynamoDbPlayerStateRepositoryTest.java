@@ -21,6 +21,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerProfile;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerWallet;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.LowLevelDynamoDbPlayerStateRepository;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.WalletTransactItemOrder;
 import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -156,12 +157,40 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
                 ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
         verify(client).transactWriteItems(captor.capture());
         assertThat(captor.getValue().transactItems()).hasSize(2);
-        Update update = captor.getValue().transactItems().getFirst().update();
+        Update update = captor.getValue().transactItems().get(WalletTransactItemOrder.WALLET.index()).update();
         assertThat(update.tableName()).isEqualTo("PlayerState");
         assertThat(update.conditionExpression()).contains("currencyBalance").contains("version");
-        assertThat(captor.getValue().transactItems().get(1).put().tableName()).isEqualTo("GameEventsTable");
-        assertThat(captor.getValue().transactItems().get(1).put().conditionExpression())
-                .contains("attribute_not_exists");
+        var eventPut = captor.getValue().transactItems().get(WalletTransactItemOrder.EVENT.index()).put();
+        assertThat(eventPut.tableName()).isEqualTo("GameEventsTable");
+        assertThat(eventPut.conditionExpression()).contains("attribute_not_exists");
+    }
+
+    @Test
+    void earnCurrencyTransaction_whenValidRequest_shouldOrderWalletThenEvent() {
+        when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        LowLevelDynamoDbPlayerStateRepository repository =
+                new LowLevelDynamoDbPlayerStateRepository(client, "PlayerState", "GameEventsTable");
+
+        GameEvent event = new GameEvent();
+        event.setPartitionKey(GameEvent.PK_PREFIX + "p1");
+        event.setSortKey(GameEvent.SK_PREFIX + "2026-01-01T00:00:00Z#evt-earn");
+        event.setEventId("evt-earn");
+        event.setPlayerId("p1");
+
+        repository.earnCurrencyTransaction("p1", 300L, event).join();
+
+        ArgumentCaptor<TransactWriteItemsRequest> captor =
+                ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(client).transactWriteItems(captor.capture());
+        assertThat(captor.getValue().transactItems()).hasSize(2);
+        Update walletAdd = captor.getValue().transactItems().get(WalletTransactItemOrder.WALLET.index()).update();
+        assertThat(walletAdd.tableName()).isEqualTo("PlayerState");
+        assertThat(walletAdd.updateExpression()).containsIgnoringCase("ADD");
+        var eventPut = captor.getValue().transactItems().get(WalletTransactItemOrder.EVENT.index()).put();
+        assertThat(eventPut.tableName()).isEqualTo("GameEventsTable");
+        assertThat(eventPut.conditionExpression()).contains("attribute_not_exists");
     }
 
     @Test

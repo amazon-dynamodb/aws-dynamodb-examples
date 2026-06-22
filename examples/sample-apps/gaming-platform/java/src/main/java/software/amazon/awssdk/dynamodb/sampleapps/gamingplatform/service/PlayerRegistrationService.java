@@ -16,6 +16,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerPro
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerSettings;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerWallet;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.TransactionRetry;
 import software.amazon.awssdk.enhanced.dynamodb.extensions.VersionedRecordExtension;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
@@ -75,7 +76,10 @@ public class PlayerRegistrationService {
      * @implNote Uses {@code TransactWriteItems} to create PROFILE, SETTINGS, and WALLET items
      *           atomically. After a successful create, reloads the full snapshot so the response
      *           reflects persisted attributes (for example {@code version} written by the
-     *           enhanced client's {@link VersionedRecordExtension}).
+     *           enhanced client's {@link VersionedRecordExtension}). A {@code TransactionConflict}
+     *           cancellation (concurrent transaction on the same partition) is retried by
+     *           {@link TransactionRetry}; a conditional failure (items already exist) is handled as an
+     *           idempotent replay or a genuine conflict and is not retried.
      *
      * @param request the registration request
      * @return response containing the player id, full snapshot, and whether the account is new
@@ -84,18 +88,32 @@ public class PlayerRegistrationService {
      *                                    or on idempotent replay (partial or legacy data)
      */
     public RegisterPlayerResponse registerPlayer(RegisterPlayerRequest request) {
+        return TransactionRetry.runWithConflictRetry(() -> attemptRegister(request));
+    }
+
+    /**
+     * Runs a single registration attempt: builds the default items and executes the create transact.
+     *
+     * @param request the registration request
+     * @return response containing the player id, full snapshot, and whether the account is new
+     */
+    private RegisterPlayerResponse attemptRegister(RegisterPlayerRequest request) {
         PlayerProfile profile = playerMapper.toProfile(request);
         PlayerSettings defaultSettings = settingsMapper.defaultSettings(profile.getPlayerId());
         PlayerWallet defaultWallet = walletMapper.defaultWallet(profile.getPlayerId());
 
         try {
             playerStateRepository.createPlayerWithSettingsAndWallet(profile, defaultSettings, defaultWallet).join();
-            logger.info("Player registered [status=CREATED, playerId={}, platform={}]",
+            logger.debug("Player registered [status=CREATED, playerId={}, platform={}]",
                     profile.getPlayerId(), request.platform());
             return toRegisterResponse(profile.getPlayerId(), true);
         } catch (CompletionException ex) {
             // TransactionCanceledException means at least one conditional put failed.
-            if (ex.getCause() instanceof TransactionCanceledException) {
+            if (ex.getCause() instanceof TransactionCanceledException tce) {
+                // A serializable conflict is transient: rethrow so the retry wrapper re-attempts.
+                if (TransactionRetry.isTransactionConflict(tce)) {
+                    throw tce;
+                }
                 return handleExistingPlayer(profile.getPlayerId(), request);
             }
             throw ex;
@@ -119,7 +137,7 @@ public class PlayerRegistrationService {
         if (existing != null
                 && existing.getPlatform().equals(request.platform())
                 && existing.getPlatformUserId().equals(request.platformUserId())) {
-            logger.info("Player registration idempotent replay [status=IDEMPOTENT_REPLAY, playerId={}]",
+            logger.debug("Player registration idempotent replay [status=IDEMPOTENT_REPLAY, playerId={}]",
                     playerId);
             return toRegisterResponse(playerId, false);
         }

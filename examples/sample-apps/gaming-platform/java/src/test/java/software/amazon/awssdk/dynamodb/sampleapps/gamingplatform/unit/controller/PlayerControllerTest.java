@@ -20,6 +20,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.PlayerP
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.PlayerRegistrationService;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -142,6 +143,26 @@ class PlayerControllerTest {
         mockMvc.perform(get("/api/v1/players/unknown/profile"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
+    }
+
+    @Test
+    void getProfile_whenPlayerIdTooLong_shouldReturn400AndNotCallService() throws Exception {
+        String tooLong = "a".repeat(65);
+
+        mockMvc.perform(get("/api/v1/players/{playerId}/profile", tooLong))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+
+        verifyNoInteractions(profileService);
+    }
+
+    @Test
+    void getProfile_whenPlayerIdHasIllegalCharacter_shouldReturn400AndNotCallService() throws Exception {
+        mockMvc.perform(get("/api/v1/players/{playerId}/profile", "bad!id"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+
+        verifyNoInteractions(profileService);
     }
 
     /**

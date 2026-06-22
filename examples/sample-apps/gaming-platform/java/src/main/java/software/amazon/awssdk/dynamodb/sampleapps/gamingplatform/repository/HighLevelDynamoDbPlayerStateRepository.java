@@ -242,7 +242,8 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
                         .conditionExpression(eventAbsent)
                         .build();
 
-        // Wallet debit (index 0) + event put (index 1) as a single ACID transaction
+        // Items are added in WalletTransactItemOrder: WALLET (index 0) then EVENT (index 1), so the
+        // cancellation-reason positions line up with PurchaseService.
         TransactWriteItemsEnhancedRequest txRequest = TransactWriteItemsEnhancedRequest.builder()
                 .addUpdateItem(walletTable, updateWallet)
                 .addPutItem(gameEventsTable, putEvent)
@@ -294,10 +295,14 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
                 .conditionExpression("attribute_not_exists(PK)")
                 .build();
 
+        TransactWriteItem[] transactItems = new TransactWriteItem[WalletTransactItemOrder.values().length];
+        transactItems[WalletTransactItemOrder.WALLET.index()] =
+                TransactWriteItem.builder().update(addCurrency).build();
+        transactItems[WalletTransactItemOrder.EVENT.index()] =
+                TransactWriteItem.builder().put(putEvent).build();
+
         TransactWriteItemsRequest txRequest = TransactWriteItemsRequest.builder()
-                .transactItems(
-                        TransactWriteItem.builder().update(addCurrency).build(),
-                        TransactWriteItem.builder().put(putEvent).build())
+                .transactItems(transactItems)
                 .build();
 
         return dynamoDbClient.transactWriteItems(txRequest)

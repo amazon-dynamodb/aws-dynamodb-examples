@@ -3,15 +3,24 @@ package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception;
 import java.time.Instant;
 import java.util.stream.Collectors;
 
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.ErrorResponse;
+import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
+import software.amazon.awssdk.services.dynamodb.model.InternalServerErrorException;
+import software.amazon.awssdk.services.dynamodb.model.ProvisionedThroughputExceededException;
+import software.amazon.awssdk.services.dynamodb.model.RequestLimitExceededException;
+import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 
 /**
  * Translates domain exceptions into consistent HTTP error responses.
@@ -20,6 +29,13 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.ErrorRespon
 public class GlobalExceptionHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /**
+     * Conservative {@code Retry-After} hint in seconds returned with throttling and transient
+     * DynamoDB faults. The value is short because the SDK already retried internally. It only tells
+     * a well-behaved client not to hammer the API immediately.
+     */
+    private static final String RETRY_AFTER_SECONDS = "1";
 
     /**
      * Maps {@link InvalidPaginationTokenException} to HTTP 400 with code {@code INVALID_PAGINATION_TOKEN}.
@@ -42,7 +58,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(PlayerNotFoundException.class)
     public ResponseEntity<ErrorResponse> handlePlayerNotFound(PlayerNotFoundException ex) {
-        logger.warn("Player profile not found [errorCode=PLAYER_NOT_FOUND, detail={}]",
+        logger.debug("Player profile not found [errorCode=PLAYER_NOT_FOUND, detail={}]",
                 ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorResponse("PLAYER_NOT_FOUND", ex.getMessage(), Instant.now()));
@@ -56,7 +72,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(WalletNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleWalletNotFound(WalletNotFoundException ex) {
-        logger.warn("Player wallet not found [errorCode=WALLET_NOT_FOUND, detail={}]",
+        logger.debug("Player wallet not found [errorCode=WALLET_NOT_FOUND, detail={}]",
                 ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorResponse("WALLET_NOT_FOUND", ex.getMessage(), Instant.now()));
@@ -125,6 +141,60 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Maps Jakarta Bean Validation failures on path variables and query parameters of a
+     * {@code @Validated} controller to HTTP 400 {@code VALIDATION_ERROR}.
+     *
+     * <p>Spring raises {@link ConstraintViolationException} from method-level validation, for example
+     * when a {@code playerId}, {@code scope} or {@code platform} path variable exceeds the allowed
+     * length or does not match the allowed character pattern. Bounding these values stops an over-long
+     * or malformed id from reaching DynamoDB as a partition or index key.
+     *
+     * @param ex method-level constraint violations carrying the offending property paths
+     * @return JSON error envelope listing the invalid parameters
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException ex) {
+        String detail = ex.getConstraintViolations().stream()
+                .map(v -> leafPropertyName(v.getPropertyPath()) + ": " + v.getMessage())
+                .collect(Collectors.joining(", "));
+        if (detail.isBlank()) {
+            detail = "Validation failed";
+        }
+        logger.warn("Path or query parameter constraint violation [errorCode=VALIDATION_ERROR, detail={}]",
+                detail);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("VALIDATION_ERROR", detail, Instant.now()));
+    }
+
+    /**
+     * Maps Spring MVC native method validation failures to HTTP 400 {@code VALIDATION_ERROR}.
+     *
+     * <p>When the {@code MethodValidationPostProcessor} AOP proxy is not present, for example in a
+     * standalone {@code MockMvc} setup, Spring MVC validates method parameters itself and raises
+     * {@link HandlerMethodValidationException} instead of {@link ConstraintViolationException}. This
+     * handler maps it to the same envelope so the response is identical regardless of which validation
+     * path runs.
+     *
+     * @param ex per-parameter validation results from native method validation
+     * @return JSON error envelope listing the invalid parameters
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ErrorResponse> handleHandlerMethodValidation(HandlerMethodValidationException ex) {
+        String detail = ex.getParameterValidationResults().stream()
+                .flatMap(result -> result.getResolvableErrors().stream()
+                        .map(error -> result.getMethodParameter().getParameterName() + ": "
+                                + error.getDefaultMessage()))
+                .collect(Collectors.joining(", "));
+        if (detail.isBlank()) {
+            detail = "Validation failed";
+        }
+        logger.warn("Method parameter validation failed [errorCode=VALIDATION_ERROR, detail={}]",
+                detail);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("VALIDATION_ERROR", detail, Instant.now()));
+    }
+
+    /**
      * Maps {@link IllegalArgumentException} to HTTP 400 for bad arguments such as invalid path values.
      *
      * @param ex the illegal argument detail
@@ -157,16 +227,134 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Maps DynamoDB service faults thrown directly to distinct, alertable error codes so oncall can
+     * route on the {@code error} field instead of grepping a generic 500.
+     *
+     * @param ex DynamoDB service exception
+     * @return error envelope mapped by {@link #mapDynamoDbException(DynamoDbException)}
+     */
+    @ExceptionHandler(DynamoDbException.class)
+    public ResponseEntity<ErrorResponse> handleDynamoDbException(DynamoDbException ex) {
+        return mapDynamoDbException(ex);
+    }
+
+    /**
      * Fallback handler for unexpected exceptions. Maps to HTTP 500 without leaking internals.
      *
+     * <p>Service code calls DynamoDB through {@code CompletableFuture.join()}, which wraps a
+     * dependency fault in a {@link java.util.concurrent.CompletionException}. The cause chain is
+     * scanned first so a wrapped DynamoDB fault still gets a distinct, routable error code rather than
+     * a blanket {@code INTERNAL_ERROR}.
+     *
      * @param ex the unexpected error
-     * @return JSON error envelope with a generic message
+     * @return mapped DynamoDB error when one is found in the cause chain, otherwise a generic 500
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneric(Exception ex) {
+        DynamoDbException ddbCause = findDynamoDbException(ex);
+        if (ddbCause != null) {
+            return mapDynamoDbException(ddbCause);
+        }
         logger.error("Unhandled exception during request processing [errorCode=INTERNAL_ERROR, detail={}]",
                 ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponse("INTERNAL_ERROR", "An unexpected error occurred", Instant.now()));
+    }
+
+    /**
+     * Maps a concrete DynamoDB service exception to an {@link ErrorResponse} with a distinct,
+     * alertable error code.
+     *
+     * <ul>
+     *   <li>{@link ProvisionedThroughputExceededException} maps to 503 {@code THROUGHPUT_EXCEEDED}
+     *       with {@code Retry-After}. The table or index is being throttled.</li>
+     *   <li>{@link RequestLimitExceededException} maps to 503 {@code REQUEST_LIMIT_EXCEEDED} with
+     *       {@code Retry-After}. The account-level request limit was hit.</li>
+     *   <li>{@link ResourceNotFoundException} maps to 503 {@code TABLE_NOT_FOUND}. The table is
+     *       missing. This is a deploy or config fault, not a client 404.</li>
+     *   <li>{@link InternalServerErrorException} maps to 503 {@code DYNAMODB_INTERNAL_ERROR} with
+     *       {@code Retry-After}. This is a transient DynamoDB-side fault.</li>
+     * </ul>
+     *
+     * <p>Any other {@link DynamoDbException} falls back to 500 {@code INTERNAL_ERROR}.
+     *
+     * @param ex DynamoDB service exception already unwrapped from any async wrapper
+     * @return error envelope with the matching status, code and, for transient faults, a Retry-After header
+     */
+    private ResponseEntity<ErrorResponse> mapDynamoDbException(DynamoDbException ex) {
+        if (ex instanceof ProvisionedThroughputExceededException) {
+            logger.warn("DynamoDB provisioned throughput exceeded [errorCode=THROUGHPUT_EXCEEDED]", ex);
+            return throttled("THROUGHPUT_EXCEEDED",
+                    "Request rate exceeded provisioned throughput. Retry after a short delay");
+        }
+        if (ex instanceof RequestLimitExceededException) {
+            logger.warn("DynamoDB request limit exceeded [errorCode=REQUEST_LIMIT_EXCEEDED]", ex);
+            return throttled("REQUEST_LIMIT_EXCEEDED",
+                    "Account request limit exceeded. Retry after a short delay");
+        }
+        if (ex instanceof ResourceNotFoundException) {
+            logger.error("DynamoDB resource not found, table missing or being created [errorCode=TABLE_NOT_FOUND]", ex);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(new ErrorResponse("TABLE_NOT_FOUND",
+                            "A required DynamoDB resource is unavailable", Instant.now()));
+        }
+        if (ex instanceof InternalServerErrorException) {
+            logger.error("DynamoDB internal server error [errorCode=DYNAMODB_INTERNAL_ERROR]", ex);
+            return throttled("DYNAMODB_INTERNAL_ERROR",
+                    "DynamoDB reported an internal error. Retry after a short delay");
+        }
+        logger.error("Unhandled DynamoDB error [errorCode=INTERNAL_ERROR]", ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ErrorResponse("INTERNAL_ERROR", "An unexpected error occurred", Instant.now()));
+    }
+
+    /**
+     * Builds a 503 response with a {@code Retry-After} header for throttling and transient faults.
+     *
+     * @param code machine-readable error code
+     * @param message human-readable description
+     * @return 503 error envelope carrying {@code Retry-After}
+     */
+    private ResponseEntity<ErrorResponse> throttled(String code, String message) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_SECONDS)
+                .body(new ErrorResponse(code, message, Instant.now()));
+    }
+
+    /**
+     * Walks the cause chain looking for a {@link DynamoDbException}, since {@code join()} wraps a
+     * dependency fault in a {@link java.util.concurrent.CompletionException}.
+     *
+     * @param throwable the top-level exception caught by the fallback handler
+     * @return the first {@link DynamoDbException} in the cause chain, or {@code null} if none
+     */
+    private DynamoDbException findDynamoDbException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof DynamoDbException ddb) {
+                return ddb;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    /**
+     * Extracts the leaf node of a {@link Path}, so a violation reported as {@code getProfile.playerId}
+     * is surfaced to the client as just {@code playerId}, matching the field naming used by the
+     * request-body validation handler.
+     *
+     * @param propertyPath the constraint violation property path
+     * @return the last path node name, or the full path string when no nodes are present
+     */
+    private String leafPropertyName(Path propertyPath) {
+        String leaf = null;
+        for (Path.Node node : propertyPath) {
+            leaf = node.getName();
+        }
+        return leaf != null ? leaf : propertyPath.toString();
     }
 }

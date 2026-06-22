@@ -58,13 +58,34 @@ public final class PaginationHelper {
     }
 
     /**
-     * Decodes an opaque {@code nextToken} string back to a DynamoDB {@code ExclusiveStartKey} map.
+     * Decodes an opaque {@code nextToken} string back to a DynamoDB {@code ExclusiveStartKey} map
+     * without binding it to a partition.
      *
      * @param nextToken the token string, may be {@code null} or blank
      * @return the decoded key map, or {@code null} if the token is {@code null} or blank
      * @throws InvalidPaginationTokenException if the token is malformed or missing required keys
      */
     public static Map<String, AttributeValue> decodePaginationToken(String nextToken) {
+        return decodePaginationToken(nextToken, null);
+    }
+
+    /**
+     * Decodes an opaque {@code nextToken} string back to a DynamoDB {@code ExclusiveStartKey} map and
+     * binds it to the caller's partition.
+     *
+     * <p>The decoded {@code PK} must equal {@code expectedPartitionKey}. This stops a token minted for
+     * one player's query from being replayed against another player's path. Without the check, a
+     * mismatched {@code ExclusiveStartKey} reaches DynamoDB and is rejected as a server error, which
+     * surfaces to the client as a 500. Failing here instead yields a clean 400.
+     *
+     * @param nextToken            the token string, may be {@code null} or blank
+     * @param expectedPartitionKey the partition key the token must carry, or {@code null} to skip the
+     *                             binding check
+     * @return the decoded key map, or {@code null} if the token is {@code null} or blank
+     * @throws InvalidPaginationTokenException if the token is malformed, missing required keys, or its
+     *                                         {@code PK} does not match {@code expectedPartitionKey}
+     */
+    public static Map<String, AttributeValue> decodePaginationToken(String nextToken, String expectedPartitionKey) {
         if (nextToken == null || nextToken.isBlank()) {
             return null;
         }
@@ -85,6 +106,11 @@ public final class PaginationHelper {
 
         // GameEvents table keys require both PK and SK attributes.
         if (!json.containsKey("PK") || !json.containsKey("SK")) {
+            throw new InvalidPaginationTokenException(nextToken);
+        }
+
+        // Bind the token to the caller's partition so a foreign token fails fast as a 400.
+        if (expectedPartitionKey != null && !expectedPartitionKey.equals(json.get("PK").get("S"))) {
             throw new InvalidPaginationTokenException(nextToken);
         }
 
