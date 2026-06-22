@@ -68,8 +68,7 @@ public class DynamoDbConfigTest {
         // Assert the tuned values are genuinely applied to the built Netty client, not just held as
         // constants. Reads the resolved NettyConfiguration off the built client and compares against the
         // SDK defaults (maxConnections 50, connectionAcquireTimeout 10 s) the tuning is meant to replace.
-        try (SdkAsyncHttpClient httpClient =
-                     new DynamoDbConfig().nettyHttpClientBuilder().build()) {
+        try (SdkAsyncHttpClient httpClient = new DynamoDbConfig().nettyHttpClientBuilder().build()) {
 
             assertThat(httpClient).isInstanceOf(NettyNioAsyncHttpClient.class);
             Object nettyConfiguration = extractResolvedNettyConfiguration((NettyNioAsyncHttpClient) httpClient);

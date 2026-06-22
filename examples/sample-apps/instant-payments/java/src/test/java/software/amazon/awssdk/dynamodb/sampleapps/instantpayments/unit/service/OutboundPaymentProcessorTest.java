@@ -97,11 +97,11 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
         when(paymentRepository.reserveFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(PaymentEvent.class), any(BigDecimal.class)))
+                any(Reservation.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(paymentRepository.completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         processor.processPayment("pay_1").join();
@@ -110,14 +110,14 @@ public class OutboundPaymentProcessorTest {
         verify(paymentRepository, times(1)).queryPaymentPartition("pay_1");
         verify(paymentRepository).reserveFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(PaymentEvent.class), eq(new BigDecimal("100")));
+                any(Reservation.class), any(PaymentEvent.class), eq(new BigDecimal("100")));
         verify(paymentRepository).completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), eq(new BigDecimal("100")));
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), eq(new BigDecimal("100")));
     }
 
     @Test
-    void processPayment_whenHappyPath_shouldStampActiveReservationWithDerivedExpiry() {
+    void processPayment_whenHappyPath_shouldStampAuditAndTemporaryReservation() {
         Payment payment = buildPayment("pay_expiry", "acc_usd_1", new BigDecimal("100"), PaymentState.RECEIVED, 1);
         Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("10000"), 1);
         Account accountAfterReserve = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
@@ -127,26 +127,40 @@ public class OutboundPaymentProcessorTest {
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account))
                 .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
+        long beforeEpoch = Instant.now().getEpochSecond();
         processor.processPayment("pay_expiry").join();
+        long afterEpoch = Instant.now().getEpochSecond();
 
-        ArgumentCaptor<Reservation> reservationCaptor = ArgumentCaptor.forClass(Reservation.class);
+        ArgumentCaptor<Reservation> auditCaptor = ArgumentCaptor.forClass(Reservation.class);
+        ArgumentCaptor<Reservation> temporaryReservationCaptor = ArgumentCaptor.forClass(Reservation.class);
         verify(paymentRepository).reserveFundsTransaction(
-                any(PaymentStreamHead.class), eq(account), reservationCaptor.capture(),
-                any(PaymentEvent.class), eq(new BigDecimal("100")));
+                any(PaymentStreamHead.class), eq(account), auditCaptor.capture(),
+                temporaryReservationCaptor.capture(), any(PaymentEvent.class), eq(new BigDecimal("100")));
 
-        Reservation reservation = reservationCaptor.getValue();
+        Reservation reservation = auditCaptor.getValue();
         assertThat(reservation.getReservationId()).isEqualTo("res_pay_expiry");
         assertThat(reservation.getReservationKey()).isEqualTo(Reservation.KEY_PREFIX + "res_pay_expiry");
+        assertThat(reservation.getEntityType()).isEqualTo(Reservation.ENTITY_TYPE);
         assertThat(reservation.getPaymentId()).isEqualTo("pay_expiry");
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.ACTIVE.name());
         assertThat(reservation.getCreatedAtUtc()).isNotNull();
-        assertThat(reservation.getExpiresAt())
-                .isEqualTo(reservation.getCreatedAtUtc().getEpochSecond() + RESERVATION_TIMEOUT_SECONDS);
+        assertThat(reservation.getTtl()).isNull();
+
+        // The temporary reservation is a minimal timer: keys, entityType discriminator, and the ttl deadline only.
+        Reservation temporaryReservation = temporaryReservationCaptor.getValue();
+        assertThat(temporaryReservation.getReservationKey()).isEqualTo(Reservation.TEMPORARY_KEY_PREFIX + "res_pay_expiry");
+        assertThat(temporaryReservation.getEntityType()).isEqualTo(Reservation.TEMPORARY_ENTITY_TYPE);
+        assertThat(temporaryReservation.getReservationId()).isNull();
+        assertThat(temporaryReservation.getPaymentId()).isNull();
+        assertThat(temporaryReservation.getStatus()).isNull();
+        assertThat(temporaryReservation.getCreatedAtUtc()).isNull();
+        assertThat(temporaryReservation.getTtl())
+                .isBetween(beforeEpoch + RESERVATION_TIMEOUT_SECONDS, afterEpoch + RESERVATION_TIMEOUT_SECONDS);
     }
 
     @Test
@@ -165,7 +179,7 @@ public class OutboundPaymentProcessorTest {
 
         verify(paymentRepository).rejectPaymentTransaction(
                 any(PaymentStreamHead.class), any(PaymentEvent.class), eq("ACCOUNT_NOT_FOUND"));
-        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -185,7 +199,7 @@ public class OutboundPaymentProcessorTest {
 
         verify(paymentRepository).rejectPaymentTransaction(
                 any(PaymentStreamHead.class), any(PaymentEvent.class), eq("INSUFFICIENT_FUNDS"));
-        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -198,8 +212,8 @@ public class OutboundPaymentProcessorTest {
         processor.processPayment("pay_4").join();
 
         verify(paymentRepository, never()).getAccount(any());
-        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
-        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any(), any());
         verify(paymentRepository, never()).rejectPaymentTransaction(any(), any(), any());
     }
 
@@ -213,8 +227,8 @@ public class OutboundPaymentProcessorTest {
         processor.processPayment("pay_5").join();
 
         verify(paymentRepository, never()).getAccount(any());
-        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
-        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any(), any());
         verify(paymentRepository, never()).rejectPaymentTransaction(any(), any(), any());
     }
 
@@ -230,15 +244,15 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(account));
         when(paymentRepository.completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         processor.processPayment("pay_6").join();
 
-        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).reserveFundsTransaction(any(), any(), any(), any(), any(), any());
         verify(paymentRepository).completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class));
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class));
     }
 
     @Test
@@ -305,12 +319,12 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(completedPartition(completedPayment)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(tce));
 
         processor.processPayment("pay_7").join();
 
-        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -325,18 +339,18 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(fundsReserved)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(2, 4)));
         when(paymentRepository.completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         processor.processPayment("pay_8").join();
 
         verify(paymentRepository).completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class));
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class));
     }
 
     @Test
@@ -349,12 +363,12 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(payment)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(3, 5)));
 
         processor.processPayment("pay_9").join();
 
-        verify(paymentRepository).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository).completeFundsTransaction(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -367,12 +381,50 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(payment)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(0, 5)));
 
         processor.processPayment("pay_9b").join();
 
-        verify(paymentRepository).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository).completeFundsTransaction(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void processPayment_whenCompleteAndHoldExpired_shouldRejectWithReservationExpired() {
+        Payment payment = buildPayment("pay_exp_reject", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+
+        when(paymentRepository.queryPaymentPartition("pay_exp_reject"))
+                .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(payment)));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        // Only the reservation consume item (index 1) fails: the hold passed its deadline while the head still matched.
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(1, 6)));
+        when(paymentRepository.rejectPaymentTransaction(any(), any(), eq("RESERVATION_EXPIRED")))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.processPayment("pay_exp_reject").join();
+
+        verify(paymentRepository).rejectPaymentTransaction(any(), any(), eq("RESERVATION_EXPIRED"));
+    }
+
+    @Test
+    void processPayment_whenCompleteAndHeadAdvanced_shouldNoOpWithoutRejecting() {
+        Payment payment = buildPayment("pay_exp_noop", "acc_usd_1", new BigDecimal("100"), PaymentState.FUNDS_RESERVED, 2);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+
+        when(paymentRepository.queryPaymentPartition("pay_exp_noop"))
+                .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(payment)));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        // The stream head item (index 4) failed: another processor already advanced the payment, so this is a no-op.
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(4, 6)));
+
+        processor.processPayment("pay_exp_noop").join();
+
+        verify(paymentRepository, never()).rejectPaymentTransaction(any(), any(), any());
     }
 
     @Test
@@ -402,12 +454,12 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(received)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(cancellationFailedAtIndex(2, 4)));
 
         processor.processPayment("pay_11").join();
 
-        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, never()).completeFundsTransaction(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -419,7 +471,7 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(payment)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("network")));
 
         assertThatThrownBy(() -> processor.processPayment("pay_12").join())
@@ -438,7 +490,7 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(fundsReservedPartition(payment)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("throttle")));
 
         assertThatThrownBy(() -> processor.processPayment("pay_13").join())
@@ -482,20 +534,20 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(account))
                 .thenReturn(CompletableFuture.completedFuture(account))
                 .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(buildTransactionConflictCancellation(4)))
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(paymentRepository.completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         processor.processPayment("pay_15").join();
 
-        verify(paymentRepository, times(2)).reserveFundsTransaction(any(), any(), any(), any(), any());
+        verify(paymentRepository, times(2)).reserveFundsTransaction(any(), any(), any(), any(), any(), any());
         verify(paymentRepository).completeFundsTransaction(
                 any(PaymentStreamHead.class), any(Account.class), any(Reservation.class),
-                any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class));
+                any(Reservation.class), any(LedgerEntry.class), any(PaymentEvent.class), any(BigDecimal.class));
     }
 
     @Test
@@ -507,7 +559,7 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(createdOnlyPartition(received)));
         when(paymentRepository.getAccount("acc_usd_1"))
                 .thenReturn(CompletableFuture.completedFuture(account));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(buildTransactionConflictCancellation(4)));
 
         assertThatThrownBy(() -> processor.processPayment("pay_16").join())
@@ -518,7 +570,7 @@ public class OutboundPaymentProcessorTest {
 
         // Initial attempt plus the capped retries.
         verify(paymentRepository, times(MAX_TRANSACTION_CONFLICT_RETRIES + 1))
-                .reserveFundsTransaction(any(), any(), any(), any(), any());
+                .reserveFundsTransaction(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -536,24 +588,203 @@ public class OutboundPaymentProcessorTest {
                 .thenReturn(CompletableFuture.completedFuture(account))
                 .thenReturn(CompletableFuture.completedFuture(accountAfterReserve))
                 .thenReturn(CompletableFuture.completedFuture(accountAfterReserve));
-        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any()))
+        when(paymentRepository.reserveFundsTransaction(any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any()))
+        when(paymentRepository.completeFundsTransaction(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(buildTransactionConflictCancellation(5)))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         processor.processPayment("pay_17").join();
 
-        verify(paymentRepository, times(1)).reserveFundsTransaction(any(), any(), any(), any(), any());
-        verify(paymentRepository, times(2)).completeFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, times(1)).reserveFundsTransaction(any(), any(), any(), any(), any(), any());
+        verify(paymentRepository, times(2)).completeFundsTransaction(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenAuditRowMissing_shouldSkip() {
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository, never()).getAccount(any());
+        verify(paymentRepository, never()).releaseReservationTransaction(any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenAlreadyConsumed_shouldSkip() {
+        Reservation consumed = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.CONSUMED);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(consumed));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository, never()).getAccount(any());
+        verify(paymentRepository, never()).releaseReservationTransaction(any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenActive_shouldRunReleaseTransact() {
+        Reservation active = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.ACTIVE);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(active));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        when(paymentRepository.releaseReservationTransaction(any(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository).releaseReservationTransaction(
+                eq(active), eq(account), eq(new BigDecimal("100")));
+    }
+
+    @Test
+    void releaseExpiredReservation_whenReservationConditionFails_shouldSkipQuietly() {
+        Reservation active = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.ACTIVE);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(active));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        // A concurrent complete already settled the hold: the reservation update (item 0) fails its condition.
+        when(paymentRepository.releaseReservationTransaction(any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(
+                        new CompletionException(cancellationFailedAtIndex(0, 2))));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository).releaseReservationTransaction(any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenAlreadyReleased_shouldSkip() {
+        // A RELEASED audit row (a prior expiry already restored the hold) must be a no-op, like CONSUMED.
+        Reservation released = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.RELEASED);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(released));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository, never()).getAccount(any());
+        verify(paymentRepository, never()).releaseReservationTransaction(any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenDebtorAccountMissing_shouldSkipQuietly() {
+        // The audit row is active but the debtor account row vanished: skip rather than fail the stream record.
+        Reservation active = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.ACTIVE);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(active));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository, never()).releaseReservationTransaction(any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenAccountVersionConflictThenSuccess_shouldRetryAndRelease() {
+        Reservation active = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.ACTIVE);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+        Account accountAfterDrift = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 3);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(active));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account))
+                .thenReturn(CompletableFuture.completedFuture(accountAfterDrift));
+        // First attempt loses the optimistic-version race on the account item (index 1), second wins.
+        when(paymentRepository.releaseReservationTransaction(any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(new CompletionException(cancellationFailedAtIndex(1, 2))))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository, times(2)).releaseReservationTransaction(any(), any(), any());
+        verify(paymentRepository, times(2)).getAccount("acc_usd_1");
+    }
+
+    @Test
+    void releaseExpiredReservation_whenTransactionConflictThenSuccess_shouldRetryAndRelease() {
+        Reservation active = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.ACTIVE);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(active));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        // A concurrent transaction touched the same items: TransactionConflict is retried, not skipped.
+        when(paymentRepository.releaseReservationTransaction(any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(new CompletionException(buildTransactionConflictCancellation(2))))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join();
+
+        verify(paymentRepository, times(2)).releaseReservationTransaction(any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenConflictNeverResolves_shouldExhaustRetriesAndThrow() {
+        Reservation active = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.ACTIVE);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(active));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        when(paymentRepository.releaseReservationTransaction(any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(new CompletionException(cancellationFailedAtIndex(1, 2))));
+
+        assertThatThrownBy(() -> processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Release transaction failed"));
+
+        // Initial attempt plus the capped release retries (MAX_RELEASE_RETRIES = 3).
+        verify(paymentRepository, times(4)).releaseReservationTransaction(any(), any(), any());
+    }
+
+    @Test
+    void releaseExpiredReservation_whenNonConditionalFailure_shouldThrowWithoutRetry() {
+        Reservation active = buildAuditReservation("acc_usd_1", "res_pay_x", ReservationStatus.ACTIVE);
+        Account account = buildAccount("acc_usd_1", new BigDecimal("10000"), new BigDecimal("9900"), 2);
+        when(paymentRepository.getReservation("acc_usd_1", "res_pay_x"))
+                .thenReturn(CompletableFuture.completedFuture(active));
+        when(paymentRepository.getAccount("acc_usd_1"))
+                .thenReturn(CompletableFuture.completedFuture(account));
+        when(paymentRepository.releaseReservationTransaction(any(), any(), any()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("throttle")));
+
+        assertThatThrownBy(() -> processor.releaseExpiredReservation("acc_usd_1", "res_pay_x").join())
+                .isInstanceOf(CompletionException.class)
+                .satisfies(ex -> assertThat(ex.getCause())
+                        .isInstanceOf(RuntimeException.class)
+                        .hasMessageContaining("Release transaction failed"));
+
+        // A non-retryable failure propagates immediately without consuming the retry budget.
+        verify(paymentRepository, times(1)).releaseReservationTransaction(any(), any(), any());
+    }
+
+    /** Builds an audit reservation row in the requested status holding 100 units. */
+    private static Reservation buildAuditReservation(String accountId, String reservationId, ReservationStatus status) {
+        Reservation reservation = new Reservation();
+        reservation.setAccountKey(Account.KEY_PREFIX + accountId);
+        reservation.setReservationKey(Reservation.KEY_PREFIX + reservationId);
+        reservation.setEntityType(Reservation.ENTITY_TYPE);
+        reservation.setReservationId(reservationId);
+        reservation.setPaymentId("pay_x");
+        reservation.setAmount(new BigDecimal("100"));
+        reservation.setStatus(status.name());
+        reservation.setCreatedAtUtc(Instant.now());
+        return reservation;
     }
 
     /**
      * Builds a {@link TransactionCanceledException} whose first reason is a {@code TransactionConflict}
      * (a concurrent transaction rather than a precondition failure).
      */
-    private static TransactionCanceledException buildTransactionConflictCancellation(int size) {
-        List<CancellationReason> reasons = new ArrayList<>();
+    private static TransactionCanceledException buildTransactionConflictCancellation(int size) {        List<CancellationReason> reasons = new ArrayList<>();
         for (int i = 0; i < size; i++) {
             reasons.add(CancellationReason.builder()
                     .code(i == 0 ? "TransactionConflict" : "None")

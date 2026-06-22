@@ -26,6 +26,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEvent;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Account;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Reservation;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.DynamoDbStreamsPaymentEventListener;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service.OutboundPaymentProcessor;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType;
@@ -123,6 +125,117 @@ public class DynamoDbStreamsPaymentEventListenerTest {
         ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
 
         verify(processor, never()).processPayment(anyString());
+    }
+
+    @Test
+    void processStreamRecord_whenTemporaryReservationRemoved_shouldReleaseReservation() {
+        when(processor.releaseExpiredReservation("acc_1", "res_pay_1"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        Record record = buildTemporaryReservationRemoveRecord("acc_1", "res_pay_1");
+
+        ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
+
+        verify(processor).releaseExpiredReservation("acc_1", "res_pay_1");
+        verify(processor, never()).processPayment(anyString());
+    }
+
+    @Test
+    void processStreamRecord_whenNonTemporaryReservationRemoved_shouldIgnore() {
+        Record record = Record.builder()
+                .eventName(OperationType.REMOVE)
+                .dynamodb(StreamRecord.builder()
+                        .keys(Map.of(
+                                "PK", AttributeValue.builder().s(Account.KEY_PREFIX + "acc_1").build(),
+                                "SK", AttributeValue.builder().s(Reservation.KEY_PREFIX + "res_pay_1").build()))
+                        .build())
+                .build();
+
+        ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
+
+        verify(processor, never()).releaseExpiredReservation(anyString(), anyString());
+    }
+
+    @Test
+    void processStreamRecord_whenRemoveHasNoStreamRecord_shouldIgnore() {
+        Record record = Record.builder().eventName(OperationType.REMOVE).build();
+
+        ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
+
+        verify(processor, never()).releaseExpiredReservation(anyString(), anyString());
+    }
+
+    @Test
+    void processStreamRecord_whenRemoveHasNullKeys_shouldIgnore() {
+        Record record = Record.builder()
+                .eventName(OperationType.REMOVE)
+                .dynamodb(StreamRecord.builder().keys(null).build())
+                .build();
+
+        ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
+
+        verify(processor, never()).releaseExpiredReservation(anyString(), anyString());
+    }
+
+    @Test
+    void processStreamRecord_whenTemporaryReservationRemovedButPartitionKeyMissing_shouldIgnore() {
+        Record record = Record.builder()
+                .eventName(OperationType.REMOVE)
+                .dynamodb(StreamRecord.builder()
+                        .keys(Map.of(
+                                "SK", AttributeValue.builder().s(
+                                        Reservation.TEMPORARY_KEY_PREFIX + "res_pay_1").build()))
+                        .build())
+                .build();
+
+        ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
+
+        verify(processor, never()).releaseExpiredReservation(anyString(), anyString());
+    }
+
+    @Test
+    void processStreamRecord_whenReservationReleaseExhaustsRetries_shouldSwallowAndUnblockShard() {
+        Record record = buildTemporaryReservationRemoveRecord("acc_1", "res_pay_poison");
+
+        when(processor.releaseExpiredReservation("acc_1", "res_pay_poison"))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("permanent release failure")));
+
+        for (int i = 1; i < DynamoDbStreamsPaymentEventListener.MAX_PROCESS_RETRIES; i++) {
+            assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record))
+                    .isInstanceOf(CompletionException.class);
+        }
+
+        assertThatCode(() -> ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record))
+                .doesNotThrowAnyException();
+
+        verify(processor, times(DynamoDbStreamsPaymentEventListener.MAX_PROCESS_RETRIES))
+                .releaseExpiredReservation("acc_1", "res_pay_poison");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Integer> counts =
+                (Map<String, Integer>) ReflectionTestUtils.getField(listener, "processingFailureCounts");
+        assertThat(counts).noneSatisfy((key, value) -> assertThat(key).contains("res_pay_poison"));
+    }
+
+    @Test
+    void processStreamRecord_whenReservationReleaseSucceedsAfterFailure_shouldClearRetryCount() {
+        Record record = buildTemporaryReservationRemoveRecord("acc_1", "res_pay_retry_ok");
+
+        when(processor.releaseExpiredReservation("acc_1", "res_pay_retry_ok"))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("transient")))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record))
+                .isInstanceOf(CompletionException.class);
+
+        ReflectionTestUtils.invokeMethod(listener, "processStreamRecord", record);
+
+        verify(processor, times(2)).releaseExpiredReservation("acc_1", "res_pay_retry_ok");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Integer> counts =
+                (Map<String, Integer>) ReflectionTestUtils.getField(listener, "processingFailureCounts");
+        assertThat(counts).noneSatisfy((key, value) -> assertThat(key).contains("res_pay_retry_ok"));
     }
 
     @Test
@@ -530,6 +643,19 @@ public class DynamoDbStreamsPaymentEventListenerTest {
                                 "eventType", AttributeValue.builder().s(
                                         PaymentEventType.OUTBOUND_PAYMENT_CREATED.name()).build(),
                                 "paymentId", AttributeValue.builder().s(paymentId).build()))
+                        .build())
+                .build();
+    }
+
+    /** Builds a REMOVE stream record for a deleted temporary reservation row, carrying only the item keys. */
+    private static Record buildTemporaryReservationRemoveRecord(String accountId, String reservationId) {
+        return Record.builder()
+                .eventName(OperationType.REMOVE)
+                .dynamodb(StreamRecord.builder()
+                        .keys(Map.of(
+                                "PK", AttributeValue.builder().s(Account.KEY_PREFIX + accountId).build(),
+                                "SK", AttributeValue.builder().s(
+                                        Reservation.TEMPORARY_KEY_PREFIX + reservationId).build()))
                         .build())
                 .build();
     }

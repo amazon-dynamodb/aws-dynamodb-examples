@@ -10,6 +10,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.*;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.AsyncSupport;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.util.PaymentEventReplayer;
+import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
 import java.math.BigDecimal;
@@ -74,6 +75,65 @@ public class OutboundPaymentProcessor {
     /** Base backoff between payment-partition re-reads. Attempt {@code n} waits {@code n * BASE} ms. */
     private static final long PARTITION_READ_BACKOFF_MILLIS = 10;
 
+    /**
+     * Maximum number of in-call attempts to run the release transact for one expired hold.
+     *
+     * <p>Only retryable failures count against this budget: a {@code TransactionConflict} (a concurrent
+     * transaction touched the same item) or a conditional failure on the account update (optimistic-version
+     * drift, the account moved between the read and the transact). A conditional failure on the reservation
+     * item is not retryable, since it means another path already consumed or released the same hold, so the
+     * release is skipped instead of retried. Once this cap is reached the failure propagates to the streams
+     * listener, which applies its own record-level retry.
+     */
+    private static final int MAX_RELEASE_RETRIES = 3;
+
+    /**
+     * Base backoff in milliseconds between release-transact retries. Attempt {@code n} (one-based) sleeps
+     * {@code n * RELEASE_BACKOFF_MILLIS} before retrying, so racing callers stagger and one wins quickly.
+     */
+    private static final long RELEASE_BACKOFF_MILLIS = 20;
+
+    /**
+     * Transact item position of the reservation update in {@link PaymentRepository#releaseReservationTransaction}.
+     *
+     * <p>Used to read the per-item cancellation reason: a conditional failure at this index means the hold was
+     * already settled, so {@link #recoverReleaseFailure} skips rather than retries.
+     */
+    private static final int RELEASE_RESERVATION_ITEM_INDEX = 0;
+
+    /**
+     * Transact item position of the account update in {@link PaymentRepository#releaseReservationTransaction}.
+     *
+     * <p>Used to read the per-item cancellation reason: a conditional failure at this index is an
+     * optimistic-version drift on the account, which {@link #recoverReleaseFailure} treats as retryable.
+     */
+    private static final int RELEASE_ACCOUNT_ITEM_INDEX = 1;
+
+    /**
+     * Transact item position of the reservation update in {@link PaymentRepository#completeFundsTransaction}.
+     *
+     * <p>Both repository implementations build the complete transact with the reservation {@code CONSUMED} update at
+     * this index. A conditional failure here, when the stream head item did not also fail, means the hold expired
+     * ({@code expiresAt <= now}) or was already released, so {@link #recoverCompleteFailure} rejects the payment.
+     */
+    private static final int COMPLETE_RESERVATION_ITEM_INDEX = 1;
+
+    /**
+     * Transact item position of the stream head update in {@link PaymentRepository#completeFundsTransaction}.
+     *
+     * <p>A conditional failure here means another processor already advanced the payment past
+     * {@link PaymentState#FUNDS_RESERVED}, so {@link #recoverCompleteFailure} treats it as an idempotent no-op rather
+     * than an expiry.
+     */
+    private static final int COMPLETE_STREAM_HEAD_ITEM_INDEX = 4;
+
+    /**
+     * Reason code recorded on the {@link PaymentEventType#REJECTED} event when a completion arrives after the hold
+     * deadline. The deadline guard in {@link PaymentRepository#completeFundsTransaction} fails its condition, and the
+     * payment is rejected instead of settling a stale hold.
+     */
+    private static final String RESERVATION_EXPIRED_REASON = "RESERVATION_EXPIRED";
+
     /** Persistence and transact operations for payments and accounts. */
     private final PaymentRepository paymentRepository;
     /** Folds event streams into {@link Payment} aggregates. */
@@ -81,9 +141,9 @@ public class OutboundPaymentProcessor {
     /** Async delay and composition helpers for retry backoffs. */
     private final AsyncSupport asyncSupport;
     /**
-     * Seconds a reservation hold stays valid. A new reservation's {@code expiresAt} is set to
-     * {@code createdAt + this}, after which the expiry sweeper may release the hold. From
-     * {@code dynamodb.reservation-timeout-seconds}.
+     * Seconds a reservation hold stays valid. A new hold's temporary reservation gets {@code ttl} set to
+     * {@code createdAt + this}, after which DynamoDB deletes the temporary reservation and the streams listener releases the
+     * hold. From {@code dynamodb.reservation-timeout-seconds}.
      */
     private final long reservationTimeoutSeconds;
 
@@ -91,7 +151,7 @@ public class OutboundPaymentProcessor {
      * @param paymentRepository   persistence and transact operations for payments and accounts
      * @param paymentEventReplayer  folds event streams into {@link Payment} aggregates
      * @param asyncSupport        delay and async composition helpers for in-call retries
-     * @param reservationTimeoutSeconds  hold lifetime in seconds, used to stamp {@code expiresAt} on new reservations
+     * @param reservationTimeoutSeconds  hold lifetime in seconds, used to stamp {@code ttl} on the temporary reservation
      */
     public OutboundPaymentProcessor(PaymentRepository paymentRepository,
                                     PaymentEventReplayer paymentEventReplayer,
@@ -122,6 +182,104 @@ public class OutboundPaymentProcessor {
      */
     public CompletableFuture<Void> processPayment(String paymentId) {
         return processPaymentWithConflictRetry(paymentId, 0);
+    }
+
+    /**
+     * Releases an expired hold after its temporary reservation was deleted by DynamoDB.
+     *
+     * <p>Triggered by the streams listener on the {@code REMOVE} of a {@code RESERVATION_TEMP#} temporary reservation row.
+     * Loads the audit reservation and short circuits when it is missing or no longer {@link ReservationStatus#ACTIVE}
+     * (the payment already completed or the hold was already released), so a temporary reservation that expires after a normal
+     * completion does no work. When the hold is still {@code ACTIVE} it runs
+     * {@link PaymentRepository#releaseReservationTransaction} to restore {@code availableBalance} and mark the
+     * audit row {@link ReservationStatus#RELEASED}, retrying retryable conflicts up to {@link #MAX_RELEASE_RETRIES}
+     * times.
+     *
+     * @param accountId     debtor account id parsed from the temporary reservation partition key
+     * @param reservationId reservation id parsed from the temporary reservation sort key
+     * @return void future when the release finishes or is correctly skipped
+     */
+    public CompletableFuture<Void> releaseExpiredReservation(String accountId, String reservationId) {
+        return paymentRepository.getReservation(accountId, reservationId)
+                .thenCompose(reservation -> {
+                    if (reservation == null) {
+                        logger.debug("Expired hold has no audit reservation, skipping release: accountId={}, reservationId={}",
+                                accountId, reservationId);
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    if (!ReservationStatus.ACTIVE.name().equals(reservation.getStatus())) {
+                        logger.debug("Expired reservation already settled, skipping release: accountId={}, reservationId={}, status={}",
+                                accountId, reservationId, reservation.getStatus());
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    return releaseActiveReservationWithRetry(accountId, reservation, 0);
+                });
+    }
+
+    /**
+     * Runs the release transact for an active hold and retries retryable failures with a small backoff.
+     *
+     * @param accountId   debtor account id used to re-read the account before each attempt
+     * @param reservation audit reservation row supplying keys and held amount
+     * @param attempt     zero-based retry count for backoff and cap checks
+     * @return void future when the release finishes or is correctly skipped
+     */
+    private CompletableFuture<Void> releaseActiveReservationWithRetry(String accountId,
+                                                                      Reservation reservation,
+                                                                      int attempt) {
+        return paymentRepository.getAccount(accountId)
+                .thenCompose(account -> {
+                    if (account == null) {
+                        logger.warn("Cannot release expired reservation, debtor account missing: accountId={}, reservationId={}",
+                                accountId, reservation.getReservationId());
+                        return CompletableFuture.<Void>completedFuture(null);
+                    }
+                    return AsyncSupport.exceptionallyCompose(
+                            paymentRepository.releaseReservationTransaction(reservation, account, reservation.getAmount())
+                                    .thenApply(ignored -> {
+                                        logger.debug("Released expired reservation: accountId={}, reservationId={}, amount={}",
+                                                accountId, reservation.getReservationId(), reservation.getAmount());
+                                        return (Void) null;
+                                    }),
+                            error -> recoverReleaseFailure(accountId, reservation, attempt, error));
+                });
+    }
+
+    /**
+     * Maps release transact failures to a skip, an in-call retry, or a propagated error.
+     *
+     * <p>A conditional failure on the reservation item means another path already settled the hold, so the
+     * release is skipped. A conditional failure on the account (optimistic-version drift) or a
+     * {@code TransactionConflict} is retried up to {@link #MAX_RELEASE_RETRIES} times. Any other failure, or an
+     * exhausted retry budget, propagates so the streams listener can apply its own record-level retry.
+     *
+     * @param accountId   debtor account id used to re-read the account on retry
+     * @param reservation audit reservation row being released
+     * @param attempt     zero-based retry count that produced this failure
+     * @param error       failure from the release future chain
+     * @return void future that succeeds on skip, retries, or fails to signal the listener
+     */
+    private CompletableFuture<Void> recoverReleaseFailure(String accountId,
+                                                          Reservation reservation,
+                                                          int attempt,
+                                                          Throwable error) {
+        CompletionException completionException = toCompletionException(error);
+        if (isItemConditionalFailure(completionException, RELEASE_RESERVATION_ITEM_INDEX)) {
+            logger.debug("Expired reservation already settled, skipping release: accountId={}, reservationId={}",
+                    accountId, reservation.getReservationId());
+            return CompletableFuture.completedFuture(null);
+        }
+        boolean retryable = isItemConditionalFailure(completionException, RELEASE_ACCOUNT_ITEM_INDEX)
+                || isTransactionConflict(completionException);
+        if (!retryable || attempt + 1 > MAX_RELEASE_RETRIES) {
+            return CompletableFuture.failedFuture(new RuntimeException(
+                    "Release transaction failed for reservation " + reservation.getReservationId(),
+                    unwrap(completionException)));
+        }
+        logger.debug("Release transaction conflict, retrying in-call: accountId={}, reservationId={}, attempt={}",
+                accountId, reservation.getReservationId(), attempt + 1);
+        return asyncSupport.sleepMillis(RELEASE_BACKOFF_MILLIS * (attempt + 1))
+                .thenCompose(ignored -> releaseActiveReservationWithRetry(accountId, reservation, attempt + 1));
     }
 
     /**
@@ -248,13 +406,15 @@ public class OutboundPaymentProcessor {
                                                               PaymentStreamHead head,
                                                               Account account,
                                                               String correlationId) {
-        Reservation reservation = buildReservation(payment, account);
+        Instant now = Instant.now();
+        Reservation reservation = buildReservation(payment, account, now);
+        Reservation temporaryReservation = buildTemporaryReservation(payment, account, now);
         long nextSeq = head.getLastSequence() + 1;
         PaymentEvent event = buildTransitionEvent(
                 payment, PaymentEventType.FUNDS_RESERVED, nextSeq, correlationId, null);
 
         return AsyncSupport.exceptionallyCompose(
-                paymentRepository.reserveFundsTransaction(head, account, reservation, event, payment.getAmount())
+                paymentRepository.reserveFundsTransaction(head, account, reservation, temporaryReservation, event, payment.getAmount())
                         .thenApply(ignored -> {
                             logger.debug("Funds reserved for outbound payment: paymentId={}", payment.getPaymentId());
                             return advanceHeadToReserved(head, payment);
@@ -349,6 +509,7 @@ public class OutboundPaymentProcessor {
                                                     String correlationId) {
         String paymentId = payment.getPaymentId();
         Reservation reservationRef = buildReservationRef(payment, account);
+        Reservation temporaryReservationRef = buildTemporaryReservationRef(payment, account);
         LedgerEntry ledgerEntry = buildLedgerEntry(payment, account);
         long nextSeq = head.getLastSequence() + 1;
         PaymentEvent event = buildTransitionEvent(
@@ -356,23 +517,49 @@ public class OutboundPaymentProcessor {
 
         return AsyncSupport.exceptionallyCompose(
                 paymentRepository.completeFundsTransaction(
-                                head, account, reservationRef, ledgerEntry, event, payment.getAmount())
+                                head, account, reservationRef, temporaryReservationRef, ledgerEntry, event, payment.getAmount())
                         .thenApply(ignored -> {
                             logger.debug("Outbound payment completed: paymentId={}", paymentId);
                             return (Void) null;
                         }),
-                error -> recoverCompleteFailure(paymentId, error));
+                error -> recoverCompleteFailure(paymentId, correlationId, error));
     }
 
     /**
-     * Maps complete transact failures to a no-op on conditional conflict or a propagated error.
+     * Maps complete transact failures to a no-op, an expiry rejection, or a propagated error.
      *
-     * @param paymentId payment that failed to complete
-     * @param error     failure from the complete future chain
-     * @return void future that succeeds when another processor already completed the payment
+     * <p>The complete transact carries the reservation {@code CONSUMED} update at
+     * {@link #COMPLETE_RESERVATION_ITEM_INDEX} (conditional on {@code status = ACTIVE AND expiresAt > now}) and the
+     * stream head transition at {@link #COMPLETE_STREAM_HEAD_ITEM_INDEX}. The per-item cancellation reasons tell the
+     * two failure modes apart without a re-read:
+     * <ul>
+     *   <li>Stream head item failed: another processor already advanced the payment past
+     *       {@link PaymentState#FUNDS_RESERVED}, so this is an idempotent no-op.</li>
+     *   <li>Reservation item failed while the head did not: the hold expired or was already released, so the payment
+     *       is rejected with {@link #RESERVATION_EXPIRED_REASON}. The still-pending temporary reservation restores the
+     *       held funds later when its {@code REMOVE} drives {@link #releaseExpiredReservation(String, String)}.</li>
+     * </ul>
+     *
+     * <p>Any other conditional failure (for example the ledger write-once guard when a prior completion already wrote
+     * the ledger line) is treated as an idempotent no-op. A {@code TransactionConflict} is surfaced for in-call retry,
+     * and anything else is wrapped and propagated.
+     *
+     * @param paymentId     payment that failed to complete
+     * @param correlationId tracing id propagated to a rejection event when the hold expired
+     * @param error         failure from the complete future chain
+     * @return void future that succeeds on no-op, completes the rejection, or fails on an unexpected error
      */
-    private CompletableFuture<Void> recoverCompleteFailure(String paymentId, Throwable error) {
+    private CompletableFuture<Void> recoverCompleteFailure(String paymentId, String correlationId, Throwable error) {
         CompletionException completionException = toCompletionException(error);
+        if (isItemConditionalFailure(completionException, COMPLETE_STREAM_HEAD_ITEM_INDEX)) {
+            logger.debug("Outbound payment already completed by another processor: paymentId={}", paymentId);
+            return CompletableFuture.completedFuture(null);
+        }
+        if (isItemConditionalFailure(completionException, COMPLETE_RESERVATION_ITEM_INDEX)) {
+            logger.warn("Hold expired before completion, rejecting outbound payment: paymentId={}, reasonCode={}",
+                    paymentId, RESERVATION_EXPIRED_REASON);
+            return rejectPayment(paymentId, correlationId, RESERVATION_EXPIRED_REASON);
+        }
         if (isConditionalCheckFailed(completionException)) {
             logger.debug("Outbound payment already completed by another processor: paymentId={}", paymentId);
             return CompletableFuture.completedFuture(null);
@@ -469,10 +656,21 @@ public class OutboundPaymentProcessor {
                 });
     }
 
-    /** Builds a full {@link Reservation} item for the reserve transact. */
-    private Reservation buildReservation(Payment payment, Account account) {
+    /**
+     * Builds the audit {@link Reservation} item for the reserve transact.
+     *
+     * <p>The audit row carries the lifecycle {@code status} and leaves {@code ttl} null so DynamoDB never
+     * deletes it. The hold stays auditable after it is consumed or released. It still carries {@code expiresAt}
+     * (the same epoch-second deadline as the matching temporary reservation) so the complete transaction can reject a
+     * settlement that arrives after the deadline.
+     *
+     * @param payment payment that owns the hold
+     * @param account debtor account supplying the partition key
+     * @param now     creation instant shared with the matching temporary reservation
+     * @return the audit reservation item
+     */
+    private Reservation buildReservation(Payment payment, Account account, Instant now) {
         String reservationId = deriveReservationId(payment.getPaymentId());
-        Instant now = Instant.now();
 
         Reservation reservation = new Reservation();
         reservation.setAccountKey(account.getAccountKey());
@@ -483,8 +681,44 @@ public class OutboundPaymentProcessor {
         reservation.setAmount(payment.getAmount());
         reservation.setStatus(ReservationStatus.ACTIVE.name());
         reservation.setCreatedAtUtc(now);
-        reservation.setExpiresAt(now.getEpochSecond() + reservationTimeoutSeconds);
+        reservation.setExpiresAtEpochSecond(holdDeadlineEpochSecond(now));
         return reservation;
+    }
+
+    /**
+     * Builds the temporary reservation {@link Reservation} item written alongside the audit row.
+     *
+     * <p>The temporary reservation is a minimal timer: it stores only the keys, its {@code entityType} discriminator, the
+     * table {@code ttl} attribute set to {@code now + reservationTimeoutSeconds}, and the same value under
+     * {@code expiresAt}. The release path never reads the temporary reservation's own attributes (a {@code NEW_IMAGE}
+     * stream {@code REMOVE} carries only the keys), so the held amount and status live on the audit row instead.
+     * DynamoDB deletes the temporary reservation once the deadline passes, and the resulting stream {@code REMOVE} record
+     * drives {@link #releaseExpiredReservation(String, String)}.
+     *
+     * @param payment payment that owns the hold
+     * @param account debtor account supplying the partition key
+     * @param now     creation instant used to derive the {@code ttl} deadline
+     * @return the temporary reservation item
+     */
+    private Reservation buildTemporaryReservation(Payment payment, Account account, Instant now) {
+        String reservationId = deriveReservationId(payment.getPaymentId());
+
+        Reservation temporaryReservation = new Reservation();
+        temporaryReservation.setAccountKey(account.getAccountKey());
+        temporaryReservation.setReservationKey(Reservation.TEMPORARY_KEY_PREFIX + reservationId);
+        temporaryReservation.setEntityType(Reservation.TEMPORARY_ENTITY_TYPE);
+        temporaryReservation.setTtl(holdDeadlineEpochSecond(now));
+        temporaryReservation.setExpiresAtEpochSecond(holdDeadlineEpochSecond(now));
+        return temporaryReservation;
+    }
+
+    /** Minimal temporary reservation keys for the complete-phase delete that removes the temporary reservation once the hold settles. */
+    private Reservation buildTemporaryReservationRef(Payment payment, Account account) {
+        String reservationId = deriveReservationId(payment.getPaymentId());
+        Reservation ref = new Reservation();
+        ref.setAccountKey(account.getAccountKey());
+        ref.setReservationKey(Reservation.TEMPORARY_KEY_PREFIX + reservationId);
+        return ref;
     }
 
     /** Minimal reservation keys for complete-phase updates that reference an existing reservation. */
@@ -601,6 +835,23 @@ public class OutboundPaymentProcessor {
                 .anyMatch(r -> "TransactionConflict".equals(r.code()));
     }
 
+    /**
+     * Reports whether the cancellation reason at a specific transact item position is a conditional check failure.
+     *
+     * @param e     wrapper from a release transact failure
+     * @param index transact item position to inspect (see {@link #RELEASE_RESERVATION_ITEM_INDEX} and
+     *              {@link #RELEASE_ACCOUNT_ITEM_INDEX})
+     * @return {@code true} if the cancellation reason at {@code index} is a conditional check failure
+     */
+    private static boolean isItemConditionalFailure(CompletionException e, int index) {
+        Throwable cause = e.getCause();
+        if (!(cause instanceof TransactionCanceledException tce)) {
+            return false;
+        }
+        List<CancellationReason> reasons = tce.cancellationReasons();
+        return reasons.size() > index && "ConditionalCheckFailed".equals(reasons.get(index).code());
+    }
+
     /** Returns the underlying cause when present, otherwise the wrapper. */
     private static Throwable unwrap(CompletionException e) {
         return e.getCause() != null ? e.getCause() : e;
@@ -609,6 +860,20 @@ public class OutboundPaymentProcessor {
     /** Stable reservation id derived from {@code paymentId}. */
     private static String deriveReservationId(String paymentId) {
         return "res_" + paymentId;
+    }
+
+    /**
+     * Computes the hold deadline shared by the audit row and the temporary reservation.
+     *
+     * <p>The value is {@code now} plus {@code reservationTimeoutSeconds} as a Unix epoch second. The temporary
+     * reservation stores it as the table {@code ttl} attribute, while both rows store it as {@code expiresAt} so the
+     * complete transaction can reject a settlement that arrives after the deadline.
+     *
+     * @param now creation instant of the hold
+     * @return the deadline as a Unix epoch second
+     */
+    private long holdDeadlineEpochSecond(Instant now) {
+        return now.getEpochSecond() + reservationTimeoutSeconds;
     }
 
     /** Stable ledger entry id derived from {@code paymentId}. */

@@ -18,7 +18,15 @@ public class ApplicationSmokeTest extends AbstractIntegrationTest {
     void healthEndpoint_whenRequested_shouldReturn200() throws Exception {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"));
+                .andExpect(jsonPath("$.status").value("UP"))
+                // Actuator exposure is pinned to health with show-details=never, so no component details leak.
+                .andExpect(jsonPath("$.components").doesNotExist());
+    }
+
+    @Test
+    void sensitiveActuatorEndpoint_whenRequested_shouldNotBeExposed() throws Exception {
+        mockMvc.perform(get("/actuator/env"))
+                .andExpect(status().isNotFound());
     }
 
     @Test

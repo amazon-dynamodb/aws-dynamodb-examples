@@ -107,9 +107,11 @@ public class OutboundPaymentController {
                     DynamoDB TransactWriteItems writes the payment stream, first event, and idempotency \
                     record together.""")
     @ApiResponse(responseCode = "201", description = "Payment created",
-            content = @Content(schema = @Schema(implementation = CreateOutboundPaymentResponse.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = CreateOutboundPaymentResponse.class)))
     @ApiResponse(responseCode = "200", description = "Idempotent retry with stored outcome",
-            content = @Content(schema = @Schema(implementation = CreateOutboundPaymentResponse.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = CreateOutboundPaymentResponse.class)))
     @ApiResponse(responseCode = "409", description = "Idempotency key reused with a different payload",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
@@ -119,7 +121,7 @@ public class OutboundPaymentController {
     @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "503", description = "DynamoDB throttling or transient fault",
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping
@@ -148,7 +150,8 @@ public class OutboundPaymentController {
                     Balances and status are folded from the ordered event stream (item collection query on \
                     one partition).""")
     @ApiResponse(responseCode = "200", description = "Payment found",
-            content = @Content(schema = @Schema(implementation = GetOutboundPaymentResponse.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = GetOutboundPaymentResponse.class)))
     @ApiResponse(responseCode = "404", description = "Payment not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
@@ -158,7 +161,7 @@ public class OutboundPaymentController {
     @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "503", description = "DynamoDB throttling or transient fault",
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/{paymentId}")
@@ -198,7 +201,8 @@ public class OutboundPaymentController {
                     call again: an already finished payment returns its current state without duplicate side \
                     effects.""")
     @ApiResponse(responseCode = "200", description = "Payment processed",
-            content = @Content(schema = @Schema(implementation = ProcessPaymentResponse.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ProcessPaymentResponse.class)))
     @ApiResponse(responseCode = "404", description = "Payment not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
@@ -208,7 +212,7 @@ public class OutboundPaymentController {
     @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "503", description = "DynamoDB throttling or transient fault",
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping("/{paymentId}/process")

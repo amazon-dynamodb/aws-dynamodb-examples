@@ -21,8 +21,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.config.DynamoDbTableInitializer;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Account;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentEventType;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.Reservation;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.DescribeStreamRequest;
@@ -39,8 +41,17 @@ import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClient;
 
 /**
- * Polls DynamoDB Streams for new {@link PaymentEventType#OUTBOUND_PAYMENT_CREATED} inserts and
+ * <p>Polls DynamoDB Streams for new {@link PaymentEventType#OUTBOUND_PAYMENT_CREATED} inserts and
  * triggers the payment processor.
+ *
+ * <p><strong>Reservation expiry:</strong> the poller also reacts to {@code REMOVE} records for
+ * {@code RESERVATION_TEMP#} temporary reservation rows. Each hold is written as an audit row plus a temporary reservation row that
+ * carries the table {@code ttl} attribute. When DynamoDB deletes the temporary reservation, the resulting
+ * {@code REMOVE} record drives {@link OutboundPaymentProcessor#releaseExpiredReservation(String, String)},
+ * which restores the held funds if the hold never completed. The temporary reservation keys travel on the
+ * {@code REMOVE} record regardless of the stream view type, so the table can keep
+ * {@link ShardIteratorType#LATEST}-friendly {@code NEW_IMAGE} streams without carrying old images for
+ * every change.
  *
  * <p>In a production “event-driven” shape, an {@code OutboundPaymentInitiated} message might
  * invoke AWS Lambda. Here, the first domain event produces stream records, and this component
@@ -166,6 +177,12 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
      */
     private static final int MAX_RETRY_COUNT_ENTRIES = 1024;
 
+    /**
+     * Prefix that namespaces reservation-release failure-count keys in {@link #processingFailureCounts} so they
+     * never collide with the payment ids tracked by the {@code OUTBOUND_PAYMENT_CREATED} path.
+     */
+    private static final String RESERVATION_RELEASE_FAILURE_PREFIX = "release:";
+
     /** Resolves table to stream ARN via {@code DescribeTable}. */
     private final DynamoDbAsyncClient dynamoDbClient;
     /** Opens shard iterators and reads stream records. */
@@ -186,9 +203,11 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
      */
     private final ConcurrentHashMap<String, ShardCheckpoint> checkpoints = new ConcurrentHashMap<>();
     /**
-     * Processing failure counts per payment id for poison-pill handling. Entries self-remove on success or after
-     * {@link #MAX_PROCESS_RETRIES}. An access-ordered LRU bounded at {@link #MAX_RETRY_COUNT_ENTRIES} evicts the
-     * least-recently-touched id so a transient failure that never returns cannot grow the map without limit.
+     * Processing failure counts per stream work item for poison-pill handling. Keys are payment ids for the
+     * {@code OUTBOUND_PAYMENT_CREATED} path and {@link #RESERVATION_RELEASE_FAILURE_PREFIX}-prefixed reservation
+     * keys for the TTL release path. Entries self-remove on success or after {@link #MAX_PROCESS_RETRIES}. An
+     * access-ordered LRU bounded at {@link #MAX_RETRY_COUNT_ENTRIES} evicts the least-recently-touched key so a
+     * transient failure that never returns cannot grow the map without limit.
      */
     private final Map<String, Integer> processingFailureCounts = Collections.synchronizedMap(
             new LinkedHashMap<>(64, 0.75f, true) {
@@ -291,9 +310,6 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public boolean isRunning() {
         return running.get();
@@ -547,8 +563,12 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
     }
 
     /**
-     * Filters to {@code INSERT} of {@link PaymentEvent#ENTITY_TYPE} with
-     * {@link PaymentEventType#OUTBOUND_PAYMENT_CREATED} and delegates to the processor.
+     * Routes a stream record to the right handler.
+     *
+     * <p>{@code REMOVE} records are inspected for temporary reservation deletions and may trigger a reservation release
+     * via {@link #processReservationExpiry(Record)}. {@code INSERT} records of {@link PaymentEvent#ENTITY_TYPE}
+     * with {@link PaymentEventType#OUTBOUND_PAYMENT_CREATED} drive the payment processor. Every other record is
+     * ignored.
      *
      * <p><strong>Bounded retry:</strong> Processing failures are retried up to
      * {@link #MAX_PROCESS_RETRIES} times. While under the limit the exception is re-thrown,
@@ -559,7 +579,14 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
      * advance and the shard is unblocked.
      */
     private void processStreamRecord(Record streamRecord) {
-        if (!"INSERT".equals(streamRecord.eventName().toString())) {
+        String eventName = streamRecord.eventName() != null ? streamRecord.eventName().toString() : null;
+
+        if ("REMOVE".equals(eventName)) {
+            processReservationExpiry(streamRecord);
+            return;
+        }
+
+        if (!"INSERT".equals(eventName)) {
             return;
         }
 
@@ -599,5 +626,75 @@ public class DynamoDbStreamsPaymentEventListener implements SmartLifecycle {
                 throw e;
             }
         }
+    }
+
+    /**
+     * Releases an abandoned hold when a {@code RESERVATION_TEMP#} temporary reservation row is removed.
+     *
+     * <p>A temporary reservation {@code REMOVE} arrives from one of two sources, and both are handled identically. Either the
+     * complete transaction deleted the temporary reservation atomically while consuming the hold, or DynamoDB expired the
+     * temporary reservation through its {@code ttl} attribute because the payment was abandoned. The handler parses the debtor
+     * account id from the {@code PK} and the reservation id from the {@code SK} (the record keys are present on a
+     * {@code REMOVE} regardless of the stream view type) and calls
+     * {@link OutboundPaymentProcessor#releaseExpiredReservation(String, String)}. That call reads the audit
+     * reservation and releases funds only when its status is still active, so a temporary reservation removed by a normal
+     * completion finds a consumed audit row and is a safe no-op.
+     *
+     * <p>Failures reuse the same bounded poison-pill retry as the payment path, keyed under
+     * {@link #RESERVATION_RELEASE_FAILURE_PREFIX} so the counters never collide with payment ids.
+     *
+     * @param streamRecord the {@code REMOVE} stream record to inspect
+     */
+    private void processReservationExpiry(Record streamRecord) {
+        if (streamRecord.dynamodb() == null) {
+            return;
+        }
+        Map<String, AttributeValue> keys = streamRecord.dynamodb().keys();
+        if (keys == null) {
+            return;
+        }
+        AttributeValue sortKeyAttr = keys.get("SK");
+        if (sortKeyAttr == null || sortKeyAttr.s() == null
+                || !sortKeyAttr.s().startsWith(Reservation.TEMPORARY_KEY_PREFIX)) {
+            return;
+        }
+        AttributeValue partitionKeyAttr = keys.get("PK");
+        if (partitionKeyAttr == null || partitionKeyAttr.s() == null) {
+            return;
+        }
+
+        String accountId = stripPrefix(partitionKeyAttr.s(), Account.KEY_PREFIX);
+        String reservationId = stripPrefix(sortKeyAttr.s(), Reservation.TEMPORARY_KEY_PREFIX);
+        String failureKey = RESERVATION_RELEASE_FAILURE_PREFIX + accountId + "#" + reservationId;
+        logger.debug("temporary reservation expired on stream: accountId={}, reservationId={}",
+                accountId, reservationId);
+
+        try {
+            processor.releaseExpiredReservation(accountId, reservationId).join();
+            processingFailureCounts.remove(failureKey);
+        } catch (Exception e) {
+            int attempt = processingFailureCounts.merge(failureKey, 1, Integer::sum);
+            if (attempt >= MAX_PROCESS_RETRIES) {
+                logger.error("Reservation release exhausted retries, skipping poison pill: "
+                                + "accountId={}, reservationId={}, attemptCount={}",
+                        accountId, reservationId, attempt, e);
+                processingFailureCounts.remove(failureKey);
+            } else {
+                logger.warn("Reservation release failed, will retry: accountId={}, reservationId={}, attempt={}/{}",
+                        accountId, reservationId, attempt, MAX_PROCESS_RETRIES, e);
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Strips a known key prefix from a DynamoDB key value, returning the remainder.
+     *
+     * @param value     full key attribute value such as {@code ACCOUNT#acc1} or {@code RESERVATION_TEMP#res_p1}
+     * @param keyPrefix prefix to remove when present
+     * @return the value with {@code keyPrefix} removed, or the original value when it does not start with the prefix
+     */
+    private static String stripPrefix(String value, String keyPrefix) {
+        return value.startsWith(keyPrefix) ? value.substring(keyPrefix.length()) : value;
     }
 }

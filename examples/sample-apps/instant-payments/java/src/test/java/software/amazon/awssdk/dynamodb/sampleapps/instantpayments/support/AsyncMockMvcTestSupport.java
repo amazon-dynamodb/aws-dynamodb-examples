@@ -3,6 +3,8 @@ package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.support;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.ResultHandler;
+import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
@@ -12,6 +14,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  */
 public final class AsyncMockMvcTestSupport {
 
+    /** Prevents instantiation of this static helper holder. */
     private AsyncMockMvcTestSupport() {
     }
 
@@ -37,22 +40,47 @@ public final class AsyncMockMvcTestSupport {
 
         private final MvcResult mvcResult;
 
+        /**
+         * Wraps a finished {@link MvcResult} so a synchronous response exposes the
+         * {@link ResultActions} API.
+         *
+         * @param mvcResult result of a request that completed without starting async dispatch
+         */
         private SyncMvcResultActions(MvcResult mvcResult) {
             this.mvcResult = mvcResult;
         }
 
+        /**
+         * Applies a {@link ResultMatcher} to the wrapped result.
+         *
+         * @param matcher expectation to evaluate against the wrapped result
+         * @return this instance so expectations can be chained
+         * @throws Exception when the matcher reports a failed expectation
+         */
         @Override
         public ResultActions andExpect(ResultMatcher matcher) throws Exception {
             matcher.match(mvcResult);
             return this;
         }
 
+        /**
+         * Runs a {@link ResultHandler} against the wrapped result.
+         *
+         * @param handler action to perform on the wrapped result
+         * @return this instance so actions can be chained
+         * @throws Exception when the handler fails
+         */
         @Override
         public ResultActions andDo(ResultHandler handler) throws Exception {
             handler.handle(mvcResult);
             return this;
         }
 
+        /**
+         * Returns the wrapped synchronous result.
+         *
+         * @return the underlying {@link MvcResult}
+         */
         @Override
         public MvcResult andReturn() {
             return mvcResult;

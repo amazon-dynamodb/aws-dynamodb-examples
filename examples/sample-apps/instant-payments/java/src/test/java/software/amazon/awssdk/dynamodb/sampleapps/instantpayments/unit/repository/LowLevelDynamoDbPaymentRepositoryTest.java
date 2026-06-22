@@ -40,8 +40,6 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
-import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
-import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
@@ -335,7 +333,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
     }
 
     @Test
-    void reserveFundsTransaction_whenFundsReserved_shouldCallTransactWriteItems() {
+    void reserveFundsTransaction_whenFundsReserved_shouldPutAuditAndTemporaryReservation() {
         when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
@@ -343,11 +341,21 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
                 buildStreamHead("pay_1", 1, "RECEIVED"),
                 buildAccount("acc_1"),
                 buildReservation("acc_1", "res_pay_1"),
+                buildTemporaryReservation("acc_1", "res_pay_1"),
                 buildEvent("pay_1", 2),
                 new BigDecimal("100")
         ).join();
 
-        verify(client).transactWriteItems(any(TransactWriteItemsRequest.class));
+        ArgumentCaptor<TransactWriteItemsRequest> captor = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(client).transactWriteItems(captor.capture());
+
+        List<TransactWriteItem> items = captor.getValue().transactItems();
+        assertThat(items).hasSize(5);
+        assertThat(items.get(0).put().item()).containsEntry(
+                "SK", AttributeValue.builder().s(Reservation.KEY_PREFIX + "res_pay_1").build());
+        assertThat(items.get(1).put().item())
+                .containsEntry("SK", AttributeValue.builder().s(Reservation.TEMPORARY_KEY_PREFIX + "res_pay_1").build())
+                .containsKey("ttl");
     }
 
     @Test
@@ -359,6 +367,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
                 buildStreamHead("pay_1", 2, "FUNDS_RESERVED"),
                 buildAccount("acc_1"),
                 buildReservation("acc_1", "res_pay_1"),
+                buildTemporaryReservation("acc_1", "res_pay_1"),
                 buildLedgerEntry("acc_1", "pay_1"),
                 buildEvent("pay_1", 3),
                 new BigDecimal("100")
@@ -376,6 +385,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
                 buildStreamHead("pay_1", 2, "FUNDS_RESERVED"),
                 buildAccount("acc_1"),
                 buildReservation("acc_1", "res_pay_1"),
+                buildTemporaryReservation("acc_1", "res_pay_1"),
                 buildLedgerEntry("acc_1", "pay_1"),
                 buildEvent("pay_1", 3),
                 new BigDecimal("100")
@@ -385,48 +395,77 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         verify(client).transactWriteItems(captor.capture());
 
         List<TransactWriteItem> items = captor.getValue().transactItems();
-        assertThat(items).hasSize(5);
+        assertThat(items).hasSize(6);
         assertThat(items.getFirst().update().conditionExpression()).isEqualTo("version = :expectedVersion");
         assertThat(items.getFirst().update().expressionAttributeValues())
                 .containsEntry(":expectedVersion", AttributeValue.builder().n("1").build());
+        // The temporary reservation row is deleted in the same transaction so settlement removes its own timer.
+        assertThat(items.get(2).delete()).isNotNull();
+        assertThat(items.get(2).delete().key())
+                .containsEntry("SK", AttributeValue.builder().s(Reservation.TEMPORARY_KEY_PREFIX + "res_pay_1").build());
     }
 
     @Test
-    void scanExpiredActiveReservations_whenResultsSpanMultiplePages_shouldFilterAndPaginate() {
-        Reservation first = buildReservation("acc_1", "res_a");
-        first.setExpiresAt(1000L);
-        Reservation second = buildReservation("acc_1", "res_b");
-        second.setExpiresAt(1001L);
-        Map<String, AttributeValue> lastEvaluatedKey = Map.of(
-                "PK", AttributeValue.builder().s(Account.KEY_PREFIX + "acc_1").build(),
-                "SK", AttributeValue.builder().s(Reservation.KEY_PREFIX + "res_a").build());
+    void completeFundsTransaction_whenBuildingReservationUpdate_shouldConditionOnActiveAndExpiresAtGreaterThanNow() {
+        when(client.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(TransactWriteItemsResponse.builder().build()));
 
-        when(client.scan(any(ScanRequest.class)))
-                .thenReturn(CompletableFuture.completedFuture(ScanResponse.builder()
-                                .items(List.of(RESERVATION_SCHEMA.itemToMap(first, false)))
-                                .lastEvaluatedKey(lastEvaluatedKey)
-                                .build()),
-                        CompletableFuture.completedFuture(ScanResponse.builder()
-                                .items(List.of(RESERVATION_SCHEMA.itemToMap(second, false)))
-                                .build()));
+        repository.completeFundsTransaction(
+                buildStreamHead("pay_1", 2, "FUNDS_RESERVED"),
+                buildAccount("acc_1"),
+                buildReservation("acc_1", "res_pay_1"),
+                buildTemporaryReservation("acc_1", "res_pay_1"),
+                buildLedgerEntry("acc_1", "pay_1"),
+                buildEvent("pay_1", 3),
+                new BigDecimal("100")
+        ).join();
 
-        List<Reservation> result = repository.scanExpiredActiveReservations(1234L, 2).join();
+        ArgumentCaptor<TransactWriteItemsRequest> captor = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(client).transactWriteItems(captor.capture());
 
-        assertThat(result).extracting(Reservation::getReservationId).containsExactly("res_a", "res_b");
+        // Item order: account update, reservation consume update, temporary reservation delete, ledger put, head update, event put.
+        List<TransactWriteItem> items = captor.getValue().transactItems();
+        assertThat(items.get(1).update().conditionExpression()).isEqualTo("#s = :expectedStatus AND #e > :now");
+        assertThat(items.get(1).update().expressionAttributeNames())
+                .containsEntry("#s", "status")
+                .containsEntry("#e", "expiresAt");
+        assertThat(items.get(1).update().expressionAttributeValues())
+                .containsEntry(":newStatus", AttributeValue.builder().s(ReservationStatus.CONSUMED.name()).build())
+                .containsEntry(":expectedStatus", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build())
+                .containsKey(":now");
+        assertThat(items.get(1).update().expressionAttributeValues().get(":now").n()).isNotBlank();
+    }
 
-        ArgumentCaptor<ScanRequest> captor = ArgumentCaptor.forClass(ScanRequest.class);
-        verify(client, times(2)).scan(captor.capture());
-        List<ScanRequest> requests = captor.getAllValues();
-        assertThat(requests.getFirst().filterExpression())
-                .isEqualTo("entityType = :res AND #s = :active AND expiresAt <= :now");
-        assertThat(requests.getFirst().expressionAttributeNames()).containsEntry("#s", "status");
-        assertThat(requests.getFirst().expressionAttributeValues())
-                .containsEntry(":res", AttributeValue.builder().s(Reservation.ENTITY_TYPE).build())
-                .containsEntry(":active", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build())
-                .containsEntry(":now", AttributeValue.builder().n("1234").build());
-        assertThat(requests.getFirst().limit()).isEqualTo(100);
-        assertThat(requests.getFirst().exclusiveStartKey()).isEmpty();
-        assertThat(requests.get(1).exclusiveStartKey()).isEqualTo(lastEvaluatedKey);
+    @Test
+    void getReservation_whenRowExists_shouldReadAuditRowConsistently() {
+        Reservation audit = buildReservation("acc_1", "res_a");
+        when(client.getItem(any(GetItemRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(GetItemResponse.builder()
+                        .item(RESERVATION_SCHEMA.itemToMap(audit, false))
+                        .build()));
+
+        Reservation result = repository.getReservation("acc_1", "res_a").join();
+
+        assertThat(result).isNotNull();
+        assertThat(result.getReservationId()).isEqualTo("res_a");
+        assertThat(result.getStatus()).isEqualTo(ReservationStatus.ACTIVE.name());
+
+        ArgumentCaptor<GetItemRequest> captor = ArgumentCaptor.forClass(GetItemRequest.class);
+        verify(client).getItem(captor.capture());
+        assertThat(captor.getValue().consistentRead()).isTrue();
+        assertThat(captor.getValue().key())
+                .containsEntry("PK", AttributeValue.builder().s(Account.KEY_PREFIX + "acc_1").build())
+                .containsEntry("SK", AttributeValue.builder().s(Reservation.KEY_PREFIX + "res_a").build());
+    }
+
+    @Test
+    void getReservation_whenRowMissing_shouldReturnNull() {
+        when(client.getItem(any(GetItemRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(GetItemResponse.builder().build()));
+
+        Reservation result = repository.getReservation("acc_1", "res_missing").join();
+
+        assertThat(result).isNull();
     }
 
     @Test
@@ -449,7 +488,8 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         assertThat(items.getFirst().update().conditionExpression()).isEqualTo("#s = :expectedStatus");
         assertThat(items.getFirst().update().expressionAttributeValues())
                 .containsEntry(":newStatus", AttributeValue.builder().s(ReservationStatus.RELEASED.name()).build())
-                .containsEntry(":expectedStatus", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build());
+                .containsEntry(":expectedStatus", AttributeValue.builder().s(ReservationStatus.ACTIVE.name()).build())
+                .doesNotContainKey(":now");
         assertThat(items.get(1).update().updateExpression())
                 .isEqualTo("SET availableBalance = availableBalance + :amt, version = version + :one");
         assertThat(items.get(1).update().conditionExpression()).isEqualTo("version = :expectedVersion");
@@ -652,7 +692,7 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         return account;
     }
 
-    /** Builds an active reservation under the given account. */
+    /** Builds an active audit reservation under the given account. */
     private static Reservation buildReservation(String accountId, String reservationId) {
         Reservation reservation = new Reservation();
         reservation.setAccountKey(Account.KEY_PREFIX + accountId);
@@ -663,8 +703,22 @@ public class LowLevelDynamoDbPaymentRepositoryTest {
         reservation.setAmount(new BigDecimal("100"));
         reservation.setStatus(ReservationStatus.ACTIVE.name());
         reservation.setCreatedAtUtc(Instant.now());
-        reservation.setExpiresAt(Instant.now().getEpochSecond() + 900);
         return reservation;
+    }
+
+    /** Builds a temporary reservation under the given account with the table ttl attribute set. */
+    private static Reservation buildTemporaryReservation(String accountId, String reservationId) {
+        Reservation temporaryReservation = new Reservation();
+        temporaryReservation.setAccountKey(Account.KEY_PREFIX + accountId);
+        temporaryReservation.setReservationKey(Reservation.TEMPORARY_KEY_PREFIX + reservationId);
+        temporaryReservation.setEntityType(Reservation.TEMPORARY_ENTITY_TYPE);
+        temporaryReservation.setReservationId(reservationId);
+        temporaryReservation.setPaymentId("pay_test");
+        temporaryReservation.setAmount(new BigDecimal("100"));
+        temporaryReservation.setStatus(ReservationStatus.ACTIVE.name());
+        temporaryReservation.setCreatedAtUtc(Instant.now());
+        temporaryReservation.setTtl(Instant.now().getEpochSecond() + 900);
+        return temporaryReservation;
     }
 
     /** Builds a debit ledger entry tied to the given account and payment. */

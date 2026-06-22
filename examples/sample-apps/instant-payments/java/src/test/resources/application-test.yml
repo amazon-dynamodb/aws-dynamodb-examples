@@ -30,11 +30,6 @@ dynamodb:
   create-resources: true
   # Seconds until idempotency items get ttl = createdAtUtc + this (DynamoDB deletes eventually). Min 3600, max 31536000.
   idempotency-ttl-seconds: 2592000
-  reservation-sweeper:
-    # Background job that releases expired reservations so held funds are never stuck.
-    # Disabled by default so the background sweep does not race per-test assertions or mutate seeded state.
-    # Sweeper-specific tests opt in with @TestPropertySource(properties = "dynamodb.reservation-sweeper.enabled=true").
-    enabled: false
   streams:
     # Shard iterator type when reading the DynamoDB stream. LATEST reads only new records,
     # TRIM_HORIZON reads from the oldest available record.

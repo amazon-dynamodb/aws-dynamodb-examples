@@ -80,7 +80,8 @@ public class AccountController {
                     Returns current and available balances plus all open fund reservations for the account. \
                     Reservations are loaded with the account in one partition query (item collection pattern).""")
     @ApiResponse(responseCode = "200", description = "Account found",
-            content = @Content(schema = @Schema(implementation = GetAccountResponse.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = GetAccountResponse.class)))
     @ApiResponse(responseCode = "404", description = "Account not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
@@ -90,7 +91,7 @@ public class AccountController {
     @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "503", description = "DynamoDB throttling or transient fault",
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/{accountId}")
@@ -123,7 +124,8 @@ public class AccountController {
                     so callers can reconcile partial results. Duplicate ids in the body are deduplicated before \
                     lookup. Implemented with DynamoDB BatchGetItem.""")
     @ApiResponse(responseCode = "200", description = "Partial or full success",
-            content = @Content(schema = @Schema(implementation = BatchGetReservationsResponse.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = BatchGetReservationsResponse.class)))
     @ApiResponse(responseCode = "400", description = "Invalid accountId or request body",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))

@@ -11,36 +11,51 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortK
 /**
  * DynamoDB item representing a funds reservation for an in-flight payment.
  *
- * <p>Key pattern: {@code PK=ACCOUNT#{accountId}, SK=RESERVATION#{reservationId}}
+ * <p>Key pattern for the audit row: {@code PK=ACCOUNT#{accountId}, SK=RESERVATION#{reservationId}}.
+ * Each hold is written as two rows in the same account partition. The audit row carries the lifecycle
+ * {@code status} and never expires. A second short lived temporary reservation row uses the same bean with
+ * {@code SK=RESERVATION_TEMP#{reservationId}}, {@code entityType=RESERVATION_TEMP}, and the table TTL
+ * attribute {@code ttl} set. DynamoDB deletes the temporary reservation once {@code ttl} passes, and the resulting
+ * stream {@code REMOVE} record is what drives the release of an abandoned hold.
  *
- * <p>Lifecycle: {@code ACTIVE} becomes {@code CONSUMED} when the payment completes, or
- * {@code ACTIVE} becomes {@code RELEASED} when the hold expires and the expiry sweeper restores
- * the available balance. Shares the same
- * partition key as {@link Account} so both are retrieved in a single Query (item collection pattern).
+ * <p>Lifecycle of the audit row: {@code ACTIVE} becomes {@code CONSUMED} when the payment completes,
+ * or {@code ACTIVE} becomes {@code RELEASED} when the temporary reservation is deleted and the streams listener
+ * restores the available balance. Both rows share the account partition key with {@link Account}, so
+ * the account and its reservations are retrieved in a single Query (item collection pattern).
  *
- * <p>{@code expiresAt} is a Unix epoch <strong>second</strong> equal to {@code createdAtUtc} plus the
- * configured {@code dynamodb.reservation-timeout-seconds}. It is a plain numeric attribute, deliberately
- * <strong>not</strong> the table TTL attribute ({@code ttl}), so DynamoDB never deletes an expired
- * reservation. The sweeper instead transitions it to {@link ReservationStatus#RELEASED} in place, which
- * restores the held funds while keeping the row for audit.
+ * <p>Only the temporary reservation row sets {@code ttl} (a Unix epoch second equal to {@code createdAtUtc} plus the
+ * configured {@code dynamodb.reservation-timeout-seconds}). The audit row leaves {@code ttl} null so
+ * DynamoDB never deletes it, which keeps the hold auditable after release.
+ *
+ * <p>Both rows also carry {@code expiresAt}, a Unix epoch second equal to the temporary reservation's {@code ttl}
+ * value. Unlike {@code ttl}, {@code expiresAt} is not the table time-to-live attribute, so DynamoDB never deletes a
+ * row because of it. It is the deadline the complete transaction guards against. DynamoDB TTL deletes a marker on a
+ * best-effort schedule that can lag the {@code ttl} timestamp by many hours, so the marker can still exist after the
+ * hold has logically expired. The complete transaction therefore requires {@code expiresAt} to be in the future, which
+ * stops a late completion from settling a stale hold during that grace window. The audit row keeps {@code ttl} null so
+ * it stays auditable while still carrying {@code expiresAt} for the guard.
  *
  * <p>UTC instants such as {@code createdAtUtc} use ISO-8601 with {@code Z} when represented as string attributes in DynamoDB.
  */
 @DynamoDbBean
 public class Reservation {
 
-    /** Discriminator stored in {@code entityType}. */
+    /** Discriminator stored in {@code entityType} for the audit row. */
     public static final String ENTITY_TYPE = "RESERVATION";
-    /** Prefix for sort key: {@code RESERVATION#}{@code reservationId}. */
+    /** Prefix for the audit row sort key: {@code RESERVATION#}{@code reservationId}. */
     public static final String KEY_PREFIX = "RESERVATION#";
+    /** Discriminator stored in {@code entityType} for the temporary reservation row. */
+    public static final String TEMPORARY_ENTITY_TYPE = "RESERVATION_TEMP";
+    /** Prefix for the temporary reservation row sort key: {@code RESERVATION_TEMP#}{@code reservationId}. */
+    public static final String TEMPORARY_KEY_PREFIX = "RESERVATION_TEMP#";
 
     /** Partition key {@code PK} set to {@code ACCOUNT#}{@code accountId}. */
     private String accountKey;
-    /** Sort key {@code SK} set to {@code RESERVATION#}{@code reservationId}. */
+    /** Sort key {@code SK} set to the audit or temporary reservation prefix plus {@code reservationId}. */
     private String reservationKey;
     /** Item discriminator stored in {@code entityType}. */
     private String entityType;
-    /** Business reservation identifier. */
+    /** Business reservation identifier shared by the audit row and its temporary reservation. */
     private String reservationId;
     /** Payment that holds these reserved funds. */
     private String paymentId;
@@ -50,8 +65,21 @@ public class Reservation {
     private String status;
     /** UTC instant when the reservation was created. */
     private Instant createdAtUtc;
-    /** Unix epoch second after which an {@code ACTIVE} hold is eligible for expiry release. */
-    private Long expiresAt;
+    /**
+     * DynamoDB time-to-live as a Unix epoch second, mapped to the table {@code ttl} attribute. Set only on the
+     * temporary reservation row ({@code createdAtUtc} plus {@code dynamodb.reservation-timeout-seconds}). The audit
+     * row leaves it null so it never expires.
+     */
+    private Long ttl;
+
+    /**
+     * Hold deadline as a Unix epoch second, mapped to the table {@code expiresAt} attribute. Set on both rows to the
+     * same value as the temporary reservation's {@code ttl} ({@code createdAtUtc} plus
+     * {@code dynamodb.reservation-timeout-seconds}). It is not the table time-to-live attribute, so DynamoDB never
+     * deletes a row because of it. The complete transaction reads it to reject a settlement that arrives after the
+     * deadline, even while a marker still physically exists during the DynamoDB TTL grace window.
+     */
+    private Long expiresAtEpochSecond;
 
     @DynamoDbPartitionKey
     @DynamoDbAttribute("PK")
@@ -121,12 +149,27 @@ public class Reservation {
         this.createdAtUtc = createdAtUtc;
     }
 
-    @DynamoDbAttribute("expiresAt")
-    public Long getExpiresAt() {
-        return expiresAt;
+    @DynamoDbAttribute("ttl")
+    public Long getTtl() {
+        return ttl;
     }
 
-    public void setExpiresAt(Long expiresAt) {
-        this.expiresAt = expiresAt;
+    public void setTtl(Long ttl) {
+        this.ttl = ttl;
+    }
+
+    /**
+     * @return hold deadline as a Unix epoch second, mapped to the {@code expiresAt} attribute, or null when unset
+     */
+    @DynamoDbAttribute("expiresAt")
+    public Long getExpiresAtEpochSecond() {
+        return expiresAtEpochSecond;
+    }
+
+    /**
+     * @param expiresAtEpochSecond hold deadline as a Unix epoch second, stored under {@code expiresAt}
+     */
+    public void setExpiresAtEpochSecond(Long expiresAtEpochSecond) {
+        this.expiresAtEpochSecond = expiresAtEpochSecond;
     }
 }

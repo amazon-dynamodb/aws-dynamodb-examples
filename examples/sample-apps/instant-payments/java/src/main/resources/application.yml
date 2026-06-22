@@ -47,15 +47,11 @@ dynamodb:
   create-resources: true
   # Seconds until idempotency items get ttl = createdAtUtc + this (DynamoDB deletes eventually). Min 3600, max 31536000.
   idempotency-ttl-seconds: 2592000
-  # Seconds a funds reservation hold stays valid. A new reservation's expiresAt = createdAt + this. Once it
-  # passes, the reservation-sweeper releases the ACTIVE hold (restores availableBalance) and marks it RELEASED.
+  # Seconds a funds reservation hold stays valid. The temporary reservation timer row is stamped with
+  # ttl = createdAtUtc + this. When DynamoDB deletes the expired timer, the Streams REMOVE record drives
+  # the release path, which restores availableBalance and marks the ACTIVE audit hold RELEASED.
   # Kept short here so the sample is easy to observe. A real instant-payment hold would be minutes to hours.
   reservation-timeout-seconds: 900
-  reservation-sweeper:
-    # Background job that releases expired reservations so held funds are never stuck. Disabled in tests.
-    enabled: true
-    # Delay in milliseconds between consecutive reservation-sweeper runs.
-    interval-ms: 60000
   streams:
     # Optional. Shard iterator type when reading the DynamoDB stream. LATEST (default) reads only new records,
     # TRIM_HORIZON reads from the oldest available record. Sample tests use TRIM_HORIZON.

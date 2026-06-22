@@ -99,7 +99,9 @@ public interface PaymentRepository {
      *
      * <p>Typical item set (all succeed or none apply):
      * <ul>
-     *   <li>{@code Put} new {@link Reservation} under the account partition</li>
+     *   <li>{@code Put} new audit {@link Reservation} under the account partition</li>
+     *   <li>{@code Put} the temporary reservation {@link Reservation} ({@code SK=RESERVATION_TEMP#...}) carrying the
+     *       table {@code ttl} attribute so DynamoDB deletes it after the hold timeout</li>
      *   <li>{@code Update} debtor {@link Account}: decrement {@code availableBalance}, conditional on
      *       balance and optimistic {@code version}</li>
      *   <li>{@code Update} {@link PaymentStreamHead}: {@code lastSequence} and {@code aggregateState}
@@ -110,15 +112,29 @@ public interface PaymentRepository {
      *
      * @param streamHead  head read before this call, supplies expected sequence and state for the update
      * @param account     debtor account as read before reserve (balances/version must still match at commit)
-     * @param reservation new reservation item (idempotent with payment-derived id in implementations)
+     * @param reservation new audit reservation item (idempotent with payment-derived id in implementations)
+     * @param temporaryReservation   temporary reservation item that DynamoDB deletes after {@code ttl} to drive release
      * @param event       {@code FUNDS_RESERVED} with {@code sequenceNumber = lastSequence + 1}
      * @param amount      same monetary amount as the payment (applied to {@code availableBalance})
      */
     CompletableFuture<Void> reserveFundsTransaction(PaymentStreamHead streamHead,
                                                     Account account,
                                                     Reservation reservation,
+                                                    Reservation temporaryReservation,
                                                     PaymentEvent event,
                                                     BigDecimal amount);
+
+    /**
+     * Loads a single audit {@link Reservation} row by account and reservation id.
+     *
+     * <p>Used by the TTL driven release path to read the held amount and current status before
+     * deciding whether a release transact is required.
+     *
+     * @param accountId     business account id used to build {@code PK}
+     * @param reservationId reservation id used to build the audit {@code SK} ({@code RESERVATION#...})
+     * @return the audit reservation row, or {@code null} if absent
+     */
+    CompletableFuture<Reservation> getReservation(String accountId, String reservationId);
 
     /**
      * Atomically finalises settlement and appends {@code COMPLETED} in one {@code TransactWriteItems}.
@@ -126,7 +142,13 @@ public interface PaymentRepository {
      * <p>Typical item set:
      * <ul>
      *   <li>{@code Update} {@link Account}: decrement {@code currentBalance}, conditional on version</li>
-     *   <li>{@code Update} {@link Reservation}: status to consumed, conditional on active reservation</li>
+     *   <li>{@code Update} {@link Reservation}: status to consumed, conditional on the hold still being
+     *       {@link ReservationStatus#ACTIVE} and not past its deadline ({@code expiresAt > now}). DynamoDB TTL deletes a
+     *       temporary reservation on a best-effort schedule that can lag the deadline by many hours, so the deadline
+     *       guard stops a late completion from settling a stale hold while a marker still exists. A conditional failure
+     *       on this item signals an expired hold the caller can reject.</li>
+     *   <li>{@code Delete} {@link Reservation}: the temporary reservation row, so settlement removes its own timer
+     *       instead of leaving an orphan that later fires a no-op {@code REMOVE}</li>
      *   <li>{@code Put} {@link LedgerEntry}</li>
      *   <li>{@code Update} {@link PaymentStreamHead}: must be {@link PaymentState#FUNDS_RESERVED} at
      *       expected sequence, then {@link PaymentState#COMPLETED}</li>
@@ -136,6 +158,7 @@ public interface PaymentRepository {
      * @param streamHead   head read before this call
      * @param account      debtor account after reserve (fresh read recommended for version/balances)
      * @param reservation  keys + attributes identifying the active reservation to consume
+     * @param temporaryReservation    keys identifying the temporary reservation row to delete
      * @param ledgerEntry  new ledger line for the debit
      * @param event        {@code COMPLETED} with next sequence
      * @param amount       payment amount applied to {@code currentBalance}
@@ -143,6 +166,7 @@ public interface PaymentRepository {
     CompletableFuture<Void> completeFundsTransaction(PaymentStreamHead streamHead,
                                                      Account account,
                                                      Reservation reservation,
+                                                     Reservation temporaryReservation,
                                                      LedgerEntry ledgerEntry,
                                                      PaymentEvent event,
                                                      BigDecimal amount);
@@ -201,25 +225,8 @@ public interface PaymentRepository {
                                                                                String nextToken);
 
     /**
-     * Finds {@link Reservation} rows that are still {@link ReservationStatus#ACTIVE} but whose
-     * {@link Reservation#getExpiresAt()} is at or before {@code nowEpochSecond}, so the expiry sweeper
-     * can release them.
-     *
-     * <p>Implementations run a single-table {@code Scan} with a server-side {@code FilterExpression}
-     * ({@code entityType = RESERVATION AND status = ACTIVE AND expiresAt < now}). A {@code Scan} reads
-     * the whole table, so this is a sweeper-only operation, not a hot path. The result is bounded to at
-     * most {@code limit} reservations and to a small number of scanned pages, so one sweep does a bounded
-     * amount of work and any remainder is picked up on the next sweep.
-     *
-     * @param nowEpochSecond current time as a Unix epoch second. Reservations expiring at or before this are returned
-     * @param limit          maximum number of expired reservations to return in one sweep
-     * @return up to {@code limit} expired {@code ACTIVE} reservations (possibly empty)
-     */
-    CompletableFuture<List<Reservation>> scanExpiredActiveReservations(long nowEpochSecond, int limit);
-
-    /**
      * Atomically releases an expired hold in one {@code TransactWriteItems}: the held funds are returned
-     * and the reservation is marked {@link ReservationStatus#RELEASED}.
+     * and the audit reservation is marked {@link ReservationStatus#RELEASED}.
      *
      * <p>Item set (all succeed or none apply):
      * <ul>
@@ -230,9 +237,10 @@ public interface PaymentRepository {
      * </ul>
      *
      * <p>The reservation condition is the serialization point against a concurrent complete: both require
-     * {@code status = ACTIVE} on the same item, so a hold is either consumed or released, never both.
+     * {@code status = ACTIVE} on the same item, so a hold is either consumed or released, never both. The
+     * temporary reservation row that triggered this release was already deleted by DynamoDB, so it is not touched here.
      *
-     * @param reservation expired reservation to release (supplies the keys to update)
+     * @param reservation expired audit reservation to release (supplies the keys to update)
      * @param account     debtor account read just before this call (supplies key and {@code version})
      * @param amount      held amount to add back to {@code availableBalance}
      */
