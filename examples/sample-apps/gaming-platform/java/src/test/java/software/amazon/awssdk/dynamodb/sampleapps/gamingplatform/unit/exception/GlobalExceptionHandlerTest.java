@@ -144,7 +144,7 @@ class GlobalExceptionHandlerTest {
         MvcResult result = mockMvc.perform(get("/test/insufficient-funds").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("INSUFFICIENT_FUNDS"))
-                .andExpect(jsonPath("$.message").value("Insufficient funds for player p1: required=10, available=5"))
+                .andExpect(jsonPath("$.message").value("Insufficient funds to purchase item item-001 with cost 10"))
                 .andReturn();
         assertPlausibleTimestamp(result);
     }
@@ -167,6 +167,86 @@ class GlobalExceptionHandlerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.message").value("value: must not be blank"))
+                .andReturn();
+        assertPlausibleTimestamp(result);
+    }
+
+    @Test
+    void handleException_whenRequestBodyMalformed_shouldReturn400() throws Exception {
+        MvcResult result = mockMvc.perform(post("/test/validation")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"value\": "))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("MALFORMED_REQUEST_BODY"))
+                .andExpect(jsonPath("$.message").value("Request body is not valid JSON"))
+                .andReturn();
+        assertPlausibleTimestamp(result);
+    }
+
+    @Test
+    void handleException_whenRequestBodyMissing_shouldReturn400() throws Exception {
+        MvcResult result = mockMvc.perform(post("/test/validation")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("MISSING_REQUEST_BODY"))
+                .andExpect(jsonPath("$.message").value("Request body is required"))
+                .andReturn();
+        assertPlausibleTimestamp(result);
+    }
+
+    @Test
+    void handleException_whenEnumValueInvalid_shouldReturn400ValidationError() throws Exception {
+        MvcResult result = mockMvc.perform(post("/test/enum-body")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"color\":\"PURPLE\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value("color: invalid value"))
+                .andReturn();
+        assertPlausibleTimestamp(result);
+    }
+
+    @Test
+    void handleException_whenNumericFieldNotANumber_shouldReturn400ValidationError() throws Exception {
+        MvcResult result = mockMvc.perform(post("/test/enum-body")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":\"not-a-number\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value("amount: invalid value"))
+                .andReturn();
+        assertPlausibleTimestamp(result);
+    }
+
+    @Test
+    void handleException_whenQueryParamTypeMismatch_shouldReturn400ValidationError() throws Exception {
+        MvcResult result = mockMvc.perform(get("/test/typed-param")
+                        .param("limit", "abc")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value("limit: invalid value"))
+                .andReturn();
+        assertPlausibleTimestamp(result);
+    }
+
+    @Test
+    void handleException_whenMethodNotSupported_shouldReturn405() throws Exception {
+        MvcResult result = mockMvc.perform(post("/test/typed-param").accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.error").value("METHOD_NOT_ALLOWED"))
+                .andReturn();
+        assertPlausibleTimestamp(result);
+    }
+
+    @Test
+    void handleException_whenMediaTypeNotSupported_shouldReturn415() throws Exception {
+        MvcResult result = mockMvc.perform(post("/test/validation")
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("not json"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.error").value("UNSUPPORTED_MEDIA_TYPE"))
+                .andExpect(jsonPath("$.message").value("Content-Type must be application/json"))
                 .andReturn();
         assertPlausibleTimestamp(result);
     }
@@ -349,7 +429,7 @@ class GlobalExceptionHandlerTest {
          */
         @GetMapping("/test/insufficient-funds")
         void insufficientFunds() {
-            throw new InsufficientFundsException("p1", 10, 5);
+            throw new InsufficientFundsException("p1", "item-001", 10);
         }
 
         /**
@@ -368,6 +448,42 @@ class GlobalExceptionHandlerTest {
         @PostMapping("/test/validation")
         void validation(@Valid @RequestBody ValidatedBody body) {
             // unreachable when validation fails
+        }
+
+        /**
+         * Request body with an enum and a numeric field used to trigger {@code InvalidFormatException}
+         * during JSON binding (unknown enum constant or non-numeric value for a {@code long}).
+         *
+         * @param color enum field. An unknown constant fails type binding
+         * @param amount numeric field. A non-numeric value fails type binding
+         */
+        record TypedBody(Color color, long amount) {}
+
+        /** Sample enum whose accepted constants are surfaced in the error message. */
+        enum Color { RED, GREEN, BLUE }
+
+        /**
+         * Accepts a body with typed fields so binding failures raise {@code HttpMessageNotReadableException}
+         * wrapping a Jackson {@code InvalidFormatException}.
+         *
+         * @param body request body subject to type binding
+         */
+        @PostMapping("/test/enum-body")
+        void enumBody(@RequestBody TypedBody body) {
+            // unreachable when binding fails
+        }
+
+        /**
+         * Declares a typed {@code int} query parameter so a non-numeric value raises
+         * {@link org.springframework.web.method.annotation.MethodArgumentTypeMismatchException}, and a
+         * GET-only mapping so a POST raises
+         * {@link org.springframework.web.HttpRequestMethodNotSupportedException}.
+         *
+         * @param limit numeric query parameter that fails binding for non-numeric input
+         */
+        @GetMapping("/test/typed-param")
+        void typedParam(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "10") int limit) {
+            // unreachable when binding fails
         }
 
         /**

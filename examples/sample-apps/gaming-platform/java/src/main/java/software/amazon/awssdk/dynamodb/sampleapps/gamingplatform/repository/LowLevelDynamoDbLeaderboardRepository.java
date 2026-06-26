@@ -43,7 +43,7 @@ public class LowLevelDynamoDbLeaderboardRepository implements LeaderboardReposit
      * Creates the repository.
      *
      * @param dynamoDbAsyncClient the low-level DynamoDB async client
-     * @param tableName LeaderboardAggregate table name
+     * @param tableName Leaderboard table name
      */
     public LowLevelDynamoDbLeaderboardRepository(
             DynamoDbAsyncClient dynamoDbAsyncClient,

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.controller;
 
+import java.util.concurrent.CompletableFuture;
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -48,9 +50,9 @@ class PurchaseControllerTest {
                 "evt-001");
 
         when(purchaseService.executePurchase(eq("player-002"), any(PurchaseRequest.class)))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(post("/api/v1/players/player-002/purchases")
+        performAsync(mockMvc, post("/api/v1/players/player-002/purchases")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -68,9 +70,9 @@ class PurchaseControllerTest {
     @Test
     void completePurchase_whenInsufficientFunds_shouldReturn409() throws Exception {
         when(purchaseService.executePurchase(eq("player-002"), any(PurchaseRequest.class)))
-                .thenThrow(new InsufficientFundsException("player-002", 500L, 100L));
+                .thenThrow(new InsufficientFundsException("player-002", "epic-armor", 500L));
 
-        mockMvc.perform(post("/api/v1/players/player-002/purchases")
+        performAsync(mockMvc, post("/api/v1/players/player-002/purchases")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -85,7 +87,7 @@ class PurchaseControllerTest {
 
     @Test
     void completePurchase_whenRequiredFieldsMissing_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/players/player-002/purchases")
+        performAsync(mockMvc, post("/api/v1/players/player-002/purchases")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -101,7 +103,7 @@ class PurchaseControllerTest {
         when(purchaseService.executePurchase(eq("missing-player"), any(PurchaseRequest.class)))
                 .thenThrow(new PlayerNotFoundException("missing-player"));
 
-        mockMvc.perform(post("/api/v1/players/missing-player/purchases")
+        performAsync(mockMvc, post("/api/v1/players/missing-player/purchases")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

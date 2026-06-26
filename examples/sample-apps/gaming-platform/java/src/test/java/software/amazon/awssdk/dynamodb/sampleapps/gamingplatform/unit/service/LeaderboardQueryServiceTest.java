@@ -58,7 +58,7 @@ class LeaderboardQueryServiceTest {
         when(repository.queryTopN(scope, 10)).thenReturn(CompletableFuture.completedFuture(entries));
         when(mapper.toResponse(scope, entries)).thenReturn(expected);
 
-        LeaderboardResponse result = service.getTopN(scope, 10);
+        LeaderboardResponse result = service.getTopN(scope, 10).join();
 
         assertThat(result.scope()).isEqualTo(scope);
         assertThat(result.entries()).hasSize(1);
@@ -95,7 +95,7 @@ class LeaderboardQueryServiceTest {
         when(repository.queryTopN(scope, 10)).thenReturn(CompletableFuture.completedFuture(List.of()));
         when(mapper.toResponse(scope, List.of())).thenReturn(expected);
 
-        LeaderboardResponse result = service.getTopN(scope, 10);
+        LeaderboardResponse result = service.getTopN(scope, 10).join();
 
         assertThat(result.entries()).isEmpty();
     }

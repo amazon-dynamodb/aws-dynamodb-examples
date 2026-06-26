@@ -12,6 +12,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.GameEventDt
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.PurchaseRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.RecordEventRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.RecordEventResponse;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.InvalidEventAttributesException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.CurrencyEarnReason;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEventType;
@@ -80,12 +81,30 @@ public class GameEventMapper {
         event.setRecordedAt(recordedAt);
 
         applyEventAttributes(event, request.eventAttributes());
+        validateRequiredAttributes(event);
 
         if (ttlSeconds > 0) {
             event.setTtl(Instant.now().getEpochSecond() + ttlSeconds);
         }
 
         return event;
+    }
+
+    /**
+     * Enforces event-type-specific attribute requirements after the request map has been flattened.
+     *
+     * <p>A {@code PVP_MATCH} event must carry a numeric {@code playerScore}; otherwise it would be
+     * persisted but skipped by the leaderboard stream listener, silently producing a non-projecting
+     * event. Rejecting it here surfaces the problem to the caller as HTTP 400 instead.
+     *
+     * @param event the populated event about to be persisted
+     * @throws InvalidEventAttributesException when a required attribute is missing
+     */
+    private void validateRequiredAttributes(GameEvent event) {
+        if (GameEventType.PVP_MATCH.name().equals(event.getEventType()) && event.getPlayerScore() == null) {
+            throw new InvalidEventAttributesException(
+                    "PVP_MATCH events require a numeric 'playerScore' attribute");
+        }
     }
 
     /**
@@ -270,6 +289,7 @@ public class GameEventMapper {
      * @return parsed int
      */
     private static Integer toInt(Object value) {
+        if (value == null) return null;
         if (value instanceof Number n) return n.intValue();
         return Integer.parseInt(String.valueOf(value));
     }
@@ -281,6 +301,7 @@ public class GameEventMapper {
      * @return parsed long
      */
     private static Long toLong(Object value) {
+        if (value == null) return null;
         if (value instanceof Number n) return n.longValue();
         return Long.parseLong(String.valueOf(value));
     }

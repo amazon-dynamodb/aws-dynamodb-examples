@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -23,7 +25,7 @@ class GameEventSmokeTest extends AbstractSmokeTest {
 
     @Test
     void recordEvent_whenValidRequest_shouldSucceed() throws Exception {
-        mockMvc.perform(post("/api/v1/players/{playerId}/events", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/events", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

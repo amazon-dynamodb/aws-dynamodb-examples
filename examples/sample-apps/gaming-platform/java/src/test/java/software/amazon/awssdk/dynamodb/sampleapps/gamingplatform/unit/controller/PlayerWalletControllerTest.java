@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.controller;
 
+import java.util.concurrent.CompletableFuture;
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -17,8 +19,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.controller.PlayerWalletController;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.GetWalletResponse;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.ProfileSnapshot;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.SettingsSnapshot;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletEarnRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletEarnResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletSnapshot;
@@ -45,9 +45,9 @@ class PlayerWalletControllerTest {
     @Test
     void getWallet_whenWalletExists_shouldReturnWalletSliceWithoutRootPlayerId() throws Exception {
         when(walletService.getWallet("player-001"))
-                .thenReturn(new GetWalletResponse(new WalletSnapshot(1000L, 1L)));
+                .thenReturn(CompletableFuture.completedFuture(new GetWalletResponse(new WalletSnapshot(1000L, 1L))));
 
-        mockMvc.perform(get("/api/v1/players/player-001/wallet"))
+        performAsync(mockMvc, get("/api/v1/players/player-001/wallet"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1000))
@@ -59,25 +59,23 @@ class PlayerWalletControllerTest {
         when(walletService.getWallet("missing"))
                 .thenThrow(new PlayerNotFoundException("missing"));
 
-        mockMvc.perform(get("/api/v1/players/missing/wallet"))
+        performAsync(mockMvc, get("/api/v1/players/missing/wallet"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
     }
 
     @Test
-    void earnCurrency_whenCompleted_shouldReturnFullSnapshotWithOperationFields() throws Exception {
+    void earnCurrency_whenCompleted_shouldReturnWalletFocusedResponse() throws Exception {
         WalletEarnResponse response = new WalletEarnResponse(
                 "player-001",
-                new ProfileSnapshot("N", "PC", 1, 0, "2026-01-01T00:00:00Z", 1),
                 new WalletSnapshot(1300L, 2L),
-                new SettingsSnapshot(true, "en", "PUBLIC", 1),
                 "COMPLETED",
                 "evt-earn-1");
 
         when(currencyRewardService.grantCurrency(eq("player-001"), any(WalletEarnRequest.class)))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(post("/api/v1/players/player-001/wallet/earn")
+        performAsync(mockMvc, post("/api/v1/players/player-001/wallet/earn")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -89,26 +87,25 @@ class PlayerWalletControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.playerId").value("player-001"))
-                .andExpect(jsonPath("$.profile.playerName").value("N"))
-                .andExpect(jsonPath("$.settings.preferredLanguage").value("en"))
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1300))
-                .andExpect(jsonPath("$.earnEventId").value("evt-earn-1"));
+                .andExpect(jsonPath("$.wallet.version").value(2))
+                .andExpect(jsonPath("$.earnEventId").value("evt-earn-1"))
+                .andExpect(jsonPath("$.profile").doesNotExist())
+                .andExpect(jsonPath("$.settings").doesNotExist());
     }
 
     @Test
     void earnCurrency_whenDuplicateRequest_shouldReturnIdempotentReplayStatus() throws Exception {
         WalletEarnResponse response = new WalletEarnResponse(
                 "player-001",
-                new ProfileSnapshot("N", "PC", 1, 0, "2026-01-01T00:00:00Z", 1),
                 new WalletSnapshot(1300L, 2L),
-                new SettingsSnapshot(true, "en", "PUBLIC", 1),
                 "IDEMPOTENT_REPLAY",
                 "evt-earn-dup");
 
         when(currencyRewardService.grantCurrency(eq("player-001"), any(WalletEarnRequest.class)))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(post("/api/v1/players/player-001/wallet/earn")
+        performAsync(mockMvc, post("/api/v1/players/player-001/wallet/earn")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -126,7 +123,7 @@ class PlayerWalletControllerTest {
         when(currencyRewardService.grantCurrency(eq("missing"), any(WalletEarnRequest.class)))
                 .thenThrow(new PlayerNotFoundException("missing"));
 
-        mockMvc.perform(post("/api/v1/players/missing/wallet/earn")
+        performAsync(mockMvc, post("/api/v1/players/missing/wallet/earn")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -141,7 +138,7 @@ class PlayerWalletControllerTest {
 
     @Test
     void earnCurrency_whenAmountNotPositive_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/players/player-001/wallet/earn")
+        performAsync(mockMvc, post("/api/v1/players/player-001/wallet/earn")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -156,7 +153,7 @@ class PlayerWalletControllerTest {
 
     @Test
     void earnCurrency_whenClientRequestIdMissing_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/players/player-001/wallet/earn")
+        performAsync(mockMvc, post("/api/v1/players/player-001/wallet/earn")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

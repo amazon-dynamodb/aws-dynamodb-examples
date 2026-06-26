@@ -68,21 +68,23 @@ public interface PlayerStateRepository {
 
     /**
      * Atomically credits soft currency to a player wallet and writes a {@code CURRENCY_GRANT}
-     * GameEvent to the GameEvents table.
+     * GameEvent to the GameEvent table.
      *
-     * <p>The wallet update uses a DynamoDB {@code ADD} expression so concurrent credits do not
-     * conflict and no version check is required. A caller-supplied idempotency key is embedded
-     * in the {@code rewardEvent} sort key. The {@code attribute_not_exists(PK)} condition on the
-     * event put detects duplicate calls and triggers a {@link TransactionCanceledException} that
-     * the service interprets as {@code IDEMPOTENT_REPLAY}.
+     * <p>The wallet update increments {@code currencyBalance} and bumps the wallet {@code version}
+     * under an optimistic-lock guard ({@code version = :expectedVersion}), mirroring the purchase
+     * debit so currency credits participate in the same versioning scheme as the rest of the wallet
+     * writes. A caller-supplied idempotency key is embedded in the {@code rewardEvent} sort key. The
+     * {@code attribute_not_exists(PK)} condition on the event put detects duplicate calls and triggers
+     * a {@link TransactionCanceledException} that the service interprets as {@code IDEMPOTENT_REPLAY}.
      *
-     * @param playerId    the player to credit
-     * @param amount      positive soft currency amount to add
-     * @param rewardEvent the {@code CURRENCY_GRANT} audit event to persist alongside the credit
-     * @throws TransactionCanceledException if the wallet does not exist (index 0) or the event
-     *                                      is a duplicate (index 1)
+     * @param currentWallet the wallet read before the credit, which supplies the expected
+     *                      optimistic-lock version and partition key
+     * @param amount        positive soft currency amount to add
+     * @param rewardEvent   the {@code CURRENCY_GRANT} audit event to persist alongside the credit
+     * @throws TransactionCanceledException if the wallet version is stale or missing (index 0) or the
+     *                                      event is a duplicate (index 1)
      */
-    CompletableFuture<Void> earnCurrencyTransaction(String playerId, long amount, GameEvent rewardEvent);
+    CompletableFuture<Void> earnCurrencyTransaction(PlayerWallet currentWallet, long amount, GameEvent rewardEvent);
 
     /**
      * Batch-reads player profiles for the given ids, retrying until all

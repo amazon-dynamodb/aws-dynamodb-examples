@@ -10,6 +10,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -79,20 +81,23 @@ public class ProgressionController {
                     expectedVersion must match the current profile version.""")
     @ApiResponse(responseCode = "200", description = "Progression updated with full snapshot",
             content = @Content(schema = @Schema(implementation = ProgressionUpdateResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (VALIDATION_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Player not found (PLAYER_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Player not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "409", description = "Optimistic lock conflict (STALE_VERSION)",
+    @ApiResponse(responseCode = "409", description = "Optimistic lock conflict",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PatchMapping("/players/{playerId}/progression")
-    public ResponseEntity<ProgressionUpdateResponse> updateProgression(
+    public CompletableFuture<ResponseEntity<ProgressionUpdateResponse>> updateProgression(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
@@ -101,7 +106,6 @@ public class ProgressionController {
             @Valid @RequestBody ProgressionUpdateRequest request) {
         logger.debug("Received progression update request [playerId={}, xpDelta={}, expectedVersion={}]",
                 playerId, request.xpDelta(), request.expectedVersion());
-        ProgressionUpdateResponse response = progressionService.updateProgression(playerId, request);
-        return ResponseEntity.ok(response);
+        return progressionService.updateProgression(playerId, request).thenApply(ResponseEntity::ok);
     }
 }

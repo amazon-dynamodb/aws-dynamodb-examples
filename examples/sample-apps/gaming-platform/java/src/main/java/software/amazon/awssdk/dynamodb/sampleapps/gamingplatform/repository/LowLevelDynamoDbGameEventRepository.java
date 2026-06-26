@@ -35,14 +35,14 @@ public class LowLevelDynamoDbGameEventRepository implements GameEventRepository 
     /** Low-level async DynamoDB dynamoDbAsyncClient. */
     private final DynamoDbAsyncClient dynamoDbAsyncClient;
 
-    /** Physical GameEvents table name. */
+    /** Physical GameEvent table name. */
     private final String tableName;
 
     /**
      * Creates the repository.
      *
      * @param dynamoDbAsyncClient the low-level DynamoDB async client
-     * @param tableName GameEvents table name
+     * @param tableName GameEvent table name
      */
     public LowLevelDynamoDbGameEventRepository(
             DynamoDbAsyncClient dynamoDbAsyncClient,

@@ -10,6 +10,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -92,22 +94,23 @@ public class PlayerController {
             content = @Content(schema = @Schema(implementation = RegisterPlayerResponse.class)))
     @ApiResponse(responseCode = "200", description = "Idempotent replay with full snapshot",
             content = @Content(schema = @Schema(implementation = RegisterPlayerResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (VALIDATION_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "409", description = "Platform identity conflict (PLAYER_ALREADY_EXISTS)",
+    @ApiResponse(responseCode = "409", description = "Platform identity conflict",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping("/players")
-    public ResponseEntity<RegisterPlayerResponse> register(
+    public CompletableFuture<ResponseEntity<RegisterPlayerResponse>> register(
             @Valid @RequestBody RegisterPlayerRequest request) {
         logger.debug("Received register player request [platform={}]", request.platform());
-        RegisterPlayerResponse response = playerRegistrationService.registerPlayer(request);
-        HttpStatus status = response.created() ? HttpStatus.CREATED : HttpStatus.OK;
-        return ResponseEntity.status(status).body(response);
+        return playerRegistrationService.registerPlayer(request).thenApply(response -> {
+            HttpStatus status = response.created() ? HttpStatus.CREATED : HttpStatus.OK;
+            return ResponseEntity.status(status).body(response);
+        });
     }
 
     /**
@@ -123,20 +126,23 @@ public class PlayerController {
                     object. It has no playerId, wallet, or settings at the root.""")
     @ApiResponse(responseCode = "200", description = "Profile slice found",
             content = @Content(schema = @Schema(implementation = GetProfileResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Player not found (PLAYER_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Player not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/players/{playerId}/profile")
-    public ResponseEntity<GetProfileResponse> getProfile(
+    public CompletableFuture<ResponseEntity<GetProfileResponse>> getProfile(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
             @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
             String playerId) {
         logger.debug("Received get player profile request [playerId={}]", playerId);
-        return ResponseEntity.ok(playerProfileService.getProfile(playerId));
+        return playerProfileService.getProfile(playerId).thenApply(ResponseEntity::ok);
     }
 }

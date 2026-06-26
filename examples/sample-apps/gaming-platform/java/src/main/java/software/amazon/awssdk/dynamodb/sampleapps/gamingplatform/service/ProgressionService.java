@@ -1,6 +1,6 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +12,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.Stale
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.CurrencyEarnReason;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerProfile;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.TransactionRetry;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 
 /**
@@ -79,61 +80,81 @@ public class ProgressionService {
      *
      * @param playerId the target player
      * @param request  contains xpDelta, reason, and expectedVersion
-     * @return the full player snapshot wrapped in a response DTO
+     * @return future of the full player snapshot wrapped in a response DTO
      * @throws PlayerNotFoundException if no profile exists for the given id
      * @throws StaleVersionException   if the expectedVersion does not match the current version
      */
-    public ProgressionUpdateResponse updateProgression(String playerId,
-                                                        ProgressionUpdateRequest request) {
-        PlayerProfile current = playerStateRepository.getPlayer(playerId).join();
-        if (current == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
-
-        int newLevel = computeLevel(current.getTotalExperience() + request.xpDelta());
-        boolean leveledUp = newLevel > current.getCurrentLevel();
-
-        logger.debug("Updating player progression [playerId={}, xpDelta={}, newLevel={}, leveledUp={}]",
-                playerId, request.xpDelta(), newLevel, leveledUp);
-
-        try {
-            PlayerProfile updated = playerStateRepository.updateProgression(
-                    playerId,
-                    current.getTotalExperience() + request.xpDelta(),
-                    newLevel,
-                    request.expectedVersion()
-            ).join();
-
-            logger.debug("Progression updated [playerId={}, newLevel={}, profileVersion={}]",
-                    playerId, newLevel, updated.getVersion());
-
-            if (leveledUp) {
-                String bonusRequestId = "levelup-" + playerId + "-" + newLevel;
-                try {
-                    currencyRewardService.grantCurrency(
-                            playerId, LEVEL_UP_BONUS, CurrencyEarnReason.LEVEL_UP_BONUS, bonusRequestId);
-                    logger.debug("Level-up bonus granted [playerId={}, newLevel={}, bonusAmount={}]",
-                            playerId, newLevel, LEVEL_UP_BONUS);
-                } catch (Exception ex) {
-                    // Best-effort level-up bonus. Progression write already committed, so log only.
-                    logger.warn("Level-up bonus grant failed after progression update [playerId={}, newLevel={}, bonusAmount={}, detail={}]",
-                            playerId, newLevel, LEVEL_UP_BONUS, ex.getMessage());
-                }
+    public CompletableFuture<ProgressionUpdateResponse> updateProgression(String playerId,
+                                                                          ProgressionUpdateRequest request) {
+        return playerStateRepository.getPlayer(playerId).thenCompose(current -> {
+            if (current == null) {
+                return CompletableFuture.<ProgressionUpdateResponse>failedFuture(new PlayerNotFoundException(playerId));
             }
 
-            var snapshot = playerSnapshotService.load(playerId);
-            return new ProgressionUpdateResponse(
-                    snapshot.playerId(),
-                    snapshot.profile(),
-                    snapshot.wallet(),
-                    snapshot.settings(),
-                    null);
-        } catch (CompletionException ex) {
-            if (ex.getCause() instanceof ConditionalCheckFailedException) {
-                throw new StaleVersionException(playerId, request.expectedVersion());
-            }
-            throw ex;
-        }
+            int newLevel = computeLevel(current.getTotalExperience() + request.xpDelta());
+            boolean leveledUp = newLevel > current.getCurrentLevel();
+
+            logger.debug("Updating player progression [playerId={}, xpDelta={}, newLevel={}, leveledUp={}]",
+                    playerId, request.xpDelta(), newLevel, leveledUp);
+
+            return playerStateRepository.updateProgression(
+                            playerId,
+                            current.getTotalExperience() + request.xpDelta(),
+                            newLevel,
+                            request.expectedVersion())
+                    .<PlayerProfile>exceptionallyCompose(error -> {
+                        Throwable cause = TransactionRetry.unwrap(error);
+                        if (cause instanceof ConditionalCheckFailedException) {
+                            return CompletableFuture.failedFuture(
+                                    new StaleVersionException(playerId, request.expectedVersion()));
+                        }
+                        return CompletableFuture.failedFuture(cause);
+                    })
+                    .thenCompose(updated -> {
+                        logger.debug("Progression updated [playerId={}, newLevel={}, profileVersion={}]",
+                                playerId, newLevel, updated.getVersion());
+
+                        CompletableFuture<Void> bonusStage = leveledUp
+                                ? grantLevelUpBonus(playerId, newLevel)
+                                : CompletableFuture.completedFuture(null);
+
+                        return bonusStage.thenCompose(ignored -> playerSnapshotService.load(playerId)
+                                .thenApply(snapshot -> new ProgressionUpdateResponse(
+                                        snapshot.playerId(),
+                                        snapshot.profile(),
+                                        snapshot.wallet(),
+                                        snapshot.settings(),
+                                        null)));
+                    });
+        });
+    }
+
+    /**
+     * Grants the level-up currency bonus as a best-effort side effect.
+     *
+     * <p>The progression write has already committed, so a failure here is logged and swallowed rather
+     * than failing the request. The idempotency key {@code "levelup-<playerId>-<newLevel>"} keeps a
+     * retried XP update from double-awarding the bonus.
+     *
+     * @param playerId the player to credit
+     * @param newLevel the level just reached
+     * @return a future that always completes normally once the grant has been attempted
+     */
+    private CompletableFuture<Void> grantLevelUpBonus(String playerId, int newLevel) {
+        String bonusRequestId = "levelup-" + playerId + "-" + newLevel;
+        return currencyRewardService
+                .grantCurrency(playerId, LEVEL_UP_BONUS, CurrencyEarnReason.LEVEL_UP_BONUS, bonusRequestId)
+                .<Void>handle((result, error) -> {
+                    if (error != null) {
+                        // Best-effort level-up bonus. Progression write already committed, so log only.
+                        logger.warn("Level-up bonus grant failed after progression update [playerId={}, newLevel={}, bonusAmount={}, detail={}]",
+                                playerId, newLevel, LEVEL_UP_BONUS, TransactionRetry.unwrap(error).getMessage());
+                    } else {
+                        logger.debug("Level-up bonus granted [playerId={}, newLevel={}, bonusAmount={}]",
+                                playerId, newLevel, LEVEL_UP_BONUS);
+                    }
+                    return null;
+                });
     }
 
     /**

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +35,7 @@ class LeaderboardIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getLeaderboard_whenFreshScope_shouldReturnEmpty() throws Exception {
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", "SEASON#unknown#MODE#ranked"))
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", "SEASON#unknown#MODE#ranked"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("SEASON#unknown#MODE#ranked"))
                 .andExpect(jsonPath("$.entries").isEmpty());
@@ -47,7 +49,7 @@ class LeaderboardIntegrationTest extends AbstractIntegrationTest {
         putEntry(scope, SeedPlayerData.SEED_PLAYER_2, "Bob", 500);
         putEntry(scope, SeedPlayerData.SEED_PLAYER_3, "Cara", 300);
 
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", scope))
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", scope))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value(scope))
                 .andExpect(jsonPath("$.entries[0].playerId").value(SeedPlayerData.SEED_PLAYER_2))
@@ -65,13 +67,13 @@ class LeaderboardIntegrationTest extends AbstractIntegrationTest {
         putEntry(scope, SeedPlayerData.SEED_PLAYER_3, "Cara", 500);
         putEntry(scope, SeedPlayerData.SEED_PLAYER_4, "Dan", 200);
 
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", scope).queryParam("limit", "2"))
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", scope).queryParam("limit", "2"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.entries.length()").value(2))
                 .andExpect(jsonPath("$.entries[0].score").value(500))
                 .andExpect(jsonPath("$.entries[1].score").value(400));
 
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", scope).queryParam("limit", "3"))
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", scope).queryParam("limit", "3"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.entries.length()").value(3))
                 .andExpect(jsonPath("$.entries[2].score").value(300));

@@ -17,7 +17,7 @@
 # Docker / Rancher Desktop:
 #   Integration and smoke tests use Testcontainers with DynamoDB Local.
 #   Spring profile "test" is active. Before each test method all three tables
-#   (JavaGamingPlayerState, JavaGamingGameEvents, JavaGamingLeaderboard) are deleted,
+#   (JavaPlayerState, JavaGameEvent, JavaLeaderboard) are deleted,
 #   recreated (with DynamoDB Streams and TTL where applicable), and re-seeded with
 #   profiles, settings, and wallets from SeedPlayerData (see DynamoDbTableTestReset).
 #   Integration and smoke tiers include parallel high-level and low-level client

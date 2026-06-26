@@ -1,7 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model;
 
 /**
- * Classifies the origin of a soft-currency credit recorded in the GameEvents table.
+ * Classifies the origin of a soft-currency credit recorded in the GameEvent table.
  *
  * <p>Every {@link GameEventType#CURRENCY_GRANT} event carries one of these reasons so the
  * economy audit trail is self-describing and can be filtered by downstream analytics.

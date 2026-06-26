@@ -45,7 +45,7 @@ public class HighLevelDynamoDbGameEventRepository implements GameEventRepository
      * Creates the repository.
      *
      * @param enhancedClient the high-level enhanced async client
-     * @param tableName      GameEvents table name
+     * @param tableName      GameEvent table name
      */
     public HighLevelDynamoDbGameEventRepository(
             DynamoDbEnhancedAsyncClient enhancedClient,

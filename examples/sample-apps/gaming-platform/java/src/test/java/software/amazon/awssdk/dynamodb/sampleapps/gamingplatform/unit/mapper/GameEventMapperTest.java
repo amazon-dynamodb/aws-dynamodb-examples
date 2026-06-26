@@ -1,7 +1,9 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.mapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import org.junit.jupiter.api.Tag;
@@ -9,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.PurchaseRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.RecordEventRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.RecordEventResponse;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.InvalidEventAttributesException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.GameEventMapper;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.CurrencyEarnReason;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent;
@@ -56,6 +59,47 @@ class GameEventMapperTest {
         RecordEventRequest request = new RecordEventRequest(GameEventType.LEVEL_PROGRESS.name(), Map.of());
         GameEvent event = mapper.toGameEvent("p", request);
         assertThat(event.getTtl()).isNull();
+    }
+
+    @Test
+    void toGameEvent_whenPvpMatchMissingPlayerScore_shouldRejectWithInvalidEventAttributes() {
+        GameEventMapper mapper = new GameEventMapper(60);
+        RecordEventRequest request = new RecordEventRequest(
+                GameEventType.PVP_MATCH.name(),
+                Map.of(
+                        "scope", "SEASON#default#MODE#ranked",
+                        "score", 1500,
+                        "opponent", "AgentJones",
+                        "result", "WIN"));
+
+        assertThatThrownBy(() -> mapper.toGameEvent("player-a", request))
+                .isInstanceOf(InvalidEventAttributesException.class)
+                .hasMessageContaining("playerScore");
+    }
+
+    @Test
+    void toGameEvent_whenPvpMatchPlayerScoreNull_shouldRejectWithInvalidEventAttributes() {
+        GameEventMapper mapper = new GameEventMapper(60);
+        Map<String, Object> attributes = new HashMap<>();
+        attributes.put("playerScore", null);
+        RecordEventRequest request = new RecordEventRequest(GameEventType.PVP_MATCH.name(), attributes);
+
+        assertThatThrownBy(() -> mapper.toGameEvent("player-a", request))
+                .isInstanceOf(InvalidEventAttributesException.class)
+                .hasMessageContaining("playerScore");
+    }
+
+    @Test
+    void toGameEvent_whenNonPvpMatchMissingPlayerScore_shouldNotValidateScore() {
+        GameEventMapper mapper = new GameEventMapper(60);
+        RecordEventRequest request = new RecordEventRequest(
+                GameEventType.LEVEL_PROGRESS.name(),
+                Map.of("xpDelta", 50));
+
+        GameEvent event = mapper.toGameEvent("player-a", request);
+
+        assertThat(event.getEventType()).isEqualTo(GameEventType.LEVEL_PROGRESS.name());
+        assertThat(event.getPlayerScore()).isNull();
     }
 
     @Test

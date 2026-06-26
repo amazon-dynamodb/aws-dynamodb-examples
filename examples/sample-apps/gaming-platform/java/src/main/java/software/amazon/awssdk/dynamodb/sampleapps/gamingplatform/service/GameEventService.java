@@ -2,6 +2,7 @@ package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +15,6 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.Inval
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.PlayerNotFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.GameEventMapper;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.GameEventPage;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.GameEventRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.PaginationHelper;
@@ -41,7 +41,7 @@ public class GameEventService {
     /** Maximum page size for event history. */
     private static final int MAX_PAGE_SIZE = 50;
 
-    /** GameEvents table access. */
+    /** GameEvent table access. */
     private final GameEventRepository gameEventRepository;
 
     /** Existence checks against PlayerState. */
@@ -73,26 +73,26 @@ public class GameEventService {
      *
      * @param playerId the player who triggered the event
      * @param request  event type and event-specific attributes
-     * @return the event id and recorded timestamp
+     * @return future of the event id and recorded timestamp
      * @throws PlayerNotFoundException if no profile exists for the given player id
      */
-    public RecordEventResponse recordEvent(String playerId, RecordEventRequest request) {
-        var profile = playerStateRepository.getPlayer(playerId).join();
-        if (profile == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
+    public CompletableFuture<RecordEventResponse> recordEvent(String playerId, RecordEventRequest request) {
+        return playerStateRepository.getPlayer(playerId).thenCompose(profile -> {
+            if (profile == null) {
+                throw new PlayerNotFoundException(playerId);
+            }
 
-        GameEvent event = gameEventMapper.toGameEvent(playerId, request);
+            GameEvent event = gameEventMapper.toGameEvent(playerId, request);
 
-        logger.debug("Recording game event [eventId={}, eventType={}, playerId={}]",
-                event.getEventId(), request.eventType(), playerId);
+            logger.debug("Recording game event [eventId={}, eventType={}, playerId={}]",
+                    event.getEventId(), request.eventType(), playerId);
 
-        gameEventRepository.appendEvent(event).join();
-
-        logger.debug("Game event recorded [eventId={}, playerId={}, eventType={}]",
-                event.getEventId(), playerId, request.eventType());
-
-        return gameEventMapper.toRecordEventResponse(event);
+            return gameEventRepository.appendEvent(event).thenApply(ignored -> {
+                logger.debug("Game event recorded [eventId={}, playerId={}, eventType={}]",
+                        event.getEventId(), playerId, request.eventType());
+                return gameEventMapper.toRecordEventResponse(event);
+            });
+        });
     }
 
     /**
@@ -118,32 +118,34 @@ public class GameEventService {
      * @throws PlayerNotFoundException        if no profile exists for the given player id
      * @throws InvalidPaginationTokenException if {@code nextToken} is malformed or bound to a different player
      */
-    public EventsPageResponse getEvents(String playerId, int limit, Boolean scanIndexForward, String nextToken) {
-        var profile = playerStateRepository.getPlayer(playerId).join();
-        if (profile == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
+    public CompletableFuture<EventsPageResponse> getEvents(String playerId, int limit, Boolean scanIndexForward,
+                                                           String nextToken) {
+        return playerStateRepository.getPlayer(playerId).thenCompose(profile -> {
+            if (profile == null) {
+                throw new PlayerNotFoundException(playerId);
+            }
 
-        int clampedLimit = Math.max(MIN_PAGE_SIZE, Math.min(limit, MAX_PAGE_SIZE));
-        boolean forward = effectiveScanIndexForward(scanIndexForward);
-        String expectedPartitionKey = GameEvent.PK_PREFIX + playerId;
-        Map<String, AttributeValue> exclusiveStartKey =
-                PaginationHelper.decodePaginationToken(nextToken, expectedPartitionKey);
+            int clampedLimit = Math.max(MIN_PAGE_SIZE, Math.min(limit, MAX_PAGE_SIZE));
+            boolean forward = effectiveScanIndexForward(scanIndexForward);
+            String expectedPartitionKey = GameEvent.PK_PREFIX + playerId;
+            Map<String, AttributeValue> exclusiveStartKey =
+                    PaginationHelper.decodePaginationToken(nextToken, expectedPartitionKey);
 
-        logger.debug("Querying game event history [playerId={}, limit={}, scanIndexForward={}, hasNextToken={}]",
-                playerId, clampedLimit, forward, exclusiveStartKey != null);
+            logger.debug("Querying game event history [playerId={}, limit={}, scanIndexForward={}, hasNextToken={}]",
+                    playerId, clampedLimit, forward, exclusiveStartKey != null);
 
-        GameEventPage page = gameEventRepository
-                .queryEventsByPlayer(playerId, clampedLimit, forward, exclusiveStartKey)
-                .join();
+            return gameEventRepository
+                    .queryEventsByPlayer(playerId, clampedLimit, forward, exclusiveStartKey)
+                    .thenApply(page -> {
+                        List<GameEventDto> events = page.events().stream()
+                                .map(gameEventMapper::toEventDto)
+                                .toList();
 
-        List<GameEventDto> events = page.events().stream()
-                .map(gameEventMapper::toEventDto)
-                .toList();
+                        String encodedNextToken = PaginationHelper.encodePaginationToken(page.lastEvaluatedKey());
 
-        String encodedNextToken = PaginationHelper.encodePaginationToken(page.lastEvaluatedKey());
-
-        return new EventsPageResponse(events, encodedNextToken);
+                        return new EventsPageResponse(events, encodedNextToken);
+                    });
+        });
     }
 
     /**

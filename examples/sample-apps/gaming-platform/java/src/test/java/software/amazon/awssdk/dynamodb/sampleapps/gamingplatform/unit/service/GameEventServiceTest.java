@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -76,7 +77,7 @@ class GameEventServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
         when(gameEventMapper.toRecordEventResponse(event)).thenReturn(expectedResponse);
 
-        RecordEventResponse response = gameEventService.recordEvent(PLAYER_ID, request);
+        RecordEventResponse response = gameEventService.recordEvent(PLAYER_ID, request).join();
 
         assertThat(response.eventId()).isEqualTo("evt-100");
         assertThat(response.recordedAt()).isEqualTo("2026-01-01T00:00:00Z");
@@ -90,8 +91,9 @@ class GameEventServiceTest {
 
         RecordEventRequest request = new RecordEventRequest("PVP_MATCH", Map.of());
 
-        assertThatThrownBy(() -> gameEventService.recordEvent(PLAYER_ID, request))
-                .isInstanceOf(PlayerNotFoundException.class);
+        assertThatThrownBy(() -> gameEventService.recordEvent(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(PlayerNotFoundException.class);
 
         verifyNoInteractions(gameEventRepository);
     }
@@ -115,8 +117,8 @@ class GameEventServiceTest {
                 .thenReturn(new RecordEventResponse("evt-aaa", "2026-01-01T00:00:00Z"))
                 .thenReturn(new RecordEventResponse("evt-bbb", "2026-01-01T00:00:01Z"));
 
-        RecordEventResponse r1 = gameEventService.recordEvent(PLAYER_ID, request);
-        RecordEventResponse r2 = gameEventService.recordEvent(PLAYER_ID, request);
+        RecordEventResponse r1 = gameEventService.recordEvent(PLAYER_ID, request).join();
+        RecordEventResponse r2 = gameEventService.recordEvent(PLAYER_ID, request).join();
 
         assertThat(r1.eventId()).isNotEqualTo(r2.eventId());
 
@@ -142,7 +144,7 @@ class GameEventServiceTest {
         when(gameEventMapper.toEventDto(event))
                 .thenReturn(new GameEventDto("evt-200", "PVP_MATCH", "2026-01-01T00:00:00Z", Map.of()));
 
-        EventsPageResponse response = gameEventService.getEvents(PLAYER_ID, 22, null, null);
+        EventsPageResponse response = gameEventService.getEvents(PLAYER_ID, 22, null, null).join();
 
         assertThat(response.events()).hasSize(1);
         assertThat(response.nextToken()).isNotNull();
@@ -158,7 +160,7 @@ class GameEventServiceTest {
         when(gameEventRepository.queryEventsByPlayer(eq(PLAYER_ID), eq(20), eq(true), isNull()))
                 .thenReturn(CompletableFuture.completedFuture(new GameEventPage(List.of(), null)));
 
-        EventsPageResponse response = gameEventService.getEvents(PLAYER_ID, 20, Boolean.TRUE, null);
+        EventsPageResponse response = gameEventService.getEvents(PLAYER_ID, 20, Boolean.TRUE, null).join();
 
         assertThat(response.events()).isEmpty();
         assertThat(response.nextToken()).isNull();
@@ -176,8 +178,9 @@ class GameEventServiceTest {
                 "SK", AttributeValue.fromS(GameEvent.SK_PREFIX + "2026-01-02T00:00:00Z#evt-x"));
         String foreignToken = PaginationHelper.encodePaginationToken(foreignKey);
 
-        assertThatThrownBy(() -> gameEventService.getEvents(PLAYER_ID, 20, null, foreignToken))
-                .isInstanceOf(InvalidPaginationTokenException.class);
+        assertThatThrownBy(() -> gameEventService.getEvents(PLAYER_ID, 20, null, foreignToken).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(InvalidPaginationTokenException.class);
 
         verifyNoInteractions(gameEventRepository);
     }

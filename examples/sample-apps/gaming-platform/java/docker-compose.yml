@@ -23,9 +23,9 @@ services:
       DYNAMODB_ENDPOINT: http://dynamodb-local:8000
       DYNAMODB_REGION: eu-west-1
       DYNAMODB_CLIENTTYPE: ${DYNAMODB_CLIENTTYPE:-high-level}
-      DYNAMODB_PLAYERSTATETABLENAME: JavaGamingPlayerState
-      DYNAMODB_GAMEEVENTSTABLENAME: JavaGamingGameEvents
-      DYNAMODB_LEADERBOARDTABLENAME: JavaGamingLeaderboard
+      DYNAMODB_PLAYERSTATETABLENAME: JavaPlayerState
+      DYNAMODB_GAMEEVENTSTABLENAME: JavaGameEvent
+      DYNAMODB_LEADERBOARDTABLENAME: JavaLeaderboard
     depends_on:
       - dynamodb-local
     profiles:

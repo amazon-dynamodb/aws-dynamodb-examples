@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.controller;
 
+import java.util.concurrent.CompletableFuture;
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
 import java.util.List;
 import java.util.Map;
 
@@ -46,9 +48,9 @@ class GameEventControllerTest {
         RecordEventResponse response = new RecordEventResponse("evt-123", "2026-04-07T10:00:00Z");
 
         when(gameEventService.recordEvent(eq("player-1"), any(RecordEventRequest.class)))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(post("/api/v1/players/player-1/events")
+        performAsync(mockMvc, post("/api/v1/players/player-1/events")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -69,7 +71,7 @@ class GameEventControllerTest {
         when(gameEventService.recordEvent(eq("unknown"), any(RecordEventRequest.class)))
                 .thenThrow(new PlayerNotFoundException("unknown"));
 
-        mockMvc.perform(post("/api/v1/players/unknown/events")
+        performAsync(mockMvc, post("/api/v1/players/unknown/events")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -83,7 +85,7 @@ class GameEventControllerTest {
 
     @Test
     void recordEvent_whenEventTypeMissing_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/players/player-1/events")
+        performAsync(mockMvc, post("/api/v1/players/player-1/events")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -103,9 +105,9 @@ class GameEventControllerTest {
         EventsPageResponse response = new EventsPageResponse(List.of(dto), "next-page-token");
 
         when(gameEventService.getEvents(eq("player-1"), eq(20), isNull(), isNull()))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/players/player-1/events"))
+        performAsync(mockMvc, get("/api/v1/players/player-1/events"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.events").isArray())
                 .andExpect(jsonPath("$.events[0].eventId").value("evt-1"))
@@ -118,7 +120,7 @@ class GameEventControllerTest {
         when(gameEventService.getEvents(eq("unknown"), eq(20), isNull(), isNull()))
                 .thenThrow(new PlayerNotFoundException("unknown"));
 
-        mockMvc.perform(get("/api/v1/players/unknown/events"))
+        performAsync(mockMvc, get("/api/v1/players/unknown/events"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
     }
@@ -128,7 +130,7 @@ class GameEventControllerTest {
         when(gameEventService.getEvents(eq("player-1"), eq(10), isNull(), eq("bad-token")))
                 .thenThrow(new InvalidPaginationTokenException("bad-token"));
 
-        mockMvc.perform(get("/api/v1/players/player-1/events")
+        performAsync(mockMvc, get("/api/v1/players/player-1/events")
                         .param("limit", "10")
                         .param("nextToken", "bad-token"))
                 .andExpect(status().isBadRequest())
@@ -139,9 +141,9 @@ class GameEventControllerTest {
     void listEvents_whenScanIndexForwardProvided_shouldPassQueryParam() throws Exception {
         EventsPageResponse response = new EventsPageResponse(List.of(), null);
         when(gameEventService.getEvents(eq("player-1"), eq(15), eq(Boolean.TRUE), isNull()))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/players/player-1/events")
+        performAsync(mockMvc, get("/api/v1/players/player-1/events")
                         .param("limit", "15")
                         .param("scanIndexForward", "true"))
                 .andExpect(status().isOk())
@@ -155,9 +157,9 @@ class GameEventControllerTest {
         EventsPageResponse response = new EventsPageResponse(List.of(dto), "");
 
         when(gameEventService.getEvents(eq("player-1"), eq(20), isNull(), isNull()))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/players/player-1/events"))
+        performAsync(mockMvc, get("/api/v1/players/player-1/events"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.events").isArray())
                 .andExpect(jsonPath("$.nextToken").doesNotExist());

@@ -76,11 +76,13 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
     /** Bean schema for {@link GameEvent}, used to marshal earn transaction events. */
     private static final TableSchema<GameEvent> EVENT_SCHEMA = TableSchema.fromBean(GameEvent.class);
 
-    /** DynamoDB ADD expression used in earn transactions. Atomic credit with no version check. */
-    private static final String EARN_CURRENCY_EXPRESSION = "ADD currencyBalance :amount";
+    /** Update expression crediting currency and bumping the wallet version under optimistic lock. */
+    private static final String EARN_CURRENCY_EXPRESSION =
+            "SET currencyBalance = currencyBalance + :amount, version = version + :one";
 
-    /** Condition that guards the wallet ADD: fails if the wallet item was never created. */
-    private static final String EARN_WALLET_CONDITION = "attribute_exists(PK)";
+    /** Condition that guards the wallet credit: wallet must exist and version must match. */
+    private static final String EARN_WALLET_CONDITION =
+            "attribute_exists(PK) AND version = :expectedVersion";
 
     /** Enhanced client for transact writes and batch get. */
     private final DynamoDbEnhancedAsyncClient enhancedClient;
@@ -101,13 +103,13 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
     /** Wallet table handle (same physical table, different schema). */
     private final DynamoDbAsyncTable<PlayerWallet> walletTable;
 
-    /** GameEvents table handle for purchase transactions. */
+    /** GameEvent table handle for purchase transactions. */
     private final DynamoDbAsyncTable<GameEvent> gameEventsTable;
 
     /** Physical PlayerState table name, used in low-level earn transaction. */
     private final String tableName;
 
-    /** Physical GameEvents table name, used in low-level earn transaction. */
+    /** Physical GameEvent table name, used in low-level earn transaction. */
     private final String gameEventsTableName;
 
     /**
@@ -116,7 +118,7 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
      * @param enhancedClient      the high-level enhanced async client
      * @param dynamoDbClient      the low-level async client (for earn ADD transactions)
      * @param tableName           PlayerState table name
-     * @param gameEventsTableName GameEvents table name
+     * @param gameEventsTableName GameEvent table name
      */
     public HighLevelDynamoDbPlayerStateRepository(
             DynamoDbEnhancedAsyncClient enhancedClient,
@@ -258,26 +260,28 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
      * {@inheritDoc}
      *
      * @implNote The enhanced client's {@link TransactUpdateItemEnhancedRequest} applies
-     *           {@link VersionedRecordExtension} automatically, which would add an unwanted
-     *           version condition to the credit. Instead, this method delegates to the injected
-     *           {@link DynamoDbAsyncClient} and builds the {@code TransactWriteItems} request
-     *           manually using a raw {@code ADD currencyBalance :amount} expression so the
-     *           increment is server-side atomic with no version conflict. Index 0 is the wallet
-     *           ADD (guarded by {@code attribute_exists(PK)}). Index 1 is the event PUT
-     *           (guarded by {@code attribute_not_exists(PK)} for idempotency).
+     *           {@link VersionedRecordExtension} automatically with its own attribute handling, so
+     *           this method delegates to the injected {@link DynamoDbAsyncClient} and builds the
+     *           {@code TransactWriteItems} request manually. The wallet credit increments
+     *           {@code currencyBalance} and bumps {@code version} under an explicit optimistic-lock
+     *           guard ({@code version = :expectedVersion}), mirroring the purchase debit. Index 0 is
+     *           the wallet credit. Index 1 is the event PUT (guarded by
+     *           {@code attribute_not_exists(PK)} for idempotency).
      */
     @Override
-    public CompletableFuture<Void> earnCurrencyTransaction(String playerId, long amount,
+    public CompletableFuture<Void> earnCurrencyTransaction(PlayerWallet currentWallet, long amount,
                                                             GameEvent rewardEvent) {
-        // Uses the low-level client to bypass VersionedRecordExtension on the wallet ADD
+        // Uses the low-level client to control the wallet version handling explicitly
         Map<String, AttributeValue> walletKey = Map.of(
-                "PK", AttributeValue.fromS(PlayerProfile.PK_PREFIX + playerId),
+                "PK", AttributeValue.fromS(currentWallet.getPartitionKey()),
                 "SK", AttributeValue.fromS(PlayerWallet.SK_WALLET));
 
         Map<String, AttributeValue> earnValues = Map.of(
-                ":amount", AttributeValue.fromN(String.valueOf(amount)));
+                ":amount", AttributeValue.fromN(String.valueOf(amount)),
+                ":one", AttributeValue.fromN("1"),
+                ":expectedVersion", AttributeValue.fromN(String.valueOf(currentWallet.getVersion())));
 
-        // Index 0: atomic ADD on currencyBalance, guarded only by item existence
+        // Index 0: credit with version guard and version bump for optimistic locking
         Update addCurrency = Update.builder()
                 .tableName(tableName)
                 .key(walletKey)
@@ -307,7 +311,7 @@ public class HighLevelDynamoDbPlayerStateRepository implements PlayerStateReposi
 
         return dynamoDbClient.transactWriteItems(txRequest)
                 .thenRun(() -> logger.debug("Earn currency transaction completed [playerId={}]",
-                        playerId));
+                        currentWallet.getPlayerId()));
     }
 
     /**

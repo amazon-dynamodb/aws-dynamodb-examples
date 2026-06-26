@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,9 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.Play
  * Loads the full player snapshot composed from PROFILE, WALLET, and SETTINGS items.
  *
  * <p>Used by write services so write responses always return a consistent player state shape.
+ *
+ * <p>Returns {@link CompletableFuture} so the write services can compose without blocking Tomcat
+ * worker threads.
  */
 @Service
 public class PlayerSnapshotService {
@@ -43,27 +48,27 @@ public class PlayerSnapshotService {
      * Loads profile, wallet, and settings for the given player id.
      *
      * @param playerId the internal player id
-     * @return full player snapshot DTO
+     * @return future of the full player snapshot DTO
      * @throws PlayerNotFoundException if no profile or settings exist for the given id
      * @throws WalletNotFoundException if the profile exists but the wallet row is missing
      */
-    public PlayerSnapshot load(String playerId) {
-        PlayerProfile profile = playerStateRepository.getPlayer(playerId).join();
-        if (profile == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
-
-        PlayerWallet wallet = playerStateRepository.getWallet(playerId).join();
-        if (wallet == null) {
-            throw new WalletNotFoundException(playerId);
-        }
-
-        PlayerSettings settings = playerStateRepository.getSettings(playerId).join();
-        if (settings == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
-
-        logger.debug("Loaded player snapshot [playerId={}]", playerId);
-        return playerMapper.toPlayerSnapshot(profile, wallet, settings);
+    public CompletableFuture<PlayerSnapshot> load(String playerId) {
+        return playerStateRepository.getPlayer(playerId).thenCompose(profile -> {
+            if (profile == null) {
+                throw new PlayerNotFoundException(playerId);
+            }
+            return playerStateRepository.getWallet(playerId).thenCompose(wallet -> {
+                if (wallet == null) {
+                    throw new WalletNotFoundException(playerId);
+                }
+                return playerStateRepository.getSettings(playerId).thenApply(settings -> {
+                    if (settings == null) {
+                        throw new PlayerNotFoundException(playerId);
+                    }
+                    logger.debug("Loaded player snapshot [playerId={}]", playerId);
+                    return playerMapper.toPlayerSnapshot(profile, wallet, settings);
+                });
+            });
+        });
     }
 }

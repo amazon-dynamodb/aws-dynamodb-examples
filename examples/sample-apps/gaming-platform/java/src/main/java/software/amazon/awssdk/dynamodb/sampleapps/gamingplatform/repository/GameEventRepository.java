@@ -7,7 +7,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.GameEvent
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /**
- * Data access contract for the GameEvents DynamoDB table.
+ * Data access contract for the GameEvent DynamoDB table.
  *
  * <p>Two implementations are provided: one using the low-level {@code DynamoDbAsyncClient}
  * and one using the high-level {@code DynamoDbEnhancedAsyncClient}. The active implementation

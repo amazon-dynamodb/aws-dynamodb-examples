@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -29,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>Uses Testcontainers to run DynamoDB Local once per JVM. If Docker is unavailable, tests skip
  * via JUnit assumptions instead of failing the build.
  *
- * <p>Before each test, all three tables (PlayerState, GameEvents, LeaderboardAggregate) are
+ * <p>Before each test, all three tables (PlayerState, GameEvent, Leaderboard) are
  * deleted, recreated, and seeded via {@link DynamoDbTableTestReset}.
  *
  * <p>Subclasses inherit {@link #mockMvc} and HTTP helper methods such as {@link #registerPlayer}
@@ -157,7 +159,7 @@ public abstract class AbstractIntegrationTest {
                 }
                 """.formatted(platform, platformUserId, playerName);
 
-        String responseJson = mockMvc.perform(post("/api/v1/players")
+        String responseJson = performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
@@ -179,7 +181,7 @@ public abstract class AbstractIntegrationTest {
      * @throws Exception if the HTTP request fails
      */
     protected void recordPvp(String playerId, String matchId) throws Exception {
-        mockMvc.perform(post("/api/v1/players/{playerId}/events", playerId)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/events", playerId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

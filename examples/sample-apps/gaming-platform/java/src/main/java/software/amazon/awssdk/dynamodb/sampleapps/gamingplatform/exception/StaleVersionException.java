@@ -24,20 +24,10 @@ public class StaleVersionException extends RuntimeException {
         this.expectedVersion = expectedVersion;
     }
 
-    /**
-     * Returns the player id.
-     *
-     * @return player id
-     */
     public String getPlayerId() {
         return playerId;
     }
 
-    /**
-     * Returns the version the caller expected.
-     *
-     * @return expected version value
-     */
     public long getExpectedVersion() {
         return expectedVersion;
     }

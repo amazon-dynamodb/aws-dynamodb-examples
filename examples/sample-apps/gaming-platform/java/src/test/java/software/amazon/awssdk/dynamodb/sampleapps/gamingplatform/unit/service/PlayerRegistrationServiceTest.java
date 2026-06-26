@@ -78,9 +78,9 @@ class PlayerRegistrationServiceTest {
         when(walletMapper.defaultWallet("player-1")).thenReturn(defaultWallet);
         when(repository.createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(playerSnapshotService.load("player-1")).thenReturn(snapshot);
+        when(playerSnapshotService.load("player-1")).thenReturn(CompletableFuture.completedFuture(snapshot));
 
-        RegisterPlayerResponse result = service.registerPlayer(request);
+        RegisterPlayerResponse result = service.registerPlayer(request).join();
 
         assertThat(result.created()).isTrue();
         assertThat(result.playerId()).isEqualTo("player-1");
@@ -103,9 +103,9 @@ class PlayerRegistrationServiceTest {
         when(repository.createPlayerWithSettingsAndWallet(profile, defaultSettings, defaultWallet)).thenReturn(
                 CompletableFuture.failedFuture(transactionCanceled()));
         when(repository.getPlayer("player-1")).thenReturn(CompletableFuture.completedFuture(existing));
-        when(playerSnapshotService.load("player-1")).thenReturn(snapshot);
+        when(playerSnapshotService.load("player-1")).thenReturn(CompletableFuture.completedFuture(snapshot));
 
-        RegisterPlayerResponse result = service.registerPlayer(request);
+        RegisterPlayerResponse result = service.registerPlayer(request).join();
 
         assertThat(result.created()).isFalse();
         assertThat(result.playerId()).isEqualTo("player-1");
@@ -126,8 +126,9 @@ class PlayerRegistrationServiceTest {
                 CompletableFuture.failedFuture(transactionCanceled()));
         when(repository.getPlayer("player-1")).thenReturn(CompletableFuture.completedFuture(existing));
 
-        assertThatThrownBy(() -> service.registerPlayer(request))
-                .isInstanceOf(PlayerAlreadyExistsException.class);
+        assertThatThrownBy(() -> service.registerPlayer(request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(PlayerAlreadyExistsException.class);
     }
 
     @Test
@@ -144,9 +145,9 @@ class PlayerRegistrationServiceTest {
         when(repository.createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet))
                 .thenReturn(CompletableFuture.failedFuture(transactionConflict()))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(playerSnapshotService.load("player-1")).thenReturn(snapshot);
+        when(playerSnapshotService.load("player-1")).thenReturn(CompletableFuture.completedFuture(snapshot));
 
-        RegisterPlayerResponse result = service.registerPlayer(request);
+        RegisterPlayerResponse result = service.registerPlayer(request).join();
 
         assertThat(result.created()).isTrue();
         verify(repository, times(2))
@@ -168,8 +169,9 @@ class PlayerRegistrationServiceTest {
         when(repository.createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet))
                 .thenReturn(CompletableFuture.failedFuture(transactionConflict()));
 
-        assertThatThrownBy(() -> service.registerPlayer(request))
-                .isInstanceOf(TransactionCanceledException.class);
+        assertThatThrownBy(() -> service.registerPlayer(request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(TransactionCanceledException.class);
 
         verify(repository, times(3))
                 .createPlayerWithSettingsAndWallet(draft, defaultSettings, defaultWallet);

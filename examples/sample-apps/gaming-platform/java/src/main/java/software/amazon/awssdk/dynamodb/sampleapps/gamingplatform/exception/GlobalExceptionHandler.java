@@ -1,19 +1,27 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception;
 
 import java.time.Instant;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Path;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.ErrorResponse;
 import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
@@ -48,6 +56,24 @@ public class GlobalExceptionHandler {
         logger.warn("Client supplied an invalid pagination token [errorCode=INVALID_PAGINATION_TOKEN]");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse("INVALID_PAGINATION_TOKEN", ex.getMessage(), Instant.now()));
+    }
+
+    /**
+     * Maps {@link InvalidEventAttributesException} to HTTP 400 with code {@code INVALID_EVENT_ATTRIBUTES}.
+     *
+     * <p>Raised when an event is missing an attribute its type requires, for example a {@code PVP_MATCH}
+     * without a numeric {@code playerScore}. Rejecting the request stops a non-projecting event from
+     * being persisted silently.
+     *
+     * @param ex describes the missing or invalid event attribute
+     * @return JSON error envelope
+     */
+    @ExceptionHandler(InvalidEventAttributesException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidEventAttributes(InvalidEventAttributesException ex) {
+        logger.warn("Event attributes failed validation [errorCode=INVALID_EVENT_ATTRIBUTES, detail={}]",
+                ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("INVALID_EVENT_ATTRIBUTES", ex.getMessage(), Instant.now()));
     }
 
     /**
@@ -195,6 +221,145 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Maps an unreadable or malformed request body to HTTP 400.
+     *
+     * <p>Spring raises {@link HttpMessageNotReadableException} while deserializing the request body.
+     * This happens <em>before</em> {@code @Valid} bean validation runs, so without this handler the
+     * exception falls through to the generic {@link Exception} handler and is reported as HTTP 500.
+     * Three distinct client errors are surfaced with their own codes:
+     *
+     * <ul>
+     *   <li>{@code VALIDATION_ERROR} when the JSON is syntactically valid but a value cannot be bound
+     *       to the target type, for example an unknown enum constant such as
+     *       {@code reason=NOT_A_REASON} or a non-numeric value for a {@code long} field. The message
+     *       names the offending field.</li>
+     *   <li>{@code MALFORMED_REQUEST_BODY} when a body was sent but is not parseable as JSON, for
+     *       example truncated or syntactically invalid JSON.</li>
+     *   <li>{@code MISSING_REQUEST_BODY} when no request body was sent at all. Note that an empty JSON
+     *       object body is present and valid, so it instead fails later with
+     *       {@code VALIDATION_ERROR} on the {@code @NotBlank} fields.</li>
+     * </ul>
+     *
+     * @param ex the body-parsing failure raised by the configured {@code HttpMessageConverter}
+     * @return JSON error envelope
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleNotReadable(HttpMessageNotReadableException ex) {
+        Throwable cause = ex.getCause();
+        if (cause instanceof InvalidFormatException ife) {
+            String detail = describeInvalidValue(ife);
+            logger.warn("Request body contained an invalid value [errorCode=VALIDATION_ERROR, detail={}]",
+                    detail);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("VALIDATION_ERROR", detail, Instant.now()));
+        }
+        if (cause instanceof JsonProcessingException) {
+            logger.warn("Request body is not valid JSON [errorCode=MALFORMED_REQUEST_BODY, detail={}]",
+                    ex.getMostSpecificCause().getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("MALFORMED_REQUEST_BODY",
+                            "Request body is not valid JSON", Instant.now()));
+        }
+        logger.warn("Request body is absent [errorCode=MISSING_REQUEST_BODY]");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("MISSING_REQUEST_BODY",
+                        "Request body is required", Instant.now()));
+    }
+
+    /**
+     * Builds a client-facing message for a value that parsed as JSON but could not be bound to the
+     * target field type. Names the offending field and, when the target is an enum, lists the
+     * accepted constants so the caller can correct the request.
+     *
+     * @param ife Jackson mismatch carrying the field path, offending value and target type
+     * @return human-readable validation detail
+     */
+    private String describeInvalidValue(InvalidFormatException ife) {
+        String field = ife.getPath().stream()
+                .map(JsonMappingException.Reference::getFieldName)
+                .filter(name -> name != null)
+                .reduce((first, second) -> second)
+                .orElse("requestBody");
+        return invalidValueDetail(field);
+    }
+
+    /**
+     * Builds a uniform {@code "field: invalid value"} detail for a value that could not be bound to
+     * its target type. The accepted values are intentionally not listed so the response does not
+     * disclose the allowed set (for example the valid enum constants). Shared by the request-body
+     * ({@link InvalidFormatException}) and query/path-parameter
+     * ({@link MethodArgumentTypeMismatchException}) mismatch handlers so both surface identical
+     * messages.
+     *
+     * @param field the offending field or parameter name
+     * @return human-readable validation detail
+     */
+    private String invalidValueDetail(String field) {
+        return field + ": invalid value";
+    }
+
+    /**
+     * Maps a query or path parameter that cannot be converted to the declared type to HTTP 400
+     * {@code VALIDATION_ERROR}.
+     *
+     * <p>Spring raises {@link MethodArgumentTypeMismatchException} when, for example, {@code ?limit=abc}
+     * is sent for an {@code int} parameter or {@code ?scanIndexForward=maybe} for a {@code Boolean}.
+     * Without this handler the exception falls through to the generic {@link Exception} handler and is
+     * reported as HTTP 500, even though it is a client error. This mirrors the request-body mismatch
+     * mapping so a bad value reports the same way regardless of where it appears.
+     *
+     * @param ex carries the parameter name, offending value and required type
+     * @return JSON error envelope naming the offending parameter
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String detail = invalidValueDetail(ex.getName());
+        logger.warn("Request parameter could not be bound [errorCode=VALIDATION_ERROR, detail={}]",
+                detail);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("VALIDATION_ERROR", detail, Instant.now()));
+    }
+
+    /**
+     * Maps an unsupported HTTP method to HTTP 405 {@code METHOD_NOT_ALLOWED}.
+     *
+     * <p>Spring raises {@link HttpRequestMethodNotSupportedException} when a known path is called with
+     * a verb it does not support, for example {@code DELETE /api/v1/players}. Without this handler the
+     * catch-all {@link Exception} mapping would mask the correct 405 as a 500.
+     *
+     * @param ex carries the offending method and the methods the handler does support
+     * @return JSON error envelope, including an {@code Allow} header when Spring supplies one
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+        logger.warn("Unsupported HTTP method [errorCode=METHOD_NOT_ALLOWED, detail={}]", ex.getMessage());
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED);
+        if (ex.getSupportedHttpMethods() != null) {
+            builder.allow(ex.getSupportedHttpMethods().toArray(new org.springframework.http.HttpMethod[0]));
+        }
+        return builder.body(new ErrorResponse("METHOD_NOT_ALLOWED", ex.getMessage(), Instant.now()));
+    }
+
+    /**
+     * Maps an unsupported request {@code Content-Type} to HTTP 415 {@code UNSUPPORTED_MEDIA_TYPE}.
+     *
+     * <p>Spring raises {@link HttpMediaTypeNotSupportedException} when a POST/PATCH body is sent with a
+     * content type the endpoint cannot read, for example {@code text/plain} instead of
+     * {@code application/json}, or with no {@code Content-Type} at all. Without this handler the
+     * catch-all {@link Exception} mapping would mask the correct 415 as a 500.
+     *
+     * @param ex carries the offending media type
+     * @return JSON error envelope
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException ex) {
+        logger.warn("Unsupported media type [errorCode=UNSUPPORTED_MEDIA_TYPE, detail={}]", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(new ErrorResponse("UNSUPPORTED_MEDIA_TYPE",
+                        "Content-Type must be application/json", Instant.now()));
+    }
+
+    /**
      * Maps {@link IllegalArgumentException} to HTTP 400 for bad arguments such as invalid path values.
      *
      * @param ex the illegal argument detail
@@ -242,7 +407,7 @@ public class GlobalExceptionHandler {
      * Fallback handler for unexpected exceptions. Maps to HTTP 500 without leaking internals.
      *
      * <p>Service code calls DynamoDB through {@code CompletableFuture.join()}, which wraps a
-     * dependency fault in a {@link java.util.concurrent.CompletionException}. The cause chain is
+     * dependency fault in a {@link CompletionException}. The cause chain is
      * scanned first so a wrapped DynamoDB fault still gets a distinct, routable error code rather than
      * a blanket {@code INTERNAL_ERROR}.
      *
@@ -323,7 +488,7 @@ public class GlobalExceptionHandler {
 
     /**
      * Walks the cause chain looking for a {@link DynamoDbException}, since {@code join()} wraps a
-     * dependency fault in a {@link java.util.concurrent.CompletionException}.
+     * dependency fault in a {@link CompletionException}.
      *
      * @param throwable the top-level exception caught by the fallback handler
      * @return the first {@link DynamoDbException} in the cause chain, or {@code null} if none

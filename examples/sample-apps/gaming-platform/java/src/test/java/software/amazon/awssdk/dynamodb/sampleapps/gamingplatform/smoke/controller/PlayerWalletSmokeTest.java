@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import java.util.UUID;
 
 import org.junit.jupiter.api.Tag;
@@ -28,17 +30,17 @@ class PlayerWalletSmokeTest extends AbstractSmokeTest {
 
     @Test
     void getWallet_whenSeededPlayer_shouldReturnWalletSliceWithoutRootPlayerId() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1200));
     }
 
     @Test
-    void earnCurrency_whenCompleted_shouldReturnFullSnapshotWithStatus() throws Exception {
+    void earnCurrency_whenCompleted_shouldReturnWalletFocusedResponseWithStatus() throws Exception {
         String clientRequestId = "smoke-earn-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -50,7 +52,8 @@ class PlayerWalletSmokeTest extends AbstractSmokeTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.playerId").value(SeedPlayerData.SEED_PLAYER_1))
-                .andExpect(jsonPath("$.profile.playerName").value("AlphaWolf"))
-                .andExpect(jsonPath("$.wallet.currencyBalance").value(1250));
+                .andExpect(jsonPath("$.wallet.currencyBalance").value(1250))
+                .andExpect(jsonPath("$.profile").doesNotExist())
+                .andExpect(jsonPath("$.settings").doesNotExist());
     }
 }

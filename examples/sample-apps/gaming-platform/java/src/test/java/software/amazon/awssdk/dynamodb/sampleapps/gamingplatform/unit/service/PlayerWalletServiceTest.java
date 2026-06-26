@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -52,7 +53,7 @@ class PlayerWalletServiceTest {
         PlayerWallet wallet = buildWallet("player-1", 1200L, 3L);
         when(repository.getWallet("player-1")).thenReturn(CompletableFuture.completedFuture(wallet));
 
-        GetWalletResponse response = service.getWallet("player-1");
+        GetWalletResponse response = service.getWallet("player-1").join();
 
         assertThat(response.wallet().currencyBalance()).isEqualTo(1200L);
         assertThat(response.wallet().version()).isEqualTo(3L);
@@ -62,8 +63,9 @@ class PlayerWalletServiceTest {
     void getWallet_whenWalletMissing_shouldThrowWalletNotFound() {
         when(repository.getWallet("missing")).thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> service.getWallet("missing"))
-                .isInstanceOf(WalletNotFoundException.class);
+        assertThatThrownBy(() -> service.getWallet("missing").join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(WalletNotFoundException.class);
     }
 
     /**

@@ -1,6 +1,6 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +13,7 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.Stale
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.PlayerSettingsMapper;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerSettings;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.util.TransactionRetry;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 
 /**
@@ -33,40 +34,33 @@ public class PlayerSettingsService {
     /** Maps settings models to DTOs. */
     private final PlayerSettingsMapper playerSettingsMapper;
 
-    /** Loads full player snapshots for write responses. */
-    private final PlayerSnapshotService playerSnapshotService;
-
     /**
      * Creates the service.
      *
      * @param playerStateRepository the active {@link PlayerStateRepository} implementation
      * @param playerSettingsMapper converts between domain models and DTOs
-     * @param playerSnapshotService loads full player snapshots after writes
      */
     public PlayerSettingsService(PlayerStateRepository playerStateRepository,
-                                 PlayerSettingsMapper playerSettingsMapper,
-                                 PlayerSnapshotService playerSnapshotService) {
+                                 PlayerSettingsMapper playerSettingsMapper) {
         this.playerStateRepository = playerStateRepository;
         this.playerSettingsMapper = playerSettingsMapper;
-        this.playerSnapshotService = playerSnapshotService;
     }
 
     /**
      * Retrieves settings for the given player.
      *
      * @param playerId the internal player id
-     * @return the settings slice response DTO
+     * @return future of the settings slice response DTO
      * @throws PlayerNotFoundException if no settings exist for the given id
      */
-    public GetSettingsResponse getSettings(String playerId) {
-        PlayerSettings settings = playerStateRepository.getSettings(playerId).join();
-
-        if (settings == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
-
-        logger.debug("Retrieved player settings [playerId={}]", playerId);
-        return new GetSettingsResponse(playerSettingsMapper.toSnapshot(settings));
+    public CompletableFuture<GetSettingsResponse> getSettings(String playerId) {
+        return playerStateRepository.getSettings(playerId).thenApply(settings -> {
+            if (settings == null) {
+                throw new PlayerNotFoundException(playerId);
+            }
+            logger.debug("Retrieved player settings [playerId={}]", playerId);
+            return new GetSettingsResponse(playerSettingsMapper.toSnapshot(settings));
+        });
     }
 
     /**
@@ -74,46 +68,46 @@ public class PlayerSettingsService {
      *
      * @param playerId the target player
      * @param request  contains optional field overrides and the expected version
-     * @return the full player snapshot after the update
+     * @return future of the updated settings slice after the update
      * @throws PlayerNotFoundException if no settings exist for the given id
      * @throws StaleVersionException   if the expected version does not match the current version
      */
-    public UpdatePlayerSettingsResponse updateSettings(String playerId,
-                                                       UpdatePlayerSettingsRequest request) {
-        PlayerSettings current = playerStateRepository.getSettings(playerId).join();
-        if (current == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
-
-        // Apply only non-null overrides (partial update)
-        if (request.notificationsEnabled() != null) {
-            current.setNotificationsEnabled(request.notificationsEnabled());
-        }
-        if (request.preferredLanguage() != null) {
-            current.setPreferredLanguage(request.preferredLanguage());
-        }
-        if (request.profileVisibility() != null) {
-            current.setProfileVisibility(request.profileVisibility());
-        }
-        current.setVersion(request.expectedVersion());
-
-        logger.debug("Updating player settings [playerId={}, expectedVersion={}]",
-                playerId, request.expectedVersion());
-
-        try {
-            playerStateRepository.updateSettings(current).join();
-            logger.debug("Player settings updated [playerId={}]", playerId);
-            var snapshot = playerSnapshotService.load(playerId);
-            return new UpdatePlayerSettingsResponse(
-                    snapshot.playerId(),
-                    snapshot.profile(),
-                    snapshot.wallet(),
-                    snapshot.settings());
-        } catch (CompletionException ex) {
-            if (ex.getCause() instanceof ConditionalCheckFailedException) {
-                throw new StaleVersionException(playerId, request.expectedVersion());
+    public CompletableFuture<UpdatePlayerSettingsResponse> updateSettings(String playerId,
+                                                                          UpdatePlayerSettingsRequest request) {
+        return playerStateRepository.getSettings(playerId).thenCompose(current -> {
+            if (current == null) {
+                throw new PlayerNotFoundException(playerId);
             }
-            throw ex;
-        }
+
+            // Apply only non-null overrides (partial update)
+            if (request.notificationsEnabled() != null) {
+                current.setNotificationsEnabled(request.notificationsEnabled());
+            }
+            if (request.preferredLanguage() != null) {
+                current.setPreferredLanguage(request.preferredLanguage());
+            }
+            if (request.profileVisibility() != null) {
+                current.setProfileVisibility(request.profileVisibility());
+            }
+            current.setVersion(request.expectedVersion());
+
+            logger.debug("Updating player settings [playerId={}, expectedVersion={}]",
+                    playerId, request.expectedVersion());
+
+            return playerStateRepository.updateSettings(current)
+                    .<PlayerSettings>exceptionallyCompose(error -> {
+                        Throwable cause = TransactionRetry.unwrap(error);
+                        if (cause instanceof ConditionalCheckFailedException) {
+                            return CompletableFuture.failedFuture(
+                                    new StaleVersionException(playerId, request.expectedVersion()));
+                        }
+                        return CompletableFuture.failedFuture(cause);
+                    })
+                    .thenApply(updated -> {
+                        logger.debug("Player settings updated [playerId={}]", playerId);
+                        return new UpdatePlayerSettingsResponse(
+                                playerId, playerSettingsMapper.toSnapshot(updated));
+                    });
+        });
     }
 }

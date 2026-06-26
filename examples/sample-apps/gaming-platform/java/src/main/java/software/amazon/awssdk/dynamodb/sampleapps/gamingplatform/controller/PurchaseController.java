@@ -10,6 +10,8 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -79,20 +81,23 @@ public class PurchaseController {
                     without charging twice. Rejected when balance is insufficient.""")
     @ApiResponse(responseCode = "200", description = "Purchase completed or idempotent replay with full snapshot",
             content = @Content(schema = @Schema(implementation = PurchaseResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (VALIDATION_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Player or wallet not found (PLAYER_NOT_FOUND or WALLET_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Player or wallet not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "409", description = "Insufficient funds or wallet version conflict (INSUFFICIENT_FUNDS or STALE_VERSION)",
+    @ApiResponse(responseCode = "409", description = "Insufficient funds or wallet version conflict",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping("/players/{playerId}/purchases")
-    public ResponseEntity<PurchaseResponse> purchase(
+    public CompletableFuture<ResponseEntity<PurchaseResponse>> purchase(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
@@ -101,7 +106,6 @@ public class PurchaseController {
             @Valid @RequestBody PurchaseRequest request) {
         logger.debug("Received purchase request [playerId={}, itemId={}, softCurrencyCost={}, clientRequestId={}]",
                 playerId, request.itemId(), request.softCurrencyCost(), request.clientRequestId());
-        PurchaseResponse response = purchaseService.executePurchase(playerId, request);
-        return ResponseEntity.ok(response);
+        return purchaseService.executePurchase(playerId, request).thenApply(ResponseEntity::ok);
     }
 }

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.controller;
 
+import java.util.concurrent.CompletableFuture;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -97,21 +99,21 @@ public class PlayerWalletController {
                     Debits happen only through the purchases endpoint.""")
     @ApiResponse(responseCode = "200", description = "Wallet slice found",
             content = @Content(schema = @Schema(implementation = GetWalletResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Wallet not found (WALLET_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Wallet not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/players/{playerId}/wallet")
-    public ResponseEntity<GetWalletResponse> getWallet(
+    public CompletableFuture<ResponseEntity<GetWalletResponse>> getWallet(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
             @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
             String playerId) {
         logger.debug("Received get player wallet request [playerId={}]", playerId);
-        return ResponseEntity.ok(playerWalletService.getWallet(playerId));
+        return playerWalletService.getWallet(playerId).thenApply(ResponseEntity::ok);
     }
 
     /**
@@ -136,24 +138,27 @@ public class PlayerWalletController {
                     Credits soft currency for match wins, daily login, level-up bonuses, or admin \
                     grants. Intended for trusted backends such as game servers, schedulers, or admin \
                     tooling. Atomically updates the wallet and writes a CURRENCY_GRANT GameEvent with \
-                    TransactWriteItems. Returns a full snapshot with playerId, profile, wallet, \
-                    settings, status, and earnEventId. The same clientRequestId returns status \
-                    IDEMPOTENT_REPLAY without double crediting. Valid reason values are MATCH_WIN, \
-                    LEVEL_UP_BONUS, DAILY_LOGIN, and ADMIN_GRANT. Protect this endpoint at the network \
-                    or auth layer.""")
-    @ApiResponse(responseCode = "200", description = "Credit applied or idempotent replay with full snapshot",
+                    TransactWriteItems. Returns a wallet-focused response with playerId, wallet \
+                    (balance and version), status, and earnEventId. The same clientRequestId returns \
+                    status IDEMPOTENT_REPLAY without double crediting. Valid reason values are \
+                    MATCH_WIN, LEVEL_UP_BONUS, DAILY_LOGIN, and ADMIN_GRANT. Protect this endpoint at \
+                    the network or auth layer.""")
+    @ApiResponse(responseCode = "200", description = "Credit applied or idempotent replay (wallet slice)",
             content = @Content(schema = @Schema(implementation = WalletEarnResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (VALIDATION_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Wallet not found (WALLET_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Wallet not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping("/players/{playerId}/wallet/earn")
-    public ResponseEntity<WalletEarnResponse> earnCurrency(
+    public CompletableFuture<ResponseEntity<WalletEarnResponse>> earnCurrency(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
@@ -162,7 +167,6 @@ public class PlayerWalletController {
             @Valid @RequestBody WalletEarnRequest request) {
         logger.debug("Received earn currency request [playerId={}, amount={}, reason={}, clientRequestId={}]",
                 playerId, request.amount(), request.reason(), request.clientRequestId());
-        WalletEarnResponse response = currencyRewardService.grantCurrency(playerId, request);
-        return ResponseEntity.ok(response);
+        return currencyRewardService.grantCurrency(playerId, request).thenApply(ResponseEntity::ok);
     }
 }

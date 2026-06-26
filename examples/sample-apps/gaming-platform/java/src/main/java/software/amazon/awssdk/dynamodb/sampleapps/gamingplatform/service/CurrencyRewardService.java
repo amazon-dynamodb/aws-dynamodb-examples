@@ -1,13 +1,15 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
 import java.util.List;
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletEarnRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletEarnResponse;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletSnapshot;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.StaleVersionException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.WalletNotFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.GameEventMapper;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.CurrencyEarnReason;
@@ -24,17 +26,17 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
  * Orchestrates all soft-currency earn paths (gameplay rewards, daily login, admin grants).
  *
  * <p>Every credit runs through {@link PlayerStateRepository#earnCurrencyTransaction}, which
- * atomically increments {@code currencyBalance} via a DynamoDB {@code ADD} expression and writes
- * a {@link GameEventType#CURRENCY_GRANT}
+ * atomically increments {@code currencyBalance} and bumps the wallet {@code version} under an
+ * optimistic-lock guard, and writes a {@link GameEventType#CURRENCY_GRANT}
  * audit event. The caller-supplied {@code clientRequestId} is embedded in the event sort key so
  * duplicate calls return {@code IDEMPOTENT_REPLAY} without crediting the player twice.
  *
      * <p><strong>Transaction index contract:</strong> the two transact items are ordered by
      * {@link WalletTransactItemOrder}.
      * <ul>
-     *   <li>{@link WalletTransactItemOrder#WALLET}: wallet {@code ADD} guarded by
-     *       {@code attribute_exists(PK)}. Fails only when the wallet item does not exist
-     *       (registration incomplete).</li>
+     *   <li>{@link WalletTransactItemOrder#WALLET}: wallet credit guarded by
+     *       {@code attribute_exists(PK) AND version = :expectedVersion}. A conditional failure here
+     *       means the wallet version moved since the pre-read (stale version).</li>
      *   <li>{@link WalletTransactItemOrder#EVENT}: event {@code PUT} guarded by
      *       {@code attribute_not_exists(PK)}. Fails when the same {@code clientRequestId} has been
      *       processed before (idempotent replay).</li>
@@ -57,22 +59,16 @@ public class CurrencyRewardService {
     /** Builds deterministic {@code CURRENCY_GRANT} events. */
     private final GameEventMapper gameEventMapper;
 
-    /** Loads full player snapshots for write responses. */
-    private final PlayerSnapshotService playerSnapshotService;
-
     /**
      * Constructs the service.
      *
      * @param playerStateRepository player-state and event data access
      * @param gameEventMapper builds earn events from request data
-     * @param playerSnapshotService loads full player snapshots after writes
      */
     public CurrencyRewardService(PlayerStateRepository playerStateRepository,
-                                 GameEventMapper gameEventMapper,
-                                 PlayerSnapshotService playerSnapshotService) {
+                                 GameEventMapper gameEventMapper) {
         this.playerStateRepository = playerStateRepository;
         this.gameEventMapper = gameEventMapper;
-        this.playerSnapshotService = playerSnapshotService;
     }
 
     /**
@@ -88,45 +84,55 @@ public class CurrencyRewardService {
      *
      * @param playerId the player to credit
      * @param request  amount, reason, and idempotency key
-     * @return outcome with status, full player snapshot, and event id
+     * @return future of the outcome with status, wallet state, and event id
      * @throws WalletNotFoundException if no wallet exists for the given player id
      */
-    public WalletEarnResponse grantCurrency(String playerId, WalletEarnRequest request) {
-        return TransactionRetry.runWithConflictRetry(() -> attemptGrantCurrency(playerId, request));
+    public CompletableFuture<WalletEarnResponse> grantCurrency(String playerId, WalletEarnRequest request) {
+        return TransactionRetry.runWithConflictRetryAsync(() -> attemptGrantCurrency(playerId, request));
     }
 
     /**
      * Runs a single earn attempt: reads the wallet, builds the event, and executes the transact.
      *
+     * <p>A {@code TransactionConflict} cancellation is re-thrown as a failed future so
+     * {@link TransactionRetry#runWithConflictRetryAsync} re-attempts. Other cancellations (idempotent
+     * replay, missing wallet) are resolved here without retry.
+     *
      * @param playerId the player to credit
      * @param request  amount, reason, and idempotency key
-     * @return outcome with status, full player snapshot, and event id
+     * @return future of the outcome with status, wallet state, and event id
      */
-    private WalletEarnResponse attemptGrantCurrency(String playerId, WalletEarnRequest request) {
-        PlayerWallet wallet = playerStateRepository.getWallet(playerId).join();
-        if (wallet == null) {
-            throw new WalletNotFoundException(playerId);
-        }
-
-        GameEvent rewardEvent = gameEventMapper.toCurrencyGrantEvent(
-                playerId, request.amount(), request.reason(), request.clientRequestId());
-
-        logger.debug("Granting currency [playerId={}, amount={}, reason={}, eventId={}]",
-                playerId, request.amount(), request.reason(), rewardEvent.getEventId());
-
-        // Atomic wallet ADD then event PUT with uniqueness guard, ordered by WalletTransactItemOrder
-        try {
-            playerStateRepository.earnCurrencyTransaction(playerId, request.amount(), rewardEvent).join();
-        } catch (CompletionException ex) {
-            if (ex.getCause() instanceof TransactionCanceledException transactionCanceledException) {
-                return handleTransactionCancellation(transactionCanceledException, playerId, rewardEvent);
+    private CompletableFuture<WalletEarnResponse> attemptGrantCurrency(String playerId, WalletEarnRequest request) {
+        return playerStateRepository.getWallet(playerId).thenCompose(wallet -> {
+            if (wallet == null) {
+                return CompletableFuture.<WalletEarnResponse>failedFuture(new WalletNotFoundException(playerId));
             }
-            throw ex;
-        }
 
-        logger.debug("Currency granted [status=COMPLETED, playerId={}, amount={}, reason={}, eventId={}]",
-                playerId, request.amount(), request.reason(), rewardEvent.getEventId());
-        return toEarnResponse(STATUS_COMPLETED, playerId, rewardEvent.getEventId());
+            GameEvent rewardEvent = gameEventMapper.toCurrencyGrantEvent(
+                    playerId, request.amount(), request.reason(), request.clientRequestId());
+
+            logger.debug("Granting currency [playerId={}, amount={}, reason={}, eventId={}]",
+                    playerId, request.amount(), request.reason(), rewardEvent.getEventId());
+
+            // Atomic wallet credit then event PUT with uniqueness guard, ordered by WalletTransactItemOrder
+            return playerStateRepository.earnCurrencyTransaction(wallet, request.amount(), rewardEvent)
+                    .thenApply(ignored -> {
+                        logger.debug("Currency granted [status=COMPLETED, playerId={}, amount={}, reason={}, eventId={}]",
+                                playerId, request.amount(), request.reason(), rewardEvent.getEventId());
+                        return completedResponse(playerId, wallet, request.amount(), rewardEvent.getEventId());
+                    })
+                    .exceptionallyCompose(error -> {
+                        Throwable cause = TransactionRetry.unwrap(error);
+                        if (cause instanceof TransactionCanceledException transactionCanceledException) {
+                            if (TransactionRetry.isTransactionConflict(transactionCanceledException)) {
+                                // Serializable conflict: propagate so the retry wrapper re-attempts.
+                                return CompletableFuture.<WalletEarnResponse>failedFuture(transactionCanceledException);
+                            }
+                            return handleTransactionCancellation(transactionCanceledException, playerId, wallet, rewardEvent);
+                        }
+                        return CompletableFuture.<WalletEarnResponse>failedFuture(cause);
+                    });
+        });
     }
 
     /**
@@ -136,10 +142,10 @@ public class CurrencyRewardService {
      * @param amount          positive currency amount
      * @param reason          origin of the credit
      * @param clientRequestId idempotency key
-     * @return earn outcome
+     * @return future of the earn outcome
      */
-    public WalletEarnResponse grantCurrency(String playerId, long amount,
-                                             CurrencyEarnReason reason, String clientRequestId) {
+    public CompletableFuture<WalletEarnResponse> grantCurrency(String playerId, long amount,
+                                                               CurrencyEarnReason reason, String clientRequestId) {
         return grantCurrency(playerId, new WalletEarnRequest(amount, reason, clientRequestId));
     }
 
@@ -151,13 +157,14 @@ public class CurrencyRewardService {
      * @param transactionCanceledException the transaction cancellation from DynamoDB
      * @param playerId    the player whose earn was attempted
      * @param rewardEvent the event that was part of the transaction
-     * @return an idempotent replay response when the event key already existed
-     * @throws WalletNotFoundException if the wallet condition check failed ({@link WalletTransactItemOrder#WALLET})
-     * @throws TransactionCanceledException if neither known index matches
+     * @return future of an idempotent replay response when the event key already existed, otherwise a
+     *     failed future carrying {@link WalletNotFoundException} or the original cancellation
      */
-    private WalletEarnResponse handleTransactionCancellation(TransactionCanceledException transactionCanceledException,
-                                                            String playerId,
-                                                            GameEvent rewardEvent) {
+    private CompletableFuture<WalletEarnResponse> handleTransactionCancellation(
+            TransactionCanceledException transactionCanceledException,
+            String playerId,
+            PlayerWallet wallet,
+            GameEvent rewardEvent) {
         List<CancellationReason> reasons = transactionCanceledException.cancellationReasons();
 
         // Event PUT failed. A duplicate clientRequestId means idempotent replay.
@@ -165,35 +172,55 @@ public class CurrencyRewardService {
         if (reasons.size() > eventIndex && isConditionalCheckFailed(reasons.get(eventIndex))) {
             logger.debug("Currency grant idempotent replay detected [status=IDEMPOTENT_REPLAY, playerId={}, eventId={}]",
                     playerId, rewardEvent.getEventId());
-            return toEarnResponse(STATUS_IDEMPOTENT_REPLAY, playerId, rewardEvent.getEventId());
+            return CompletableFuture.completedFuture(replayResponse(playerId, wallet, rewardEvent.getEventId()));
         }
 
-        // Wallet ADD failed because the wallet item does not exist.
+        // Wallet credit failed the optimistic-lock guard (version moved since the pre-read). The
+        // wallet existed at pre-read, so a conditional failure here is a stale version, not a missing
+        // wallet. Mirrors the purchase debit handling.
         int walletIndex = WalletTransactItemOrder.WALLET.index();
         if (reasons.size() > walletIndex && isConditionalCheckFailed(reasons.get(walletIndex))) {
-            throw new WalletNotFoundException(playerId);
+            return CompletableFuture.failedFuture(new StaleVersionException(playerId, wallet.getVersion()));
         }
 
-        throw transactionCanceledException;
+        return CompletableFuture.failedFuture(transactionCanceledException);
     }
 
     /**
-     * Loads the full player snapshot and wraps it in an earn response.
+     * Builds the {@link #STATUS_COMPLETED} response from the pre-credit wallet.
      *
-     * @param status  outcome label ({@link #STATUS_COMPLETED} or {@link #STATUS_IDEMPOTENT_REPLAY})
-     * @param playerId the credited player
-     * @param eventId  the reward event identifier
+     * <p>The earn increments {@code currencyBalance} by the credited amount and bumps the wallet
+     * {@code version} by one under an optimistic-lock guard, so the new balance is the pre-read
+     * balance plus the amount and the new version is the pre-read version plus one. Computing the
+     * response locally avoids any extra read after the write and is not subject to read-after-write
+     * staleness.
+     *
+     * @param playerId        the credited player
+     * @param preCreditWallet wallet read before the credit
+     * @param amount          positive currency amount just credited
+     * @param eventId         the reward event identifier
      * @return populated response DTO
      */
-    private WalletEarnResponse toEarnResponse(String status, String playerId, String eventId) {
-        var snapshot = playerSnapshotService.load(playerId);
-        return new WalletEarnResponse(
-                snapshot.playerId(),
-                snapshot.profile(),
-                snapshot.wallet(),
-                snapshot.settings(),
-                status,
-                eventId);
+    private WalletEarnResponse completedResponse(String playerId, PlayerWallet preCreditWallet,
+                                                 long amount, String eventId) {
+        WalletSnapshot wallet = new WalletSnapshot(
+                preCreditWallet.getCurrencyBalance() + amount, preCreditWallet.getVersion() + 1);
+        return new WalletEarnResponse(playerId, wallet, STATUS_COMPLETED, eventId);
+    }
+
+    /**
+     * Builds the {@link #STATUS_IDEMPOTENT_REPLAY} response from the wallet read at the start of this
+     * attempt, which already reflects the balance credited by the original request.
+     *
+     * @param playerId      the player whose earn was replayed
+     * @param currentWallet wallet read at the start of this attempt
+     * @param eventId       the original reward event identifier
+     * @return populated response DTO
+     */
+    private WalletEarnResponse replayResponse(String playerId, PlayerWallet currentWallet, String eventId) {
+        WalletSnapshot wallet = new WalletSnapshot(
+                currentWallet.getCurrencyBalance(), currentWallet.getVersion());
+        return new WalletEarnResponse(playerId, wallet, STATUS_IDEMPOTENT_REPLAY, eventId);
     }
 
     /**

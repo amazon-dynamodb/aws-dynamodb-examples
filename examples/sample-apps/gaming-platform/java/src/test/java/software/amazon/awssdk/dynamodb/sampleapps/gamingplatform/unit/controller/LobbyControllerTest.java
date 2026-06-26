@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.controller;
 
+import java.util.concurrent.CompletableFuture;
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
 import java.util.List;
 
 import org.junit.jupiter.api.Tag;
@@ -44,9 +46,9 @@ class LobbyControllerTest {
         LobbySummariesResponse response = new LobbySummariesResponse(
                 List.of(summary), List.of("player-unknown"));
 
-        when(lobbyService.getLobbySummaries(any(LobbySummariesRequest.class))).thenReturn(response);
+        when(lobbyService.getLobbySummaries(any(LobbySummariesRequest.class))).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -63,7 +65,7 @@ class LobbyControllerTest {
 
     @Test
     void getLobbySummaries_whenPlayerIdsEmpty_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -76,7 +78,7 @@ class LobbyControllerTest {
 
     @Test
     void getLobbySummaries_whenPlayerIdsMissing_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
@@ -88,9 +90,9 @@ class LobbyControllerTest {
         PlayerSummary summary = new PlayerSummary("player-1", "AlphaWolf", 10, "2026-01-15T10:00:00Z");
         PlatformPlayersResponse response = new PlatformPlayersResponse("PC", List.of(summary));
 
-        when(lobbyService.getPlayersByPlatform("PC", 20)).thenReturn(response);
+        when(lobbyService.getPlayersByPlatform("PC", 20)).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/lobbies/platform/PC"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/PC"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.platform").value("PC"))
                 .andExpect(jsonPath("$.players").isArray())
@@ -101,9 +103,9 @@ class LobbyControllerTest {
     void browseByPlatform_whenCustomLimitProvided_shouldReturnPlayers() throws Exception {
         PlatformPlayersResponse response = new PlatformPlayersResponse("IOS", List.of());
 
-        when(lobbyService.getPlayersByPlatform("IOS", 5)).thenReturn(response);
+        when(lobbyService.getPlayersByPlatform("IOS", 5)).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/lobbies/platform/IOS")
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/IOS")
                         .param("limit", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.platform").value("IOS"))
@@ -115,13 +117,13 @@ class LobbyControllerTest {
         when(lobbyService.getPlayersByPlatform("XBOX", 20))
                 .thenThrow(new IllegalArgumentException("Invalid platform: XBOX"));
 
-        mockMvc.perform(get("/api/v1/lobbies/platform/XBOX"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/XBOX"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void browseByPlatform_whenPlatformHasIllegalCharacter_shouldReturn400AndNotCallService() throws Exception {
-        mockMvc.perform(get("/api/v1/lobbies/platform/{platform}", "PC!"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/{platform}", "PC!"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
 

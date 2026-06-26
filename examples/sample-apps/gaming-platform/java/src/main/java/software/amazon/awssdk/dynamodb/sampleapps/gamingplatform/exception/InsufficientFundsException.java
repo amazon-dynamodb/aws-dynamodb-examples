@@ -7,14 +7,13 @@ package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception;
 public class InsufficientFundsException extends RuntimeException {
 
     /**
-     * Creates an exception with balance details.
+     * Creates an exception for an unaffordable purchase attempt.
      *
-     * @param playerId  the player attempting the purchase
-     * @param requiredAmount the cost of the item
-     * @param availableBalance the player's current balance
+     * @param playerId the player attempting the purchase
+     * @param itemId the requested item identifier
+     * @param requiredAmount the cost required to complete the purchase
      */
-    public InsufficientFundsException(String playerId, long requiredAmount, long availableBalance) {
-        super("Insufficient funds for player " + playerId
-                + ": required=" + requiredAmount + ", available=" + availableBalance);
+    public InsufficientFundsException(String playerId, String itemId, long requiredAmount) {
+        super("Insufficient funds to purchase item " + itemId + " with cost " + requiredAmount);
     }
 }

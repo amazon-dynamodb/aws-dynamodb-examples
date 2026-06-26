@@ -1,12 +1,13 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.GetWalletResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.WalletNotFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.PlayerWalletMapper;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerWallet;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
 
 /**
@@ -52,17 +53,16 @@ public class PlayerWalletService {
      * changed between reads, even though balance writes are not exposed through this service.
      *
      * @param playerId the internal player id
-     * @return wallet slice response
+     * @return future of the wallet slice response
      * @throws WalletNotFoundException if no wallet item exists for the given id
      */
-    public GetWalletResponse getWallet(String playerId) {
-        PlayerWallet wallet = playerStateRepository.getWallet(playerId).join();
-
-        if (wallet == null) {
-            throw new WalletNotFoundException(playerId);
-        }
-
-        logger.debug("Retrieved player wallet [playerId={}]", playerId);
-        return new GetWalletResponse(playerWalletMapper.toSnapshot(wallet));
+    public CompletableFuture<GetWalletResponse> getWallet(String playerId) {
+        return playerStateRepository.getWallet(playerId).thenApply(wallet -> {
+            if (wallet == null) {
+                throw new WalletNotFoundException(playerId);
+            }
+            logger.debug("Retrieved player wallet [playerId={}]", playerId);
+            return new GetWalletResponse(playerWalletMapper.toSnapshot(wallet));
+        });
     }
 }

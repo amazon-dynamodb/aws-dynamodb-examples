@@ -51,153 +51,72 @@ public class PlayerSettings {
     /** Optimistic lock version for conditional writes. */
     private long version;
 
-    /**
-     * Partition key (DynamoDB {@code PK}).
-     *
-     * @return partition key value
-     */
     @DynamoDbPartitionKey
     @DynamoDbAttribute("PK")
     public String getPartitionKey() {
         return partitionKey;
     }
 
-    /**
-     * Sets the partition key.
-     *
-     * @param partitionKey partition key value
-     */
     public void setPartitionKey(String partitionKey) {
         this.partitionKey = partitionKey;
     }
 
-    /**
-     * Sort key (DynamoDB {@code SK}).
-     *
-     * @return sort key value
-     */
     @DynamoDbSortKey
     @DynamoDbAttribute("SK")
     public String getSortKey() {
         return sortKey;
     }
 
-    /**
-     * Sets the sort key.
-     *
-     * @param sortKey sort key value
-     */
     public void setSortKey(String sortKey) {
         this.sortKey = sortKey;
     }
 
-    /**
-     * Returns the entity type discriminator.
-     *
-     * @return entity type string
-     */
     public String getEntityType() {
         return entityType;
     }
 
-    /**
-     * Sets the entity type discriminator.
-     *
-     * @param entityType entity type string
-     */
     public void setEntityType(String entityType) {
         this.entityType = entityType;
     }
 
-    /**
-     * Player id (denormalized from the partition key).
-     *
-     * @return player id
-     */
     public String getPlayerId() {
         return playerId;
     }
 
-    /**
-     * Sets the player id.
-     *
-     * @param playerId player id
-     */
     public void setPlayerId(String playerId) {
         this.playerId = playerId;
     }
 
-    /**
-     * Whether push notifications are enabled.
-     *
-     * @return {@code true} if notifications are enabled
-     */
     public boolean isNotificationsEnabled() {
         return notificationsEnabled;
     }
 
-    /**
-     * Sets the notifications-enabled flag.
-     *
-     * @param notificationsEnabled {@code true} to enable
-     */
     public void setNotificationsEnabled(boolean notificationsEnabled) {
         this.notificationsEnabled = notificationsEnabled;
     }
 
-    /**
-     * Preferred display language.
-     *
-     * @return language code
-     */
     public String getPreferredLanguage() {
         return preferredLanguage;
     }
 
-    /**
-     * Sets the preferred language.
-     *
-     * @param preferredLanguage language code
-     */
     public void setPreferredLanguage(String preferredLanguage) {
         this.preferredLanguage = preferredLanguage;
     }
 
-    /**
-     * Profile visibility setting.
-     *
-     * @return visibility level
-     */
     public String getProfileVisibility() {
         return profileVisibility;
     }
 
-    /**
-     * Sets the profile visibility.
-     *
-     * @param profileVisibility visibility level
-     */
     public void setProfileVisibility(String profileVisibility) {
         this.profileVisibility = profileVisibility;
     }
 
-    /**
-     * Optimistic lock version.
-     *
-     * @return version number
-     */
     @DynamoDbVersionAttribute
     public long getVersion() {
         return version;
     }
 
-    /**
-     * Sets the optimistic lock version.
-     *
-     * @param version version number
-     */
     public void setVersion(long version) {
         this.version = version;
     }
 }
-

@@ -6,7 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.LeaderboardEntry;
 
 /**
- * Data access contract for the LeaderboardAggregate DynamoDB table.
+ * Data access contract for the Leaderboard DynamoDB table.
  *
  * <p>Two implementations are provided: one using the low-level {@code DynamoDbAsyncClient}
  * and one using the high-level {@code DynamoDbEnhancedAsyncClient}. The active implementation

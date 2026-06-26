@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import java.util.UUID;
 
 import org.junit.jupiter.api.Tag;
@@ -30,7 +32,7 @@ class PurchaseSmokeTest extends AbstractSmokeTest {
     void completePurchase_whenFundsAvailable_shouldReturnFullSnapshotWithStatus() throws Exception {
         String clientRequestId = "smoke-purchase-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

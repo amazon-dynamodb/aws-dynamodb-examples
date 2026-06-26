@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.controller.LeaderboardController;
@@ -20,7 +22,7 @@ class LeaderboardSmokeTest extends AbstractSmokeTest {
 
     @Test
     void getLeaderboard_whenScopeProvided_shouldReturnLeaderboard() throws Exception {
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", "SEASON#default#MODE#ranked")
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", "SEASON#default#MODE#ranked")
                         .param("limit", "10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("SEASON#default#MODE#ranked"))

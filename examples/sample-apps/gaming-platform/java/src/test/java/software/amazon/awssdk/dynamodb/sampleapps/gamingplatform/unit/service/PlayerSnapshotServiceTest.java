@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -59,7 +60,7 @@ class PlayerSnapshotServiceTest {
         when(repository.getWallet(playerId)).thenReturn(CompletableFuture.completedFuture(wallet));
         when(repository.getSettings(playerId)).thenReturn(CompletableFuture.completedFuture(settings));
 
-        PlayerSnapshot snapshot = service.load(playerId);
+        PlayerSnapshot snapshot = service.load(playerId).join();
 
         assertThat(snapshot.playerId()).isEqualTo(playerId);
         assertThat(snapshot.profile().playerName()).isEqualTo("AlphaWolf");
@@ -71,8 +72,9 @@ class PlayerSnapshotServiceTest {
     void load_whenProfileMissing_shouldThrowPlayerNotFound() {
         when(repository.getPlayer("missing")).thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> service.load("missing"))
-                .isInstanceOf(PlayerNotFoundException.class);
+        assertThatThrownBy(() -> service.load("missing").join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(PlayerNotFoundException.class);
     }
 
     @Test
@@ -81,8 +83,9 @@ class PlayerSnapshotServiceTest {
         when(repository.getPlayer(playerId)).thenReturn(CompletableFuture.completedFuture(buildProfile(playerId)));
         when(repository.getWallet(playerId)).thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> service.load(playerId))
-                .isInstanceOf(WalletNotFoundException.class);
+        assertThatThrownBy(() -> service.load(playerId).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(WalletNotFoundException.class);
     }
 
     @Test
@@ -92,8 +95,9 @@ class PlayerSnapshotServiceTest {
         when(repository.getWallet(playerId)).thenReturn(CompletableFuture.completedFuture(buildWallet(playerId, 0, 1)));
         when(repository.getSettings(playerId)).thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> service.load(playerId))
-                .isInstanceOf(PlayerNotFoundException.class);
+        assertThatThrownBy(() -> service.load(playerId).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(PlayerNotFoundException.class);
     }
 
     /**

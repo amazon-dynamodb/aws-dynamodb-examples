@@ -21,6 +21,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import software.amazon.awssdk.core.waiters.WaiterResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.config.DynamoDbTableInitializer;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerProfile;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
@@ -29,6 +30,8 @@ import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableResponse;
 import software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.DescribeTableResponse;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTimeToLiveRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTimeToLiveResponse;
 import software.amazon.awssdk.services.dynamodb.model.GlobalSecondaryIndex;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
@@ -36,8 +39,11 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.ResourceInUseException;
 import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
+import software.amazon.awssdk.services.dynamodb.model.TimeToLiveDescription;
+import software.amazon.awssdk.services.dynamodb.model.TimeToLiveStatus;
 import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveRequest;
 import software.amazon.awssdk.services.dynamodb.model.UpdateTimeToLiveResponse;
+import software.amazon.awssdk.services.dynamodb.waiters.DynamoDbAsyncWaiter;
 
 /**
  * Unit tests for startup table creation and seed orchestration via {@link DynamoDbTableInitializer}.
@@ -50,13 +56,21 @@ class DynamoDbTableInitializerTest {
     private ApplicationContextRunner contextRunner;
 
     /**
-     * Resets the shared mock client and stubs the happy-path create/TTL/seed calls
+     * Resets the shared mock client and stubs the happy-path create, TTL, and seed calls
      * before each test.
      */
     @BeforeEach
     void setUp() {
         dynamoDbAsyncClient = mock(DynamoDbAsyncClient.class);
         stubCreateTableHappyPath();
+        stubTableActiveWaiter();
+        // TTL starts DISABLED so the initializer proceeds to enable it.
+        when(dynamoDbAsyncClient.describeTimeToLive(any(DescribeTimeToLiveRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(DescribeTimeToLiveResponse.builder()
+                        .timeToLiveDescription(TimeToLiveDescription.builder()
+                                .timeToLiveStatus(TimeToLiveStatus.DISABLED)
+                                .build())
+                        .build()));
         when(dynamoDbAsyncClient.updateTimeToLive(any(UpdateTimeToLiveRequest.class)))
                 .thenReturn(CompletableFuture.completedFuture(UpdateTimeToLiveResponse.builder().build()));
         when(dynamoDbAsyncClient.putItem(any(PutItemRequest.class)))
@@ -222,7 +236,7 @@ class DynamoDbTableInitializerTest {
     }
 
     /**
-     * Stubs the shared mock client to return a successful {@link CreateTableResponse} for any request.
+     * Stubs the mock client to return a successful CreateTableResponse for any request.
      */
     private void stubCreateTableHappyPath() {
         CompletableFuture<CreateTableResponse> success =
@@ -231,14 +245,27 @@ class DynamoDbTableInitializerTest {
                 .thenReturn(success);
     }
 
-    /** Supplies {@link DynamoDbAsyncClient} for {@link DynamoDbTableInitializer}'s runner. */
+    /**
+     * Stubs the async table-exists waiter so the initializer's wait-for-ACTIVE step completes
+     * immediately for every table.
+     */
+    @SuppressWarnings("unchecked")
+    private void stubTableActiveWaiter() {
+        DynamoDbAsyncWaiter waiter = mock(DynamoDbAsyncWaiter.class);
+        WaiterResponse<DescribeTableResponse> waiterResponse = mock(WaiterResponse.class);
+        when(waiter.waitUntilTableExists(any(DescribeTableRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(waiterResponse));
+        when(dynamoDbAsyncClient.waiter()).thenReturn(waiter);
+    }
+
+    /** Supplies DynamoDbAsyncClient for DynamoDbTableInitializer's runner. */
     @Configuration(proxyBeanMethods = false)
     static class DynamoClientInjection {
 
         /**
-         * Returns the client assigned from the active test fixture.
+         * Returns the client assigned for the active test fixture.
          *
-         * @return mocked {@link DynamoDbAsyncClient}
+         * @return mocked DynamoDbAsyncClient
          */
         @Bean
         DynamoDbAsyncClient dynamoDbAsyncClient() {

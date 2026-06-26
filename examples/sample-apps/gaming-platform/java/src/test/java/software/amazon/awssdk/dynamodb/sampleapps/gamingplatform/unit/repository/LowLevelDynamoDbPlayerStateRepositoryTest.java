@@ -179,15 +179,23 @@ class LowLevelDynamoDbPlayerStateRepositoryTest {
         event.setEventId("evt-earn");
         event.setPlayerId("p1");
 
-        repository.earnCurrencyTransaction("p1", 300L, event).join();
+        PlayerWallet wallet = new PlayerWallet();
+        wallet.setPartitionKey(PlayerProfile.PK_PREFIX + "p1");
+        wallet.setSortKey(PlayerWallet.SK_WALLET);
+        wallet.setPlayerId("p1");
+        wallet.setCurrencyBalance(1000L);
+        wallet.setVersion(1L);
+
+        repository.earnCurrencyTransaction(wallet, 300L, event).join();
 
         ArgumentCaptor<TransactWriteItemsRequest> captor =
                 ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
         verify(client).transactWriteItems(captor.capture());
         assertThat(captor.getValue().transactItems()).hasSize(2);
-        Update walletAdd = captor.getValue().transactItems().get(WalletTransactItemOrder.WALLET.index()).update();
-        assertThat(walletAdd.tableName()).isEqualTo("PlayerState");
-        assertThat(walletAdd.updateExpression()).containsIgnoringCase("ADD");
+        Update walletCredit = captor.getValue().transactItems().get(WalletTransactItemOrder.WALLET.index()).update();
+        assertThat(walletCredit.tableName()).isEqualTo("PlayerState");
+        assertThat(walletCredit.updateExpression()).contains("currencyBalance").contains("version");
+        assertThat(walletCredit.conditionExpression()).contains("version");
         var eventPut = captor.getValue().transactItems().get(WalletTransactItemOrder.EVENT.index()).put();
         assertThat(eventPut.tableName()).isEqualTo("GameEventsTable");
         assertThat(eventPut.conditionExpression()).contains("attribute_not_exists");

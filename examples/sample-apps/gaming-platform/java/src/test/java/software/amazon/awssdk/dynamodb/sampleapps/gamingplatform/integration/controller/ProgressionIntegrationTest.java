@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +32,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void updateProgression_whenValidPatch_shouldApplyXpAndReturnUpdatedProfile() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -52,7 +54,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void updateProgression_whenVersionStale_shouldReturn409() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -67,7 +69,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void updateProgression_whenPlayerUnknown_shouldReturn404() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/progression", "nonexistent-progression-player")
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/progression", "nonexistent-progression-player")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -82,7 +84,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void updateProgression_whenXpThresholdCrossed_shouldLevelUp() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -99,7 +101,7 @@ class ProgressionIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void updateProgression_whenUnknownFieldsPresent_shouldReturnWalletAndIgnoreUnknownFields() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,7 +31,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getSettings_whenSeededPlayer_shouldReturnSettingsSliceWithoutRootPlayerId() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.settings.notificationsEnabled").value(true))
@@ -41,7 +43,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getSettings_whenSeedPlayer_shouldReturnDefaultSettings() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.settings.notificationsEnabled").value(true))
                 .andExpect(jsonPath("$.settings.preferredLanguage").value("en"))
@@ -51,13 +53,13 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getSettings_whenPlayerUnknown_shouldReturn404() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/settings", "nonexistent-player"))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/settings", "nonexistent-player"))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void updateSettings_whenValidPatch_shouldReturnNewValues() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -77,7 +79,7 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void updateSettings_whenPartialPatch_shouldApplyUpdate() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_2)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_2)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -92,8 +94,36 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void updateSettings_whenProfileVisibilityValid_shouldApplyUpdate() throws Exception {
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_2)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "profileVisibility": "FRIENDS_ONLY",
+                                  "expectedVersion": 1
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.settings.profileVisibility").value("FRIENDS_ONLY"));
+    }
+
+    @Test
+    void updateSettings_whenProfileVisibilityInvalid_shouldReturn400() throws Exception {
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "profileVisibility": "SUPER_SECRET",
+                                  "expectedVersion": 1
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+    }
+
+    @Test
     void updateSettings_whenVersionStale_shouldReturn409() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -106,8 +136,8 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void updateSettings_whenValidPatch_shouldReturnFullSnapshotWithSiblings() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_3)
+    void updateSettings_whenValidPatch_shouldReturnSettingsFocusedResponse() throws Exception {
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_3)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -117,15 +147,15 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").value(SeedPlayerData.SEED_PLAYER_3))
-                .andExpect(jsonPath("$.profile.playerName").value("CosmicRay"))
-                .andExpect(jsonPath("$.wallet.currencyBalance").value(500))
                 .andExpect(jsonPath("$.settings.preferredLanguage").value("fr"))
-                .andExpect(jsonPath("$.settings.version").value(2));
+                .andExpect(jsonPath("$.settings.version").value(2))
+                .andExpect(jsonPath("$.profile").doesNotExist())
+                .andExpect(jsonPath("$.wallet").doesNotExist());
     }
 
     @Test
     void updateSettings_whenPlayerUnknown_shouldReturn404() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/settings", "nonexistent-settings-player")
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/settings", "nonexistent-settings-player")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -136,4 +166,3 @@ class PlayerSettingsIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 }
-

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import com.fasterxml.jackson.databind.JsonNode;
 
 import org.junit.jupiter.api.Tag;
@@ -29,7 +31,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     void recordEvent_whenPvpMatch_shouldPersistToDynamoDb() throws Exception {
         String playerId = registerPlayer("EventTestPlayer", "PC", "steam-evt-001");
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/events", playerId)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/events", playerId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -49,10 +51,32 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void recordEvent_whenPvpMatchMissingPlayerScore_shouldReturn400() throws Exception {
+        String playerId = registerPlayer("ScorelessPvp", "PC", "steam-evt-noscore");
+
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/events", playerId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "eventType": "PVP_MATCH",
+                                  "eventAttributes": {
+                                    "scope": "SEASON#default#MODE#ranked",
+                                    "score": 1500,
+                                    "opponent": "AgentJones",
+                                    "result": "WIN"
+                                  }
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("INVALID_EVENT_ATTRIBUTES"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("playerScore")));
+    }
+
+    @Test
     void recordEvent_whenPurchaseType_shouldPersistToDynamoDb() throws Exception {
         String playerId = registerPlayer("EconomyLedger", "PC", "steam-evt-eco");
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/events", playerId)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/events", playerId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -72,7 +96,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     void recordEvent_whenLevelProgressType_shouldPersistToDynamoDb() throws Exception {
         String playerId = registerPlayer("LevelGrinder", "PC", "steam-evt-lvl");
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/events", playerId)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/events", playerId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -89,7 +113,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void recordEvent_whenPlayerMissing_shouldReturn404() throws Exception {
-        mockMvc.perform(post("/api/v1/players/nonexistent-player/events")
+        performAsync(mockMvc, post("/api/v1/players/nonexistent-player/events")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -103,7 +127,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void listEvents_whenPlayerUnknown_shouldReturn404() throws Exception {
-        mockMvc.perform(get("/api/v1/players/nonexistent-player/events"))
+        performAsync(mockMvc, get("/api/v1/players/nonexistent-player/events"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
     }
@@ -112,7 +136,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
     void listEvents_whenSinglePage_shouldOmitNextToken() throws Exception {
         String playerId = registerPlayer("PaginationNoTokenPlayer", "PC", "steam-pag-001");
 
-        mockMvc.perform(get("/api/v1/players/{playerId}/events", playerId))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/events", playerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.events").isArray())
                 .andExpect(jsonPath("$.nextToken").doesNotExist());
@@ -123,7 +147,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
         String playerId = registerPlayer("PaginationMultiPage", "PC", "steam-pag-mp-002");
 
         for (int i = 0; i < 22; i++) {
-            mockMvc.perform(post("/api/v1/players/{playerId}/events", playerId)
+            performAsync(mockMvc, post("/api/v1/players/{playerId}/events", playerId)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
                                     {
@@ -137,7 +161,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
                     .andExpect(status().isCreated());
         }
 
-        MvcResult first = mockMvc.perform(get("/api/v1/players/{playerId}/events", playerId)
+        MvcResult first = performAsync(mockMvc, get("/api/v1/players/{playerId}/events", playerId)
                         .queryParam("limit", "20"))
                 .andExpect(status().isOk())
                 .andReturn();
@@ -146,7 +170,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
         assertThat(pageOne.path("events")).hasSize(20);
         assertThat(pageOne.path("nextToken").isMissingNode()).isFalse();
 
-        mockMvc.perform(get("/api/v1/players/{playerId}/events", playerId)
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/events", playerId)
                         .queryParam("limit", "20")
                         .queryParam("nextToken", pageOne.get("nextToken").asText()))
                 .andExpect(status().isOk())
@@ -164,7 +188,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
         Thread.sleep(5);
         recordPvp(playerId, "match-c");
 
-        JsonNode tree = objectMapper.readTree(mockMvc.perform(
+        JsonNode tree = objectMapper.readTree(performAsync(mockMvc, 
                         get("/api/v1/players/{playerId}/events", playerId).queryParam("limit", "10"))
                 .andExpect(status().isOk())
                 .andReturn()
@@ -187,7 +211,7 @@ class GameEventIntegrationTest extends AbstractIntegrationTest {
         Thread.sleep(5);
         recordPvp(playerId, "m-3");
 
-        JsonNode tree = objectMapper.readTree(mockMvc.perform(
+        JsonNode tree = objectMapper.readTree(performAsync(mockMvc, 
                         get("/api/v1/players/{playerId}/events", playerId)
                                 .queryParam("limit", "10")
                                 .queryParam("scanIndexForward", "true"))

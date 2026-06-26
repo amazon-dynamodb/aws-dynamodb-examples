@@ -1,12 +1,13 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.GetProfileResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.PlayerNotFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.PlayerMapper;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerProfile;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
 
 /**
@@ -45,17 +46,16 @@ public class PlayerProfileService {
      * Retrieves the profile slice for the given player id.
      *
      * @param playerId the internal player id
-     * @return the profile slice response DTO
+     * @return future of the profile slice response DTO
      * @throws PlayerNotFoundException if no profile exists for the given id
      */
-    public GetProfileResponse getProfile(String playerId) {
-        PlayerProfile profile = playerStateRepository.getPlayer(playerId).join();
-
-        if (profile == null) {
-            throw new PlayerNotFoundException(playerId);
-        }
-
-        logger.debug("Retrieved player profile [playerId={}]", playerId);
-        return new GetProfileResponse(playerMapper.toProfileSnapshot(profile));
+    public CompletableFuture<GetProfileResponse> getProfile(String playerId) {
+        return playerStateRepository.getPlayer(playerId).thenApply(profile -> {
+            if (profile == null) {
+                throw new PlayerNotFoundException(playerId);
+            }
+            logger.debug("Retrieved player profile [playerId={}]", playerId);
+            return new GetProfileResponse(playerMapper.toProfileSnapshot(profile));
+        });
     }
 }

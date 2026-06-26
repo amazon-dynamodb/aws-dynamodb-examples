@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.controller;
 
+import java.util.concurrent.CompletableFuture;
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,9 +52,9 @@ class PlayerControllerTest {
     void registerPlayer_whenNewAccount_shouldReturn201WithFullSnapshot() throws Exception {
         RegisterPlayerResponse response = registerResponse("player-1", "TestPlayer", "PC", 1, 0, 0, 1, true);
 
-        when(registrationService.registerPlayer(any(RegisterPlayerRequest.class))).thenReturn(response);
+        when(registrationService.registerPlayer(any(RegisterPlayerRequest.class))).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -73,9 +75,9 @@ class PlayerControllerTest {
     void registerPlayer_whenIdempotentReplay_shouldReturn200WithExistingSnapshot() throws Exception {
         RegisterPlayerResponse response = registerResponse("player-1", "TestPlayer", "PC", 5, 1000, 500, 3, false);
 
-        when(registrationService.registerPlayer(any(RegisterPlayerRequest.class))).thenReturn(response);
+        when(registrationService.registerPlayer(any(RegisterPlayerRequest.class))).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -94,7 +96,7 @@ class PlayerControllerTest {
         when(registrationService.registerPlayer(any(RegisterPlayerRequest.class)))
                 .thenThrow(new PlayerAlreadyExistsException("player-1"));
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -109,7 +111,7 @@ class PlayerControllerTest {
 
     @Test
     void registerPlayer_whenPlatformMissing_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -126,9 +128,9 @@ class PlayerControllerTest {
         GetProfileResponse profileResponse = new GetProfileResponse(
                 new ProfileSnapshot("AlphaWolf", "PC", 10, 3500, "2026-01-15T10:00:00Z", 1));
 
-        when(profileService.getProfile("player-1")).thenReturn(profileResponse);
+        when(profileService.getProfile("player-1")).thenReturn(CompletableFuture.completedFuture(profileResponse));
 
-        mockMvc.perform(get("/api/v1/players/player-1/profile"))
+        performAsync(mockMvc, get("/api/v1/players/player-1/profile"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.profile.playerName").value("AlphaWolf"))
@@ -140,7 +142,7 @@ class PlayerControllerTest {
         when(profileService.getProfile("unknown"))
                 .thenThrow(new PlayerNotFoundException("unknown"));
 
-        mockMvc.perform(get("/api/v1/players/unknown/profile"))
+        performAsync(mockMvc, get("/api/v1/players/unknown/profile"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
     }
@@ -149,7 +151,7 @@ class PlayerControllerTest {
     void getProfile_whenPlayerIdTooLong_shouldReturn400AndNotCallService() throws Exception {
         String tooLong = "a".repeat(65);
 
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", tooLong))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", tooLong))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
 
@@ -158,7 +160,7 @@ class PlayerControllerTest {
 
     @Test
     void getProfile_whenPlayerIdHasIllegalCharacter_shouldReturn400AndNotCallService() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", "bad!id"))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", "bad!id"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
 

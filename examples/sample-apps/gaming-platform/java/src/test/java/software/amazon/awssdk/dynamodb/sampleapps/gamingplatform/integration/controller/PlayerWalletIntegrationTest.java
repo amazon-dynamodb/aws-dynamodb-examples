@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import java.util.Map;
 import java.util.UUID;
 
@@ -27,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * <p>Extends {@link AbstractIntegrationTest} with MockMvc and DynamoDB Local. Covers balance
  * retrieval, currency credit, idempotent replay on the same {@code clientRequestId},
- * wallet-not-found paths, validation errors, and snapshot response shapes.
+ * wallet-not-found paths, validation errors, and the wallet-focused response shape.
  */
 @Tag("integration")
 class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
@@ -46,7 +48,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getWallet_whenSeededPlayer_shouldReturnWalletSliceWithoutRootPlayerId() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1200))
@@ -57,7 +59,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getWallet_whenSeededPlayer_shouldReturnWallet() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/wallet", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1200))
                 .andExpect(jsonPath("$.wallet.version").value(1));
@@ -67,7 +69,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
     void earnCurrency_whenValidRequest_shouldCreditWallet() throws Exception {
         String clientRequestId = "integration-earn-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_2)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_2)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -80,6 +82,7 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.playerId").value(SeedPlayerData.SEED_PLAYER_2))
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1100))
+                .andExpect(jsonPath("$.wallet.version").value(2))
                 .andExpect(jsonPath("$.earnEventId").isNotEmpty());
     }
 
@@ -94,23 +97,24 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
                 }
                 """.formatted(clientRequestId);
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_2)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_2)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_2)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_2)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("IDEMPOTENT_REPLAY"))
-                .andExpect(jsonPath("$.wallet.currencyBalance").value(1025));
+                .andExpect(jsonPath("$.wallet.currencyBalance").value(1025))
+                .andExpect(jsonPath("$.wallet.version").value(2));
     }
 
     @Test
     void earnCurrency_whenPlayerUnknown_shouldReturn404() throws Exception {
-        mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", "unknown-wallet-player")
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/wallet/earn", "unknown-wallet-player")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -146,16 +150,16 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
                 .item(profileOnly)
                 .build()).join();
 
-        mockMvc.perform(get("/api/v1/players/{playerId}/wallet", playerId))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/wallet", playerId))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("WALLET_NOT_FOUND"));
     }
 
     @Test
-    void earnCurrency_whenCompleted_shouldReturnFullSnapshotWithOperationFields() throws Exception {
-        String clientRequestId = "snapshot-contract-earn-" + UUID.randomUUID();
+    void earnCurrency_whenCompleted_shouldReturnWalletFocusedResponse() throws Exception {
+        String clientRequestId = "wallet-contract-earn-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_4)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_4)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -167,15 +171,16 @@ class PlayerWalletIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").value(SeedPlayerData.SEED_PLAYER_4))
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.profile.playerName").value("DeltaStrike"))
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(775))
-                .andExpect(jsonPath("$.settings.preferredLanguage").value("en"))
-                .andExpect(jsonPath("$.earnEventId").isNotEmpty());
+                .andExpect(jsonPath("$.wallet.version").value(2))
+                .andExpect(jsonPath("$.earnEventId").isNotEmpty())
+                .andExpect(jsonPath("$.profile").doesNotExist())
+                .andExpect(jsonPath("$.settings").doesNotExist());
     }
 
     @Test
     void earnCurrency_whenAmountNotPositive_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/wallet/earn", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

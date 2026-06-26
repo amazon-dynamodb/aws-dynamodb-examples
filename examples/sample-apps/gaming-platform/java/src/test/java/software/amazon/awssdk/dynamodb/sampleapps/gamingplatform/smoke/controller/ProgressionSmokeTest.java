@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -24,7 +26,7 @@ class ProgressionSmokeTest extends AbstractSmokeTest {
 
     @Test
     void updateProgression_whenValidPatch_shouldReturnFullSnapshotAtRoot() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -42,7 +44,7 @@ class ProgressionSmokeTest extends AbstractSmokeTest {
 
     @Test
     void updateProgression_whenVersionStale_shouldReturn409() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, patch("/api/v1/players/{playerId}/progression", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

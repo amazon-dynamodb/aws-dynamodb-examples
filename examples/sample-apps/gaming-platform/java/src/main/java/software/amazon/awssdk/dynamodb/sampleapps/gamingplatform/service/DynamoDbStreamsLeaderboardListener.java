@@ -1,5 +1,6 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -44,8 +45,8 @@ import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException
 import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsAsyncClient;
 
 /**
- * Polls the GameEvents DynamoDB Stream for {@link GameEventType#PVP_MATCH} inserts and
- * writes corresponding leaderboard entries to the LeaderboardAggregate table.
+ * Polls the GameEvent DynamoDB Stream for {@link GameEventType#PVP_MATCH} inserts and
+ * writes corresponding leaderboard entries to the Leaderboard table.
  *
  * <p>A single-threaded {@link ScheduledExecutorService} drives shard discovery and record
  * consumption, with in-memory checkpoints and bounded retries.
@@ -150,7 +151,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
     /** Persists projected leaderboard rows. */
     private final LeaderboardRepository leaderboardRepository;
 
-    /** Physical GameEvents table name whose stream is consumed. */
+    /** Physical GameEvent table name whose stream is consumed. */
     private final String gameEventsTableName;
 
     /** Cold-start iterator type from configuration. */
@@ -181,7 +182,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
      * @param dynamoDbClient        resolves table to stream ARN
      * @param streamsClient         shard iterators and records
      * @param leaderboardRepository writes leaderboard entries extracted from stream records
-     * @param gameEventsTableName   the GameEvents table whose stream is consumed
+     * @param gameEventsTableName   the GameEvent table whose stream is consumed
      * @param iteratorTypeRaw       {@link ShardIteratorType#name()} for example {@code LATEST} (default)
      *                              or {@code TRIM_HORIZON}
      */
@@ -495,9 +496,12 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
                                                      String iterator) {
         try {
             return fetchRecords(iterator);
-        } catch (CompletionException e) {
-            // Distinguish transient iterator issues from permanent failures
-            Throwable cause = e.getCause();
+        } catch (CancellationException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            // Distinguish transient iterator issues from permanent failures. The SDK exception may be
+            // thrown directly (joinIfRunning's get() path) or wrapped in a CompletionException (join()).
+            Throwable cause = unwrapStreamFailure(e);
             if (cause instanceof ExpiredIteratorException) {
                 logger.debug("Shard iterator expired and will be renewed [shardId={}, lastSequenceNumber={}]",
                         shardId, checkpoint.lastSequenceNumber != null ? checkpoint.lastSequenceNumber : "none");
@@ -505,7 +509,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
                 return fetchRecords(openShardIterator(streamArn, shardId, checkpoint));
             }
             if (cause instanceof TrimmedDataAccessException) {
-                logger.warn("Stream read past trim horizon; reopening shard iterator [shardId={}, iteratorType={}]",
+                logger.warn("Stream read past trim horizon, reopening shard iterator [shardId={}, iteratorType={}]",
                         shardId, shardIteratorType);
                 checkpoint.nextIterator = null;
                 checkpoint.lastSequenceNumber = null;
@@ -513,6 +517,24 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
             }
             throw e;
         }
+    }
+
+    /**
+     * Unwraps the underlying SDK failure from a {@link CompletionException} when present.
+     *
+     * <p>{@link #joinIfRunning} can surface the same SDK exception in two shapes: the raw
+     * {@link RuntimeException} (when it cancels long SDK retries during shutdown via
+     * {@code future.get()}) or wrapped in a {@link CompletionException} (via {@code future.join()}).
+     * Callers inspect the returned cause so iterator renewal handles both shapes.
+     *
+     * @param e the runtime exception thrown by a blocking stream call
+     * @return the wrapped cause when {@code e} is a {@link CompletionException}, otherwise {@code e}
+     */
+    private static Throwable unwrapStreamFailure(RuntimeException e) {
+        if (e instanceof CompletionException && e.getCause() != null) {
+            return e.getCause();
+        }
+        return e;
     }
 
     /**
@@ -558,9 +580,11 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
             String iterator = blockingShardIterator(req.build());
             checkpoint.nextIterator = iterator;
             return iterator;
-        } catch (CompletionException e) {
-            if (useAfterSequence && e.getCause() instanceof TrimmedDataAccessException) {
-                logger.warn("Stream data trimmed before checkpoint sequence; reopening shard iterator "
+        } catch (CancellationException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            if (useAfterSequence && unwrapStreamFailure(e) instanceof TrimmedDataAccessException) {
+                logger.warn("Stream data trimmed before checkpoint sequence, reopening shard iterator "
                                 + "[shardId={}, sequenceNumber={}, iteratorType={}]",
                         shardId, checkpoint.lastSequenceNumber, shardIteratorType);
                 checkpoint.lastSequenceNumber = null;
@@ -612,7 +636,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
      */
     private static final class BoundedLruMap<K, V> extends LinkedHashMap<K, V> {
 
-        /** Serialization id required because {@link LinkedHashMap} is {@link java.io.Serializable}. */
+        /** Serialization id required because {@link LinkedHashMap} is {@link Serializable}. */
         private static final long serialVersionUID = 1L;
 
         /** Maximum number of entries retained before the eldest is evicted. */
@@ -728,7 +752,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
 
         AttributeValue playerScoreAttribute = newImage.get("playerScore");
         if (playerScoreAttribute == null || playerScoreAttribute.n() == null) {
-            logger.warn("PVP match event missing score; skipping leaderboard write [eventType=PVP_MATCH, playerId={}]",
+            logger.warn("PVP match event missing score, skipping leaderboard write [eventType=PVP_MATCH, playerId={}]",
                     playerIdAttr.s());
             return Optional.empty();
         }
@@ -787,7 +811,7 @@ public class DynamoDbStreamsLeaderboardListener implements SmartLifecycle {
         } catch (Exception e) {
             int attempt = retryCounts.merge(recordKey, 1, Integer::sum);
             if (attempt >= MAX_PROCESS_RETRIES) {
-                logger.error("Leaderboard write failed after maximum retries; skipping poison record "
+                logger.error("Leaderboard write failed after maximum retries, skipping poison record "
                                 + "[playerId={}, attemptCount={}, maxAttempts={}]",
                         entry.getPlayerId(), attempt, MAX_PROCESS_RETRIES, e);
                 retryCounts.remove(recordKey);

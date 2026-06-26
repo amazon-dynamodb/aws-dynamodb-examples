@@ -102,10 +102,10 @@ class ProgressionServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(current));
         when(playerStateRepository.updateProgression(eq(PLAYER_ID), eq(5500L), eq(6), eq(1L)))
                 .thenReturn(CompletableFuture.completedFuture(updated));
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(snapshot);
+        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(snapshot));
 
         ProgressionUpdateRequest request = new ProgressionUpdateRequest(500L, "QUEST_REWARD", 1L);
-        ProgressionUpdateResponse response = progressionService.updateProgression(PLAYER_ID, request);
+        ProgressionUpdateResponse response = progressionService.updateProgression(PLAYER_ID, request).join();
 
         assertThat(response.profile()).isNotNull();
         assertThat(response.appliedEventId()).isNull();
@@ -124,8 +124,9 @@ class ProgressionServiceTest {
 
         ProgressionUpdateRequest request = new ProgressionUpdateRequest(200L, null, 1L);
 
-        assertThatThrownBy(() -> progressionService.updateProgression(PLAYER_ID, request))
-                .isInstanceOf(StaleVersionException.class);
+        assertThatThrownBy(() -> progressionService.updateProgression(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(StaleVersionException.class);
     }
 
     @Test
@@ -134,9 +135,7 @@ class ProgressionServiceTest {
         PlayerProfile updated = buildProfile(1100L, 2);
         WalletEarnResponse earnResponse = new WalletEarnResponse(
                 PLAYER_ID,
-                new ProfileSnapshot("TestPlayer", "STEAM", 2, 1100L, "2025-01-01T00:00:00Z", 2),
                 new WalletSnapshot(ProgressionService.LEVEL_UP_BONUS, 2L),
-                new SettingsSnapshot(true, "en", "PUBLIC", 1),
                 "COMPLETED",
                 "evt-1");
         PlayerSnapshot snapshot = sampleSnapshot(1100L, 2, ProgressionService.LEVEL_UP_BONUS, 2L);
@@ -147,11 +146,11 @@ class ProgressionServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(updated));
         when(currencyRewardService.grantCurrency(
                 eq(PLAYER_ID), eq(ProgressionService.LEVEL_UP_BONUS), eq(CurrencyEarnReason.LEVEL_UP_BONUS), anyString()))
-                .thenReturn(earnResponse);
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(snapshot);
+                .thenReturn(CompletableFuture.completedFuture(earnResponse));
+        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(snapshot));
 
         ProgressionUpdateRequest request = new ProgressionUpdateRequest(200L, "LEVEL_COMPLETE", 1L);
-        ProgressionUpdateResponse response = progressionService.updateProgression(PLAYER_ID, request);
+        ProgressionUpdateResponse response = progressionService.updateProgression(PLAYER_ID, request).join();
 
         assertThat(response.profile()).isNotNull();
         verify(currencyRewardService).grantCurrency(
@@ -165,8 +164,9 @@ class ProgressionServiceTest {
 
         ProgressionUpdateRequest request = new ProgressionUpdateRequest(100L, null, 1L);
 
-        assertThatThrownBy(() -> progressionService.updateProgression(PLAYER_ID, request))
-                .isInstanceOf(PlayerNotFoundException.class);
+        assertThatThrownBy(() -> progressionService.updateProgression(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(PlayerNotFoundException.class);
     }
 
     /**

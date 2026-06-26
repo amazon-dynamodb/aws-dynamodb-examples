@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -25,7 +27,7 @@ class LobbySmokeTest extends AbstractSmokeTest {
 
     @Test
     void getLobbySummaries_whenPlayersSeeded_shouldReturnSummaries() throws Exception {
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -38,7 +40,7 @@ class LobbySmokeTest extends AbstractSmokeTest {
 
     @Test
     void browseByPlatform_whenPlatformProvided_shouldReturnPlayers() throws Exception {
-        mockMvc.perform(get("/api/v1/lobbies/platform/PC"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/PC"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.platform").value("PC"))
                 .andExpect(jsonPath("$.players").isArray());

@@ -8,6 +8,9 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+
+import java.util.concurrent.CompletableFuture;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -76,11 +79,17 @@ public class LeaderboardController {
                     100. PVP_MATCH events from GameEvents maintain these aggregates asynchronously.""")
     @ApiResponse(responseCode = "200", description = "Leaderboard returned, may be empty",
             content = @Content(schema = @Schema(implementation = LeaderboardResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/leaderboards/{scope}")
-    public ResponseEntity<LeaderboardResponse> getLeaderboard(
+    public CompletableFuture<ResponseEntity<LeaderboardResponse>> getLeaderboard(
             @Parameter(description = "Leaderboard scope key, for example SEASON#default#MODE#ranked")
             @PathVariable
             @Size(max = SCOPE_MAX_LENGTH)
@@ -90,6 +99,6 @@ public class LeaderboardController {
             @RequestParam(defaultValue = "10") int limit) {
         logger.debug("Received get leaderboard request [scope={}, limit={}]",
                 scope, limit);
-        return ResponseEntity.ok(leaderboardQueryService.getTopN(scope, limit));
+        return leaderboardQueryService.getTopN(scope, limit).thenApply(ResponseEntity::ok);
     }
 }

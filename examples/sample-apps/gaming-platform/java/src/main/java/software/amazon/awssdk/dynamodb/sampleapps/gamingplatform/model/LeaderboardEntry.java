@@ -6,7 +6,7 @@ import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbParti
 import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.DynamoDbSortKey;
 
 /**
- * DynamoDB bean representing a leaderboard entry in the LeaderboardAggregate table.
+ * DynamoDB bean representing a leaderboard entry in the Leaderboard table.
  *
  * <p>Key layout: {@code PK = LEADERBOARD#<scope>} and
  * {@code SK = SCORE#<paddedScore>#USER#<playerId>}.
@@ -73,132 +73,62 @@ public class LeaderboardEntry {
         return PK_PREFIX + scope;
     }
 
-    /**
-     * Partition key (DynamoDB {@code PK}).
-     *
-     * @return partition key value
-     */
     @DynamoDbPartitionKey
     @DynamoDbAttribute("PK")
     public String getPartitionKey() {
         return partitionKey;
     }
 
-    /**
-     * Sets the partition key.
-     *
-     * @param partitionKey partition key value
-     */
     public void setPartitionKey(String partitionKey) {
         this.partitionKey = partitionKey;
     }
 
-    /**
-     * Sort key (DynamoDB {@code SK}).
-     *
-     * @return sort key value
-     */
     @DynamoDbSortKey
     @DynamoDbAttribute("SK")
     public String getSortKey() {
         return sortKey;
     }
 
-    /**
-     * Sets the sort key.
-     *
-     * @param sortKey sort key value
-     */
     public void setSortKey(String sortKey) {
         this.sortKey = sortKey;
     }
 
-    /**
-     * Entity type discriminator.
-     *
-     * @return entity type string
-     */
     public String getEntityType() {
         return entityType;
     }
 
-    /**
-     * Sets the entity type discriminator.
-     *
-     * @param entityType entity type string
-     */
     public void setEntityType(String entityType) {
         this.entityType = entityType;
     }
 
-    /**
-     * Player id on this leaderboard row.
-     *
-     * @return player id
-     */
     public String getPlayerId() {
         return playerId;
     }
 
-    /**
-     * Sets the player id.
-     *
-     * @param playerId player id
-     */
     public void setPlayerId(String playerId) {
         this.playerId = playerId;
     }
 
-    /**
-     * Cached display name.
-     *
-     * @return player name
-     */
     public String getPlayerName() {
         return playerName;
     }
 
-    /**
-     * Sets the display name.
-     *
-     * @param playerName display name
-     */
     public void setPlayerName(String playerName) {
         this.playerName = playerName;
     }
 
-    /**
-     * Leaderboard score used for ordering.
-     *
-     * @return score
-     */
     public long getScore() {
         return score;
     }
 
-    /**
-     * Sets the score.
-     *
-     * @param score aggregate score
-     */
     public void setScore(long score) {
         this.score = score;
     }
 
-    /**
-     * Last update time in ISO-8601 UTC.
-     *
-     * @return last updated timestamp
-     */
     public String getLastUpdatedAt() {
         return lastUpdatedAt;
     }
 
-    /**
-     * Sets last updated timestamp.
-     *
-     * @param lastUpdatedAt ISO-8601 UTC timestamp
-     */
     public void setLastUpdatedAt(String lastUpdatedAt) {
         this.lastUpdatedAt = lastUpdatedAt;
     }

@@ -1,45 +1,85 @@
 server:
+  # TCP port the embedded web server listens on.
   port: 8080
-  shutdown: graceful          # on SIGTERM, drain in-flight HTTP requests before closing the context
+  # On SIGTERM, stop accepting new requests and let in-flight ones finish before the context closes.
+  shutdown: graceful
 
 spring:
   application:
+    # Logical Spring application name, used in logs and management endpoints.
     name: gaming-platform
+  mvc:
+    async:
+      # Max time (ms) Spring MVC waits for an async controller result before timing out the request.
+      # Above DynamoDbConfig.API_CALL_TIMEOUT (5s): let the SDK finish or fail with a mapped error first.
+      request-timeout: 10000
   lifecycle:
-    timeout-per-shutdown-phase: 20s   # upper bound for each shutdown phase to drain in-flight work
+    # Upper bound for each shutdown phase to drain. In-flight DynamoDB calls are themselves bounded
+    # by the SDK apiCallTimeout, so the poller and request threads give up well inside this window.
+    timeout-per-shutdown-phase: 20s
 
 # Actuator is locked down so only /actuator/health is web-exposed and a profile override cannot
-# accidentally surface env, heapdump, or configprops. Health shows status only without component or
-# disk details to avoid leaking infrastructure information to unauthenticated callers.
+# accidentally surface env, heapdump, configprops, etc. Health shows status only without component
+# or disk details to avoid leaking infrastructure information to unauthenticated callers.
 management:
   endpoints:
     web:
       exposure:
-        include: health     # only health is published over HTTP
+        # Comma-separated list of actuator endpoints exposed over HTTP. Only health is published.
+        include: health
   endpoint:
     health:
-      show-details: never   # status only, no component or disk detail
+      # Detail level of the health endpoint response. never hides component and disk details so only status is shown.
+      show-details: never
 
 dynamodb:
-  endpoint: http://localhost:8000     # required: local or https://dynamodb.{region}.amazonaws.com
-  region: eu-west-1                   # required
-  client-type: high-level             # required: high-level | low-level
-  create-resources: true              # local dev: create tables, enable TTL, seed demo data at startup. Set false in production so the app only verifies tables exist (schema lives in IaC)
-  player-state-table-name: JavaGamingPlayerState
-  game-events-table-name: JavaGamingGameEvents
-  leaderboard-table-name: JavaGamingLeaderboard
-  game-events-ttl-seconds: 7776000    # event TTL in seconds, allowed range 60 to 31536000, enforced at startup
+  # Required. DynamoDB endpoint URL, either local or https://dynamodb.{region}.amazonaws.com
+  endpoint: http://localhost:8000
+  # Required. AWS region for the DynamoDB client.
+  region: eu-west-1
+  # Required. SDK mapping style, either high-level (enhanced client) or low-level.
+  client-type: high-level
+  # Local dev only. When true, the app creates the tables, enables TTL, and seeds demo players.
+  # In production, set false or omit the property. Create the tables beforehand (CDK, CloudFormation,
+  # Terraform, or console). The app then only verifies the tables exist at startup.
+  create-resources: true
+  # Name of the PlayerState table holding the profile, settings, and wallet items for each player.
+  player-state-table-name: JavaPlayerState
+  # Name of the GameEvent table holding the append-only event log, with a DynamoDB stream and TTL.
+  game-events-table-name: JavaGameEvent
+  # Name of the Leaderboard table holding the projected top-ranked rows.
+  leaderboard-table-name: JavaLeaderboard
+  # Seconds until each game event gets ttl = recordedAt + this (DynamoDB deletes eventually). Min 60, max 31536000.
+  game-events-ttl-seconds: 7776000
   streams:
-    iterator-type: LATEST             # optional: LATEST (default) | TRIM_HORIZON - sample tests use TRIM_HORIZON
+    # Optional. Shard iterator type when reading the DynamoDB stream. LATEST (default) reads only new records,
+    # TRIM_HORIZON reads from the oldest available record. Sample tests use TRIM_HORIZON.
+    iterator-type: LATEST
+
+# Bounded executor and tuning for the Spring MVC async (mvc-async-*) thread pool that completes and
+# writes CompletableFuture controller responses. A bounded pool is used instead of Spring's default
+# unbounded SimpleAsyncTaskExecutor so a burst cannot spawn one thread per in-flight request.
+gaming-platform:
+  mvc:
+    async:
+      # Core number of threads kept alive in the MVC async (mvc-async-*) executor pool.
+      core-pool-size: 10
+      # Maximum number of threads the MVC async executor pool can grow to under load.
+      max-pool-size: 50
+      # Number of queued async dispatches allowed before the pool rejects new ones.
+      queue-capacity: 100
 
 springdoc:
   api-docs:
+    # URL path where the generated OpenAPI JSON document is served.
     path: /api-docs
   # springdoc-openapi defaults to */*. Set application/json so /api-docs matches this JSON API.
   default-consumes-media-type: application/json
   default-produces-media-type: application/json
   swagger-ui:
+    # URL path where the interactive Swagger UI is served.
     path: /swagger-ui.html
+    # Order operations are listed in Swagger UI, sorted by HTTP method.
     operations-sorter: method
 
 ---
@@ -49,11 +89,13 @@ springdoc:
 spring:
   config:
     activate:
+      # Profile that must be active for this document block to apply.
       on-profile: prod
 
 springdoc:
   api-docs:
-    enabled: false      # disable serving the OpenAPI JSON in production
+    # Disable serving the OpenAPI JSON document in production.
+    enabled: false
   swagger-ui:
-    enabled: false      # disable serving the Swagger UI in production
-
+    # Disable serving the interactive Swagger UI in production.
+    enabled: false

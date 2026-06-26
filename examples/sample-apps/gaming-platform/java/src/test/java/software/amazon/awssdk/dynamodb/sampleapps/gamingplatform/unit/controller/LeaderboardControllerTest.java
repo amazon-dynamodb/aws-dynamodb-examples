@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.controller;
 
+import java.util.concurrent.CompletableFuture;
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
 import java.util.List;
 
 import org.junit.jupiter.api.Tag;
@@ -40,9 +42,9 @@ class LeaderboardControllerTest {
                         new LeaderboardEntryDto(1, "player-1", "AlphaWolf", 3000),
                         new LeaderboardEntryDto(2, "player-2", "BetaBear", 2500)));
 
-        when(leaderboardQueryService.getTopN(scope, 10)).thenReturn(response);
+        when(leaderboardQueryService.getTopN(scope, 10)).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", scope)
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", scope)
                         .param("limit", "10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value(scope))
@@ -59,9 +61,9 @@ class LeaderboardControllerTest {
         String scope = "SEASON#default#MODE#ranked";
         LeaderboardResponse response = new LeaderboardResponse(scope, List.of());
 
-        when(leaderboardQueryService.getTopN(scope, 10)).thenReturn(response);
+        when(leaderboardQueryService.getTopN(scope, 10)).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", scope))
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", scope))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value(scope))
                 .andExpect(jsonPath("$.entries").isEmpty());
@@ -72,9 +74,9 @@ class LeaderboardControllerTest {
         String scope = "SEASON#unknown#MODE#ranked";
         LeaderboardResponse response = new LeaderboardResponse(scope, List.of());
 
-        when(leaderboardQueryService.getTopN(scope, 5)).thenReturn(response);
+        when(leaderboardQueryService.getTopN(scope, 5)).thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", scope)
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", scope)
                         .param("limit", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.entries").isEmpty());
@@ -82,7 +84,7 @@ class LeaderboardControllerTest {
 
     @Test
     void getLeaderboard_whenScopeHasIllegalCharacter_shouldReturn400AndNotCallService() throws Exception {
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", "bad!scope"))
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", "bad!scope"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
 

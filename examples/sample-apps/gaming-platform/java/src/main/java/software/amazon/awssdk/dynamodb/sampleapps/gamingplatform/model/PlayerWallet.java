@@ -42,100 +42,56 @@ public class PlayerWallet {
     /** Optimistic lock version for conditional writes. */
     private long version;
 
-    /**
-     * Partition key (DynamoDB {@code PK}).
-     *
-     * @return partition key value
-     */
     @DynamoDbPartitionKey
     @DynamoDbAttribute("PK")
     public String getPartitionKey() {
         return partitionKey;
     }
 
-    /**
-     * Sets the partition key.
-     *
-     * @param partitionKey partition key value
-     */
     public void setPartitionKey(String partitionKey) {
         this.partitionKey = partitionKey;
     }
 
-    /**
-     * Sort key (DynamoDB {@code SK}).
-     *
-     * @return sort key value
-     */
     @DynamoDbSortKey
     @DynamoDbAttribute("SK")
     public String getSortKey() {
         return sortKey;
     }
 
-    /**
-     * Sets the sort key.
-     *
-     * @param sortKey sort key value
-     */
     public void setSortKey(String sortKey) {
         this.sortKey = sortKey;
     }
 
-    /**
-     * Entity type discriminator.
-     *
-     * @return entity type string
-     */
-    public String getEntityType() { return entityType; }
+    public String getEntityType() {
+        return entityType;
+    }
 
-    /**
-     * Sets the entity type discriminator.
-     *
-     * @param entityType entity type string
-     */
-    public void setEntityType(String entityType) { this.entityType = entityType; }
+    public void setEntityType(String entityType) {
+        this.entityType = entityType;
+    }
 
-    /**
-     * Business player id (denormalized from the partition key).
-     *
-     * @return player id
-     */
-    public String getPlayerId() { return playerId; }
+    public String getPlayerId() {
+        return playerId;
+    }
 
-    /**
-     * Sets the player id.
-     *
-     * @param playerId player id
-     */
-    public void setPlayerId(String playerId) { this.playerId = playerId; }
+    public void setPlayerId(String playerId) {
+        this.playerId = playerId;
+    }
 
-    /**
-     * Current soft currency balance.
-     *
-     * @return currency balance
-     */
-    public long getCurrencyBalance() { return currencyBalance; }
+    public long getCurrencyBalance() {
+        return currencyBalance;
+    }
 
-    /**
-     * Sets the currency balance.
-     *
-     * @param currencyBalance currency balance
-     */
-    public void setCurrencyBalance(long currencyBalance) { this.currencyBalance = currencyBalance; }
+    public void setCurrencyBalance(long currencyBalance) {
+        this.currencyBalance = currencyBalance;
+    }
 
-    /**
-     * Optimistic lock version.
-     *
-     * @return version number
-     */
     @DynamoDbVersionAttribute
-    public long getVersion() { return version; }
+    public long getVersion() {
+        return version;
+    }
 
-    /**
-     * Sets the optimistic lock version.
-     *
-     * @param version version number
-     */
-    public void setVersion(long version) { this.version = version; }
+    public void setVersion(long version) {
+        this.version = version;
+    }
 }

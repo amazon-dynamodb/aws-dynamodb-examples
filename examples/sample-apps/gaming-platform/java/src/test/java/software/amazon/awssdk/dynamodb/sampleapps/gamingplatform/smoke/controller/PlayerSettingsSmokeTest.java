@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.config.SeedPlayerData;
@@ -22,7 +24,7 @@ class PlayerSettingsSmokeTest extends AbstractSmokeTest {
 
     @Test
     void getSettings_whenSeededPlayer_shouldReturnSettingsSliceWithoutRootPlayerId() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/settings", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.settings.notificationsEnabled").value(true))

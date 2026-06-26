@@ -1,13 +1,12 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
-import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.LeaderboardResponse;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.LeaderboardMapper;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.LeaderboardEntry;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.LeaderboardRepository;
 
 /**
@@ -49,15 +48,15 @@ public class LeaderboardQueryService {
      *
      * @param scope the leaderboard scope (e.g. {@code SEASON#default#MODE#ranked})
      * @param limit requested number of entries, clamped to [{@value MIN_LIMIT}, {@value MAX_LIMIT}]
-     * @return the leaderboard response with ranked entries
+     * @return future of the leaderboard response with ranked entries
      */
-    public LeaderboardResponse getTopN(String scope, int limit) {
+    public CompletableFuture<LeaderboardResponse> getTopN(String scope, int limit) {
         int clampedLimit = Math.max(MIN_LIMIT, Math.min(limit, MAX_LIMIT));
 
-        List<LeaderboardEntry> entries = leaderboardRepository.queryTopN(scope, clampedLimit).join();
-        logger.debug("Queried leaderboard [scope={}, entryCount={}, limit={}]",
-                scope, entries.size(), clampedLimit);
-
-        return leaderboardMapper.toResponse(scope, entries);
+        return leaderboardRepository.queryTopN(scope, clampedLimit).thenApply(entries -> {
+            logger.debug("Queried leaderboard [scope={}, entryCount={}, limit={}]",
+                    scope, entries.size(), clampedLimit);
+            return leaderboardMapper.toResponse(scope, entries);
+        });
     }
 }

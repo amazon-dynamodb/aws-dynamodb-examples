@@ -58,7 +58,7 @@ class LobbyServiceTest {
         when(mapper.toSummary(profile)).thenReturn(summary);
 
         LobbySummariesResponse result = service.getLobbySummaries(
-                new LobbySummariesRequest(List.of("player-1", "player-unknown")));
+                new LobbySummariesRequest(List.of("player-1", "player-unknown"))).join();
 
         assertThat(result.summaries()).hasSize(1);
         assertThat(result.summaries().getFirst().playerId()).isEqualTo("player-1");
@@ -71,7 +71,7 @@ class LobbyServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(List.of()));
 
         LobbySummariesResponse result = service.getLobbySummaries(
-                new LobbySummariesRequest(List.of("unknown-1", "unknown-2")));
+                new LobbySummariesRequest(List.of("unknown-1", "unknown-2"))).join();
 
         assertThat(result.summaries()).isEmpty();
         assertThat(result.missingPlayerIds()).containsExactlyInAnyOrder("unknown-1", "unknown-2");
@@ -91,7 +91,7 @@ class LobbyServiceTest {
                 .thenReturn(CompletableFuture.completedFuture(List.of(profile)));
         when(mapper.toSummary(profile)).thenReturn(summary);
 
-        PlatformPlayersResponse result = service.getPlayersByPlatform("PC", 20);
+        PlatformPlayersResponse result = service.getPlayersByPlatform("PC", 20).join();
 
         assertThat(result.platform()).isEqualTo("PC");
         assertThat(result.players()).hasSize(1);
@@ -103,7 +103,7 @@ class LobbyServiceTest {
         when(repository.queryPlayersByPlatform("PC", 50))
                 .thenReturn(CompletableFuture.completedFuture(List.of()));
 
-        PlatformPlayersResponse result = service.getPlayersByPlatform("PC", 999);
+        PlatformPlayersResponse result = service.getPlayersByPlatform("PC", 999).join();
 
         assertThat(result.platform()).isEqualTo("PC");
         assertThat(result.players()).isEmpty();
@@ -114,7 +114,7 @@ class LobbyServiceTest {
         when(repository.queryPlayersByPlatform("PC", 1))
                 .thenReturn(CompletableFuture.completedFuture(List.of()));
 
-        PlatformPlayersResponse result = service.getPlayersByPlatform("PC", -5);
+        PlatformPlayersResponse result = service.getPlayersByPlatform("PC", -5).join();
 
         assertThat(result.platform()).isEqualTo("PC");
         assertThat(result.players()).isEmpty();

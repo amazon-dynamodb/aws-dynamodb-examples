@@ -18,7 +18,7 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
  * so it can be passed safely as a query parameter.
  *
  * <p>Only {@code S}-type attribute values are supported, which is sufficient for the
- * GameEvents table whose keys {@code PK} and {@code SK} are both strings.
+ * GameEvent table whose keys {@code PK} and {@code SK} are both strings.
  */
 public final class PaginationHelper {
 
@@ -104,7 +104,7 @@ public final class PaginationHelper {
             throw new InvalidPaginationTokenException(nextToken, e);
         }
 
-        // GameEvents table keys require both PK and SK attributes.
+        // GameEvent table keys require both PK and SK attributes.
         if (!json.containsKey("PK") || !json.containsKey("SK")) {
             throw new InvalidPaginationTokenException(nextToken);
         }

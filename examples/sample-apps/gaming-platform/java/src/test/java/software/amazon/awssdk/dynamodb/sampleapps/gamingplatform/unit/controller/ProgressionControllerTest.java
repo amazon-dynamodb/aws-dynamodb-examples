@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.controller;
 
+import java.util.concurrent.CompletableFuture;
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -47,9 +49,9 @@ class ProgressionControllerTest {
                 null);
 
         when(progressionService.updateProgression(eq("player-001"), any(ProgressionUpdateRequest.class)))
-                .thenReturn(response);
+                .thenReturn(CompletableFuture.completedFuture(response));
 
-        mockMvc.perform(patch("/api/v1/players/player-001/progression")
+        performAsync(mockMvc, patch("/api/v1/players/player-001/progression")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -68,7 +70,7 @@ class ProgressionControllerTest {
         when(progressionService.updateProgression(eq("player-001"), any(ProgressionUpdateRequest.class)))
                 .thenThrow(new StaleVersionException("player-001", 1L));
 
-        mockMvc.perform(patch("/api/v1/players/player-001/progression")
+        performAsync(mockMvc, patch("/api/v1/players/player-001/progression")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -82,7 +84,7 @@ class ProgressionControllerTest {
 
     @Test
     void updateProgression_whenExpectedVersionMissing_shouldReturn400() throws Exception {
-        mockMvc.perform(patch("/api/v1/players/player-001/progression")
+        performAsync(mockMvc, patch("/api/v1/players/player-001/progression")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -98,7 +100,7 @@ class ProgressionControllerTest {
         when(progressionService.updateProgression(eq("ghost-id"), any(ProgressionUpdateRequest.class)))
                 .thenThrow(new PlayerNotFoundException("ghost-id"));
 
-        mockMvc.perform(patch("/api/v1/players/ghost-id/progression")
+        performAsync(mockMvc, patch("/api/v1/players/ghost-id/progression")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

@@ -24,7 +24,7 @@ import software.amazon.awssdk.enhanced.dynamodb.model.QueryEnhancedRequest;
  * High-level {@link DynamoDbEnhancedAsyncClient} implementation of {@link LeaderboardRepository}.
  *
  * <p>Uses the enhanced client's type-safe {@link DynamoDbAsyncTable} API for put, delete,
- * and query operations on the LeaderboardAggregate leaderboardTable.
+ * and query operations on the Leaderboard table.
  */
 @Repository
 @ConditionalOnProperty(name = "dynamodb.client-type", havingValue = "high-level")
@@ -39,7 +39,7 @@ public class HighLevelDynamoDbLeaderboardRepository implements LeaderboardReposi
      * Creates the repository.
      *
      * @param enhancedClient the high-level enhanced async client
-     * @param tableName      LeaderboardAggregate table name
+     * @param tableName      Leaderboard table name
      */
     public HighLevelDynamoDbLeaderboardRepository(
             DynamoDbEnhancedAsyncClient enhancedClient,

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.service;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,11 +59,36 @@ class DynamoDbStreamsLeaderboardListenerIntegrationTest extends AbstractIntegrat
 
         dynamoDbStreamsLeaderboardListener.processStreamRecord(record);
 
-        mockMvc.perform(get("/api/v1/leaderboards/{scope}", DynamoDbStreamsLeaderboardListener.DEFAULT_SCOPE))
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", DynamoDbStreamsLeaderboardListener.DEFAULT_SCOPE))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.entries[0].playerId").value(playerId))
                 .andExpect(jsonPath("$.entries[0].playerName").value("StreamingHero"))
                 .andExpect(jsonPath("$.entries[0].score").value(scoreFor))
                 .andExpect(jsonPath("$.entries[0].rank").value(1));
+    }
+
+    @Test
+    void processStreamRecord_whenNonPvpMatchInserted_shouldNotPopulateLeaderboard() throws Exception {
+        String playerId = "stream-integ-purchase-player";
+
+        Record record = Record.builder()
+                .eventName(OperationType.INSERT)
+                .dynamodb(StreamRecord.builder()
+                        .sequenceNumber("integ-seq-stream-purchase-001")
+                        .newImage(Map.of(
+                                "entityType", AttributeValue.fromS(GameEvent.ENTITY_TYPE),
+                                "eventType", AttributeValue.fromS(GameEventType.PURCHASE.name()),
+                                "playerId", AttributeValue.fromS(playerId),
+                                "playerName", AttributeValue.fromS("Shopper"),
+                                "playerScore", AttributeValue.fromN("99999")))
+                        .build())
+                .build();
+
+        dynamoDbStreamsLeaderboardListener.processStreamRecord(record);
+
+        // The purchase player must never be projected onto the leaderboard.
+        performAsync(mockMvc, get("/api/v1/leaderboards/{scope}", DynamoDbStreamsLeaderboardListener.DEFAULT_SCOPE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entries[?(@.playerId=='" + playerId + "')]").isEmpty());
     }
 }

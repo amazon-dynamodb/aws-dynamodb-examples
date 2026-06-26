@@ -1,6 +1,6 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 
-import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,46 +78,48 @@ public class PlayerRegistrationService {
      *           reflects persisted attributes (for example {@code version} written by the
      *           enhanced client's {@link VersionedRecordExtension}). A {@code TransactionConflict}
      *           cancellation (concurrent transaction on the same partition) is retried by
-     *           {@link TransactionRetry}; a conditional failure (items already exist) is handled as an
+     *           {@link TransactionRetry}. A conditional failure (items already exist) is handled as an
      *           idempotent replay or a genuine conflict and is not retried.
      *
      * @param request the registration request
-     * @return response containing the player id, full snapshot, and whether the account is new
+     * @return future of the response containing the player id, full snapshot, and whether the account is new
      * @throws PlayerAlreadyExistsException if the player id is taken but the platform identity differs
      * @throws WalletNotFoundException      if the profile exists but the wallet row is missing after create
      *                                    or on idempotent replay (partial or legacy data)
      */
-    public RegisterPlayerResponse registerPlayer(RegisterPlayerRequest request) {
-        return TransactionRetry.runWithConflictRetry(() -> attemptRegister(request));
+    public CompletableFuture<RegisterPlayerResponse> registerPlayer(RegisterPlayerRequest request) {
+        return TransactionRetry.runWithConflictRetryAsync(() -> attemptRegister(request));
     }
 
     /**
      * Runs a single registration attempt: builds the default items and executes the create transact.
      *
      * @param request the registration request
-     * @return response containing the player id, full snapshot, and whether the account is new
+     * @return future of the response containing the player id, full snapshot, and whether the account is new
      */
-    private RegisterPlayerResponse attemptRegister(RegisterPlayerRequest request) {
+    private CompletableFuture<RegisterPlayerResponse> attemptRegister(RegisterPlayerRequest request) {
         PlayerProfile profile = playerMapper.toProfile(request);
         PlayerSettings defaultSettings = settingsMapper.defaultSettings(profile.getPlayerId());
         PlayerWallet defaultWallet = walletMapper.defaultWallet(profile.getPlayerId());
 
-        try {
-            playerStateRepository.createPlayerWithSettingsAndWallet(profile, defaultSettings, defaultWallet).join();
-            logger.debug("Player registered [status=CREATED, playerId={}, platform={}]",
-                    profile.getPlayerId(), request.platform());
-            return toRegisterResponse(profile.getPlayerId(), true);
-        } catch (CompletionException ex) {
-            // TransactionCanceledException means at least one conditional put failed.
-            if (ex.getCause() instanceof TransactionCanceledException tce) {
-                // A serializable conflict is transient: rethrow so the retry wrapper re-attempts.
-                if (TransactionRetry.isTransactionConflict(tce)) {
-                    throw tce;
-                }
-                return handleExistingPlayer(profile.getPlayerId(), request);
-            }
-            throw ex;
-        }
+        return playerStateRepository.createPlayerWithSettingsAndWallet(profile, defaultSettings, defaultWallet)
+                .thenCompose(ignored -> {
+                    logger.debug("Player registered [status=CREATED, playerId={}, platform={}]",
+                            profile.getPlayerId(), request.platform());
+                    return toRegisterResponse(profile.getPlayerId(), true);
+                })
+                .exceptionallyCompose(error -> {
+                    Throwable cause = TransactionRetry.unwrap(error);
+                    // TransactionCanceledException means at least one conditional put failed.
+                    if (cause instanceof TransactionCanceledException tce) {
+                        // A serializable conflict is transient: rethrow so the retry wrapper re-attempts.
+                        if (TransactionRetry.isTransactionConflict(tce)) {
+                            return CompletableFuture.<RegisterPlayerResponse>failedFuture(tce);
+                        }
+                        return handleExistingPlayer(profile.getPlayerId(), request);
+                    }
+                    return CompletableFuture.<RegisterPlayerResponse>failedFuture(cause);
+                });
     }
 
     /**
@@ -126,24 +128,25 @@ public class PlayerRegistrationService {
      *
      * @param playerId the player id that triggered the transaction conflict
      * @param request  the original registration request for identity comparison
-     * @return the existing profile wrapped as an idempotent replay response
+     * @return future of the existing profile wrapped as an idempotent replay response
      * @throws PlayerAlreadyExistsException if the stored platform identity differs from the request
      * @throws WalletNotFoundException      if the profile exists but the wallet row is missing
      */
-    private RegisterPlayerResponse handleExistingPlayer(String playerId, RegisterPlayerRequest request) {
-        PlayerProfile existing = playerStateRepository.getPlayer(playerId).join();
+    private CompletableFuture<RegisterPlayerResponse> handleExistingPlayer(String playerId,
+                                                                           RegisterPlayerRequest request) {
+        return playerStateRepository.getPlayer(playerId).thenCompose(existing -> {
+            // Same platform identity means the client retried registration with the same keys.
+            if (existing != null
+                    && existing.getPlatform().equals(request.platform())
+                    && existing.getPlatformUserId().equals(request.platformUserId())) {
+                logger.debug("Player registration idempotent replay [status=IDEMPOTENT_REPLAY, playerId={}]",
+                        playerId);
+                return toRegisterResponse(playerId, false);
+            }
 
-        // Same platform identity means the client retried registration with the same keys.
-        if (existing != null
-                && existing.getPlatform().equals(request.platform())
-                && existing.getPlatformUserId().equals(request.platformUserId())) {
-            logger.debug("Player registration idempotent replay [status=IDEMPOTENT_REPLAY, playerId={}]",
-                    playerId);
-            return toRegisterResponse(playerId, false);
-        }
-
-        // Profile exists under the same id but with different platform identity.
-        throw new PlayerAlreadyExistsException(playerId);
+            // Profile exists under the same id but with different platform identity.
+            return CompletableFuture.<RegisterPlayerResponse>failedFuture(new PlayerAlreadyExistsException(playerId));
+        });
     }
 
     /**
@@ -151,15 +154,14 @@ public class PlayerRegistrationService {
      *
      * @param playerId the player id
      * @param created  whether the account was newly created
-     * @return registration response with full snapshot
+     * @return future of the registration response with full snapshot
      */
-    private RegisterPlayerResponse toRegisterResponse(String playerId, boolean created) {
-        var snapshot = playerSnapshotService.load(playerId);
-        return new RegisterPlayerResponse(
+    private CompletableFuture<RegisterPlayerResponse> toRegisterResponse(String playerId, boolean created) {
+        return playerSnapshotService.load(playerId).thenApply(snapshot -> new RegisterPlayerResponse(
                 snapshot.playerId(),
                 snapshot.profile(),
                 snapshot.wallet(),
                 snapshot.settings(),
-                created);
+                created));
     }
 }

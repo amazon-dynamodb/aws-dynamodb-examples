@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +32,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getLobbySummaries_whenPlayersSeeded_shouldReturnSummaries() throws Exception {
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -46,7 +48,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getLobbySummaries_whenSomePlayersMissing_shouldReportMissingIds() throws Exception {
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -62,7 +64,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getLobbySummaries_whenNoPlayersExist_shouldReturnAllMissing() throws Exception {
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -76,7 +78,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getLobbySummaries_whenPlayerIdsEmpty_shouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/v1/lobbies/summaries")
+        performAsync(mockMvc, post("/api/v1/lobbies/summaries")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -90,7 +92,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     @Test
     void browseByPlatform_whenPlatformPc_shouldReturnPlayersOrderedByMostRecentFirst() throws Exception {
         // Seed data has 2 PC players: EchoNova (2026-04-01) and AlphaWolf (2026-01-15)
-        mockMvc.perform(get("/api/v1/lobbies/platform/PC"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/PC"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.platform").value("PC"))
                 .andExpect(jsonPath("$.players", hasSize(2)))
@@ -101,7 +103,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     @Test
     void browseByPlatform_whenPlatformIos_shouldReturnPlayers() throws Exception {
         // Seed data has 2 IOS players: DeltaStrike (2026-03-25) and BraveFox (2026-02-20)
-        mockMvc.perform(get("/api/v1/lobbies/platform/IOS"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/IOS"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.platform").value("IOS"))
                 .andExpect(jsonPath("$.players", hasSize(2)))
@@ -112,7 +114,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
     @Test
     void browseByPlatform_whenPlatformAndroid_shouldReturnPlayers() throws Exception {
         // Seed data has 1 ANDROID player: CosmicRay
-        mockMvc.perform(get("/api/v1/lobbies/platform/ANDROID"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/ANDROID"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.platform").value("ANDROID"))
                 .andExpect(jsonPath("$.players", hasSize(1)))
@@ -121,7 +123,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void browseByPlatform_whenLimitProvided_shouldRespectLimit() throws Exception {
-        mockMvc.perform(get("/api/v1/lobbies/platform/PC")
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/PC")
                         .param("limit", "1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.players", hasSize(1)))
@@ -130,7 +132,7 @@ class LobbyIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void browseByPlatform_whenPlatformInvalid_shouldReturn400() throws Exception {
-        mockMvc.perform(get("/api/v1/lobbies/platform/XBOX"))
+        performAsync(mockMvc, get("/api/v1/lobbies/platform/XBOX"))
                 .andExpect(status().isBadRequest());
     }
 }

@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import java.util.UUID;
 
 import org.junit.jupiter.api.Tag;
@@ -34,7 +36,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
     void completePurchase_whenFundsAvailable_shouldCompletePurchase() throws Exception {
         String clientRequestId = "integration-purchase-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -63,7 +65,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
                 }
                 """.formatted(clientRequestId);
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
@@ -71,7 +73,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.wallet.currencyBalance").value(1150))
                 .andExpect(jsonPath("$.wallet.version").value(2));
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
@@ -85,7 +87,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
     void completePurchase_whenInsufficientFunds_shouldReturn409() throws Exception {
         String clientRequestId = "integration-insufficient-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/purchases", SeedPlayerData.SEED_PLAYER_1)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -103,7 +105,7 @@ class PurchaseIntegrationTest extends AbstractIntegrationTest {
     void completePurchase_whenPlayerUnknown_shouldReturn404() throws Exception {
         String clientRequestId = "integration-missing-buyer-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players/{playerId}/purchases", "missing-buyer-id")
+        performAsync(mockMvc, post("/api/v1/players/{playerId}/purchases", "missing-buyer-id")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

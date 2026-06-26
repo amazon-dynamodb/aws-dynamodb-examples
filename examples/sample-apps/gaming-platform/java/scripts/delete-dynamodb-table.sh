@@ -8,8 +8,8 @@
 # Optional arguments:
 #   --dynamodb-endpoint  DynamoDB endpoint (default: http://localhost:8000)
 #   --dynamodb-region    AWS region (default: eu-west-1)
-#   --table-name         Table name. If omitted, deletes JavaGamingPlayerState,
-#                        JavaGamingGameEvents, and JavaGamingLeaderboard (defaults from application.yml).
+#   --table-name         Table name. If omitted, deletes JavaPlayerState,
+#                        JavaGameEvent, and JavaLeaderboard (defaults from application.yml).
 #
 # WARNING: This permanently deletes the table (or tables) and all their data.
 #
@@ -61,7 +61,7 @@ done
 if [[ -n "$TABLE_NAME" ]]; then
     TABLES_TO_DELETE=("$TABLE_NAME")
 else
-    TABLES_TO_DELETE=(JavaGamingPlayerState JavaGamingGameEvents JavaGamingLeaderboard)
+    TABLES_TO_DELETE=(JavaPlayerState JavaGameEvent JavaLeaderboard)
 fi
 
 delete_and_wait() {

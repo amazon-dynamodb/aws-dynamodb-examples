@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.controller;
 
+import java.util.concurrent.CompletableFuture;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -52,7 +54,7 @@ public class GameEventController {
     /** Maximum accepted length for the {@code playerId} path variable. */
     static final int ID_MAX_LENGTH = 64;
 
-    /** Appends events and pages the GameEvents table. */
+    /** Appends events and pages the GameEvent table. */
     private final GameEventService gameEventService;
 
     /**
@@ -75,23 +77,23 @@ public class GameEventController {
             summary = "Record game event",
             description = """
                     Appends a game activity event to the player's history. Verifies the player \
-                    exists, then writes to the GameEvents table. Each event carries a TTL from \
+                    exists, then writes to the GameEvent table. Each event carries a TTL from \
                     dynamodb.game-events-ttl-seconds. Supported eventType values are PVP_MATCH, \
                     PURCHASE, LEVEL_PROGRESS, and CURRENCY_GRANT. Returns only eventId and \
                     recordedAt.""")
     @ApiResponse(responseCode = "201", description = "Event recorded",
             content = @Content(schema = @Schema(implementation = RecordEventResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (VALIDATION_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Player not found (PLAYER_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Player not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping("/players/{playerId}/events")
-    public ResponseEntity<RecordEventResponse> recordEvent(
+    public CompletableFuture<ResponseEntity<RecordEventResponse>> recordEvent(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
@@ -100,8 +102,8 @@ public class GameEventController {
             @Valid @RequestBody RecordEventRequest request) {
         logger.debug("Received record game event request [playerId={}, eventType={}]",
                 playerId, request.eventType());
-        RecordEventResponse response = gameEventService.recordEvent(playerId, request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        return gameEventService.recordEvent(playerId, request)
+                .thenApply(response -> ResponseEntity.status(HttpStatus.CREATED).body(response));
     }
 
     /**
@@ -128,14 +130,17 @@ public class GameEventController {
     @ApiResponse(responseCode = "400", description = "Invalid pagination token or validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Player not found (PLAYER_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Player not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/players/{playerId}/events")
-    public ResponseEntity<EventsPageResponse> getEvents(
+    public CompletableFuture<ResponseEntity<EventsPageResponse>> getEvents(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
@@ -149,8 +154,7 @@ public class GameEventController {
             @RequestParam(required = false) String nextToken) {
         logger.debug("Received list game events request [playerId={}, limit={}, scanIndexForward={}, hasNextToken={}]",
                 playerId, limit, scanIndexForward, nextToken != null && !nextToken.isBlank());
-        EventsPageResponse response =
-                gameEventService.getEvents(playerId, limit, scanIndexForward, nextToken);
-        return ResponseEntity.ok(response);
+        return gameEventService.getEvents(playerId, limit, scanIndexForward, nextToken)
+                .thenApply(ResponseEntity::ok);
     }
 }

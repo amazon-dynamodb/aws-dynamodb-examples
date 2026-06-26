@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.integration.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Map;
@@ -50,7 +52,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getProfile_whenSeededPlayer_shouldReturnProfile() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.profile.playerName").value("AlphaWolf"))
                 .andExpect(jsonPath("$.profile.platform").value("PC"))
@@ -59,14 +61,14 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void getProfile_whenPlayerUnknown_shouldReturn404() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", UUID.randomUUID().toString()))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", UUID.randomUUID().toString()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("PLAYER_NOT_FOUND"));
     }
 
     @Test
     void getProfile_whenSeededPlayer_shouldReturnProfileSliceWithoutRootPlayerId() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.profile.playerName").value("AlphaWolf"))
@@ -85,7 +87,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
                 }
                 """;
 
-        String playerId = mockMvc.perform(post("/api/v1/players")
+        String playerId = performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(registerBody))
                 .andExpect(status().isCreated())
@@ -100,14 +102,14 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
                 .get("playerId")
                 .asText();
 
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", extractedPlayerId))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", extractedPlayerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.profile.playerName").value("IntegrationWolf"))
                 .andExpect(jsonPath("$.profile.platform").value("PC"))
                 .andExpect(jsonPath("$.profile.currentLevel").value(1));
 
         // Verify that default settings were created atomically alongside the profile
-        mockMvc.perform(get("/api/v1/players/{playerId}/settings", extractedPlayerId))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/settings", extractedPlayerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.settings.notificationsEnabled").value(true))
                 .andExpect(jsonPath("$.settings.preferredLanguage").value("en"))
@@ -124,13 +126,13 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
                 }
                 """;
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(registerBody))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.created").value(true));
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(registerBody))
                 .andExpect(status().isOk())
@@ -142,7 +144,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
     void registerPlayer_whenNewAccount_shouldReturnFullSnapshotAtRoot() throws Exception {
         String platformUserId = "snapshot-contract-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -186,7 +188,7 @@ class PlayerControllerIntegrationTest extends AbstractIntegrationTest {
                 .item(conflictingRow)
                 .build()).join();
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

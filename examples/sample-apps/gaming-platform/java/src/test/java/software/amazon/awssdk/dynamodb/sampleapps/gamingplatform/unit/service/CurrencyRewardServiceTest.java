@@ -20,12 +20,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.PlayerSnapshot;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.ProfileSnapshot;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.SettingsSnapshot;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletEarnRequest;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletEarnResponse;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.dto.WalletSnapshot;
+import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.StaleVersionException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.exception.WalletNotFoundException;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.mapper.GameEventMapper;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.CurrencyEarnReason;
@@ -34,7 +31,6 @@ import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerPro
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.model.PlayerWallet;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.repository.PlayerStateRepository;
 import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.CurrencyRewardService;
-import software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service.PlayerSnapshotService;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
@@ -56,9 +52,6 @@ class CurrencyRewardServiceTest {
     @Mock
     private GameEventMapper gameEventMapper;
 
-    @Mock
-    private PlayerSnapshotService playerSnapshotService;
-
     private CurrencyRewardService service;
 
     /**
@@ -66,7 +59,7 @@ class CurrencyRewardServiceTest {
      */
     @BeforeEach
     void setUp() {
-        service = new CurrencyRewardService(repository, gameEventMapper, playerSnapshotService);
+        service = new CurrencyRewardService(repository, gameEventMapper);
     }
 
     @Test
@@ -78,18 +71,18 @@ class CurrencyRewardServiceTest {
         when(gameEventMapper.toCurrencyGrantEvent(
                 eq(PLAYER_ID), eq(300L), eq(CurrencyEarnReason.MATCH_WIN), eq("req-1")))
                 .thenReturn(rewardEvent);
-        when(repository.earnCurrencyTransaction(eq(PLAYER_ID), eq(300L), eq(rewardEvent)))
+        when(repository.earnCurrencyTransaction(eq(wallet), eq(300L), eq(rewardEvent)))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(sampleSnapshot(800L, 2L));
 
         WalletEarnResponse response = service.grantCurrency(
-                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-1"));
+                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-1")).join();
 
         assertThat(response.status()).isEqualTo("COMPLETED");
         assertThat(response.playerId()).isEqualTo(PLAYER_ID);
         assertThat(response.wallet().currencyBalance()).isEqualTo(800L);
+        assertThat(response.wallet().version()).isEqualTo(2L);
         assertThat(response.earnEventId()).isEqualTo("evt-1");
-        verify(repository).earnCurrencyTransaction(PLAYER_ID, 300L, rewardEvent);
+        verify(repository).earnCurrencyTransaction(wallet, 300L, rewardEvent);
     }
 
     @Test
@@ -100,7 +93,6 @@ class CurrencyRewardServiceTest {
         when(repository.getWallet(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(wallet));
         when(gameEventMapper.toCurrencyGrantEvent(any(), anyLong(), any(), any()))
                 .thenReturn(rewardEvent);
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(sampleSnapshot(500L, 2L));
 
         CancellationReason okReason = CancellationReason.builder().code("None").build();
         CancellationReason failReason = CancellationReason.builder().code("ConditionalCheckFailed").build();
@@ -113,7 +105,7 @@ class CurrencyRewardServiceTest {
                 .thenReturn(CompletableFuture.failedFuture(new CompletionException(txEx)));
 
         WalletEarnResponse response = service.grantCurrency(
-                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-dup"));
+                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-dup")).join();
 
         assertThat(response.status()).isEqualTo("IDEMPOTENT_REPLAY");
         assertThat(response.earnEventId()).isEqualTo("evt-dup");
@@ -121,7 +113,7 @@ class CurrencyRewardServiceTest {
     }
 
     @Test
-    void grantCurrency_whenWalletConditionFails_shouldThrowPlayerNotFound() {
+    void grantCurrency_whenWalletVersionStale_shouldThrowStaleVersion() {
         PlayerWallet wallet = buildWallet(0L, 1L);
         GameEvent rewardEvent = buildEvent("evt-x");
 
@@ -140,17 +132,19 @@ class CurrencyRewardServiceTest {
                 .thenReturn(CompletableFuture.failedFuture(new CompletionException(txEx)));
 
         assertThatThrownBy(() -> service.grantCurrency(
-                PLAYER_ID, new WalletEarnRequest(100L, CurrencyEarnReason.ADMIN_GRANT, "req-y")))
-                .isInstanceOf(WalletNotFoundException.class);
+                PLAYER_ID, new WalletEarnRequest(100L, CurrencyEarnReason.ADMIN_GRANT, "req-y")).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(StaleVersionException.class);
     }
 
     @Test
-    void grantCurrency_whenWalletMissing_shouldThrowPlayerNotFound() {
+    void grantCurrency_whenWalletMissing_shouldThrowWalletNotFound() {
         when(repository.getWallet(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(null));
 
         assertThatThrownBy(() -> service.grantCurrency(
-                PLAYER_ID, new WalletEarnRequest(100L, CurrencyEarnReason.DAILY_LOGIN, "req-z")))
-                .isInstanceOf(WalletNotFoundException.class);
+                PLAYER_ID, new WalletEarnRequest(100L, CurrencyEarnReason.DAILY_LOGIN, "req-z")).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(WalletNotFoundException.class);
 
         verify(repository, never()).earnCurrencyTransaction(any(), anyLong(), any());
     }
@@ -164,15 +158,15 @@ class CurrencyRewardServiceTest {
         when(gameEventMapper.toCurrencyGrantEvent(
                 eq(PLAYER_ID), eq(250L), eq(CurrencyEarnReason.LEVEL_UP_BONUS), eq("lvl-key")))
                 .thenReturn(rewardEvent);
-        when(repository.earnCurrencyTransaction(eq(PLAYER_ID), eq(250L), eq(rewardEvent)))
+        when(repository.earnCurrencyTransaction(eq(wallet), eq(250L), eq(rewardEvent)))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(sampleSnapshot(350L, 2L));
 
         WalletEarnResponse response = service.grantCurrency(
-                PLAYER_ID, 250L, CurrencyEarnReason.LEVEL_UP_BONUS, "lvl-key");
+                PLAYER_ID, 250L, CurrencyEarnReason.LEVEL_UP_BONUS, "lvl-key").join();
 
         assertThat(response.status()).isEqualTo("COMPLETED");
         assertThat(response.wallet().currencyBalance()).isEqualTo(350L);
+        assertThat(response.wallet().version()).isEqualTo(2L);
     }
 
     @Test
@@ -186,10 +180,9 @@ class CurrencyRewardServiceTest {
         when(repository.earnCurrencyTransaction(any(), anyLong(), any()))
                 .thenReturn(CompletableFuture.failedFuture(transactionConflict()))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(sampleSnapshot(800L, 2L));
 
         WalletEarnResponse response = service.grantCurrency(
-                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-conflict"));
+                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-conflict")).join();
 
         assertThat(response.status()).isEqualTo("COMPLETED");
         // Wallet is re-read and the transact rebuilt on each attempt.
@@ -209,11 +202,11 @@ class CurrencyRewardServiceTest {
                 .thenReturn(CompletableFuture.failedFuture(transactionConflict()));
 
         assertThatThrownBy(() -> service.grantCurrency(
-                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-loop")))
-                .isInstanceOf(TransactionCanceledException.class);
+                PLAYER_ID, new WalletEarnRequest(300L, CurrencyEarnReason.MATCH_WIN, "req-loop")).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(TransactionCanceledException.class);
 
         verify(repository, times(3)).earnCurrencyTransaction(any(), anyLong(), any());
-        verify(playerSnapshotService, never()).load(any());
     }
 
     /**
@@ -230,20 +223,6 @@ class CurrencyRewardServiceTest {
                 .build();
     }
 
-    /**
-     * Builds a {@link PlayerSnapshot} fixture with the given wallet balance and version.
-     *
-     * @param balance       post-grant soft-currency balance
-     * @param walletVersion wallet optimistic-lock version
-     * @return composed player snapshot
-     */
-    private static PlayerSnapshot sampleSnapshot(long balance, long walletVersion) {
-        return new PlayerSnapshot(
-                PLAYER_ID,
-                new ProfileSnapshot("Test", "PC", 1, 0, "2026-01-01T00:00:00Z", 1),
-                new WalletSnapshot(balance, walletVersion),
-                new SettingsSnapshot(true, "en", "PUBLIC", 1));
-    }
 
     /**
      * Builds a {@link PlayerWallet} fixture for the shared test player.

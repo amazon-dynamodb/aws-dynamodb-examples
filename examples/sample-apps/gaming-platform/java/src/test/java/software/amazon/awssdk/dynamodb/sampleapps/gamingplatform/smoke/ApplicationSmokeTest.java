@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -31,20 +33,20 @@ public class ApplicationSmokeTest extends AbstractSmokeTest {
 
     @Test
     void actuatorHealth_whenRequested_shouldReturn200() throws Exception {
-        mockMvc.perform(get("/actuator/health"))
+        performAsync(mockMvc, get("/actuator/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
     }
 
     @Test
     void favicon_whenRequested_shouldReturn204() throws Exception {
-        mockMvc.perform(get("/favicon.ico"))
+        performAsync(mockMvc, get("/favicon.ico"))
                 .andExpect(status().isNoContent());
     }
 
     @Test
     void openApiSpec_whenRequested_shouldBeAccessible() throws Exception {
-        mockMvc.perform(get("/api-docs"))
+        performAsync(mockMvc, get("/api-docs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.info.title").value("Gaming Platform DynamoDB Sample API"))
                 .andExpect(jsonPath("$.servers.length()").value(1))

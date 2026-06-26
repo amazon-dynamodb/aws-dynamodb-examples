@@ -2,7 +2,6 @@
 
 ## Prerequisites
 
-
 | Need                            | When                                                                                         |
 |---------------------------------| -------------------------------------------------------------------------------------------- |
 | **JDK 21**                      | Build and run on the host                                                                    |
@@ -31,7 +30,7 @@ Compiles the project and runs unit tests.
 
 ### Run (three ways)
 
-All modes use three tables (**JavaGamingPlayerState**, **JavaGamingGameEvents**, **JavaGamingLeaderboard** by default). On startup the app **creates tables** if missing, enables **DynamoDB Streams** and **TTL** on **GameEvents**, starts the **streams consumer** for leaderboard projection, and **idempotently seeds** five demo players. Existing seed rows are not overwritten.
+All modes use three tables (**JavaPlayerState**, **JavaGameEvent**, **JavaLeaderboard** by default). On startup the app **creates tables** if missing, enables **DynamoDB Streams** and **TTL** on **JavaGameEvent**, starts the **streams consumer** for leaderboard projection, and **idempotently seeds** five demo players. Existing seed rows are not overwritten.
 
 ---
 
@@ -60,9 +59,6 @@ All modes use three tables (**JavaGamingPlayerState**, **JavaGamingGameEvents**,
 
 </details>
 
-
-
-
 ---
 
 **2) Full stack in Docker (app + DynamoDB Local)**
@@ -87,9 +83,6 @@ All modes use three tables (**JavaGamingPlayerState**, **JavaGamingGameEvents**,
 | `--dynamodb-client-type <type>` | `high-level` | Passed through as `DYNAMODB_CLIENTTYPE` for the container |
 
 </details>
-
-
-
 
 ---
 
@@ -119,9 +112,6 @@ All modes use three tables (**JavaGamingPlayerState**, **JavaGamingGameEvents**,
 | `--dynamodb-client-type <type>` | `high-level`            | `high-level` (enhanced client) or `low-level`         |
 
 </details>
-
-
-
 
 ### API documentation
 

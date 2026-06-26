@@ -3,6 +3,7 @@ package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.service;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -68,26 +69,26 @@ public class LobbyService {
      * no matching profile in DynamoDB.
      *
      * @param request contains the player ids to look up
-     * @return summaries plus missing ids
+     * @return future of summaries plus missing ids
      */
-    public LobbySummariesResponse getLobbySummaries(LobbySummariesRequest request) {
-        List<PlayerProfile> profiles = playerStateRepository.batchGetPlayers(request.playerIds()).join();
+    public CompletableFuture<LobbySummariesResponse> getLobbySummaries(LobbySummariesRequest request) {
+        return playerStateRepository.batchGetPlayers(request.playerIds()).thenApply(profiles -> {
+            List<PlayerSummary> summaries = profiles.stream()
+                    .map(playerMapper::toSummary)
+                    .toList();
 
-        List<PlayerSummary> summaries = profiles.stream()
-                .map(playerMapper::toSummary)
-                .toList();
+            Set<String> foundIds = profiles.stream()
+                    .map(PlayerProfile::getPlayerId)
+                    .collect(Collectors.toSet());
 
-        Set<String> foundIds = profiles.stream()
-                .map(PlayerProfile::getPlayerId)
-                .collect(Collectors.toSet());
+            List<String> missingIds = request.playerIds().stream()
+                    .filter(id -> !foundIds.contains(id))
+                    .toList();
 
-        List<String> missingIds = request.playerIds().stream()
-                .filter(id -> !foundIds.contains(id))
-                .toList();
-
-        logger.debug("Loaded lobby summaries [summaryCount={}, missingCount={}]",
-                summaries.size(), missingIds.size());
-        return new LobbySummariesResponse(summaries, missingIds);
+            logger.debug("Loaded lobby summaries [summaryCount={}, missingCount={}]",
+                    summaries.size(), missingIds.size());
+            return new LobbySummariesResponse(summaries, missingIds);
+        });
     }
 
     /**
@@ -95,10 +96,10 @@ public class LobbyService {
      *
      * @param platform the platform name (must match a {@link Platform} enum value)
      * @param limit    maximum number of results (clamped to [1, 50])
-     * @return player summaries for the platform
+     * @return future of player summaries for the platform
      * @throws IllegalArgumentException if the platform is not a valid {@link Platform} value
      */
-    public PlatformPlayersResponse getPlayersByPlatform(String platform, int limit) {
+    public CompletableFuture<PlatformPlayersResponse> getPlayersByPlatform(String platform, int limit) {
         try {
             Platform.valueOf(platform);
         } catch (IllegalArgumentException e) {
@@ -108,14 +109,14 @@ public class LobbyService {
 
         int clampedLimit = Math.max(MIN_PLATFORM_LIMIT, Math.min(limit, MAX_PLATFORM_LIMIT));
 
-        List<PlayerProfile> profiles = playerStateRepository.queryPlayersByPlatform(platform, clampedLimit).join();
+        return playerStateRepository.queryPlayersByPlatform(platform, clampedLimit).thenApply(profiles -> {
+            List<PlayerSummary> summaries = profiles.stream()
+                    .map(playerMapper::toSummary)
+                    .toList();
 
-        List<PlayerSummary> summaries = profiles.stream()
-                .map(playerMapper::toSummary)
-                .toList();
-
-        logger.debug("Browsed platform players [platform={}, resultCount={}, limit={}]",
-                platform, summaries.size(), clampedLimit);
-        return new PlatformPlayersResponse(platform, summaries);
+            logger.debug("Browsed platform players [platform={}, resultCount={}, limit={}]",
+                    platform, summaries.size(), clampedLimit);
+            return new PlatformPlayersResponse(platform, summaries);
+        });
     }
 }

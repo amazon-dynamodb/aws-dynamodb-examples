@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.controller;
 
+import java.util.concurrent.CompletableFuture;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -78,18 +80,18 @@ public class LobbyController {
                     so callers can merge partial success with the request list.""")
     @ApiResponse(responseCode = "200", description = "Partial or full success",
             content = @Content(schema = @Schema(implementation = LobbySummariesResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (VALIDATION_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PostMapping("/lobbies/summaries")
-    public ResponseEntity<LobbySummariesResponse> getLobbySummaries(
+    public CompletableFuture<ResponseEntity<LobbySummariesResponse>> getLobbySummaries(
             @Valid @RequestBody LobbySummariesRequest request) {
         logger.debug("Received lobby summaries request [playerIdCount={}]",
                 request.playerIds().size());
-        return ResponseEntity.ok(lobbyService.getLobbySummaries(request));
+        return lobbyService.getLobbySummaries(request).thenApply(ResponseEntity::ok);
     }
 
     /**
@@ -107,14 +109,17 @@ public class LobbyController {
                     Default limit is 20. The limit is clamped to the range 1 through 50.""")
     @ApiResponse(responseCode = "200", description = "Players listed, may be empty",
             content = @Content(schema = @Schema(implementation = PlatformPlayersResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Invalid platform value (INVALID_ARGUMENT)",
+    @ApiResponse(responseCode = "400", description = "Invalid platform value",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/lobbies/platform/{platform}")
-    public ResponseEntity<PlatformPlayersResponse> getPlayersByPlatform(
+    public CompletableFuture<ResponseEntity<PlatformPlayersResponse>> getPlayersByPlatform(
             @Parameter(description = "Platform filter. Valid values are PC, IOS, and ANDROID")
             @PathVariable
             @Size(max = PLATFORM_MAX_LENGTH)
@@ -124,6 +129,6 @@ public class LobbyController {
             @RequestParam(defaultValue = "20") int limit) {
         logger.debug("Received browse platform players request [platform={}, limit={}]",
                 platform, limit);
-        return ResponseEntity.ok(lobbyService.getPlayersByPlatform(platform, limit));
+        return lobbyService.getPlayersByPlatform(platform, limit).thenApply(ResponseEntity::ok);
     }
 }

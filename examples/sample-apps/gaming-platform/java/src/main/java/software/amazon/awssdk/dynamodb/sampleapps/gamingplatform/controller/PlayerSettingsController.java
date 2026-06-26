@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.controller;
 
+import java.util.concurrent.CompletableFuture;
+
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -81,21 +83,21 @@ public class PlayerSettingsController {
                     settings object.""")
     @ApiResponse(responseCode = "200", description = "Settings slice found",
             content = @Content(schema = @Schema(implementation = GetSettingsResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Player not found (PLAYER_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Player not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @GetMapping("/players/{playerId}/settings")
-    public ResponseEntity<GetSettingsResponse> getSettings(
+    public CompletableFuture<ResponseEntity<GetSettingsResponse>> getSettings(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
             @Pattern(regexp = ID_PATTERN, message = "must match " + ID_PATTERN)
             String playerId) {
         logger.debug("Received get player settings request [playerId={}]", playerId);
-        return ResponseEntity.ok(playerSettingsService.getSettings(playerId));
+        return playerSettingsService.getSettings(playerId).thenApply(ResponseEntity::ok);
     }
 
     /**
@@ -109,25 +111,28 @@ public class PlayerSettingsController {
             summary = "Update player settings",
             description = """
                     Updates one or more player preferences with a partial PATCH. Only non-null \
-                    request fields are applied. Returns a full snapshot with playerId, profile, \
-                    wallet, and settings. expectedVersion must match the current settings version. \
+                    request fields are applied. Returns a settings-focused response with playerId and \
+                    the updated settings. expectedVersion must match the current settings version. \
                     Valid profileVisibility values are PUBLIC, FRIENDS_ONLY, and PRIVATE.""")
-    @ApiResponse(responseCode = "200", description = "Settings updated with full snapshot",
+    @ApiResponse(responseCode = "200", description = "Settings updated (settings slice)",
             content = @Content(schema = @Schema(implementation = UpdatePlayerSettingsResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Validation error (VALIDATION_ERROR)",
+    @ApiResponse(responseCode = "400", description = "Validation error",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "404", description = "Player not found (PLAYER_NOT_FOUND)",
+    @ApiResponse(responseCode = "404", description = "Player not found",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "409", description = "Optimistic lock conflict (STALE_VERSION)",
+    @ApiResponse(responseCode = "409", description = "Optimistic lock conflict",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
-    @ApiResponse(responseCode = "500", description = "Internal server error (INTERNAL_ERROR)",
+    @ApiResponse(responseCode = "500", description = "Unexpected server error",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponse.class)))
+    @ApiResponse(responseCode = "503", description = "DynamoDB throttled or temporarily unavailable, retry shortly",
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponse.class)))
     @PatchMapping("/players/{playerId}/settings")
-    public ResponseEntity<UpdatePlayerSettingsResponse> updateSettings(
+    public CompletableFuture<ResponseEntity<UpdatePlayerSettingsResponse>> updateSettings(
             @Parameter(description = "Internal player id")
             @PathVariable
             @Size(max = ID_MAX_LENGTH)
@@ -136,7 +141,6 @@ public class PlayerSettingsController {
             @Valid @RequestBody UpdatePlayerSettingsRequest request) {
         logger.debug("Received update player settings request [playerId={}, expectedVersion={}]",
                 playerId, request.expectedVersion());
-        UpdatePlayerSettingsResponse response = playerSettingsService.updateSettings(playerId, request);
-        return ResponseEntity.ok(response);
+        return playerSettingsService.updateSettings(playerId, request).thenApply(ResponseEntity::ok);
     }
 }

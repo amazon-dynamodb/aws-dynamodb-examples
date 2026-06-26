@@ -76,9 +76,9 @@ class PurchaseServiceTest {
         when(gameEventMapper.toPurchaseEvent(PLAYER_ID, request)).thenReturn(event);
         when(playerStateRepository.purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event)))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(snapshot);
+        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(snapshot));
 
-        PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request);
+        PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request).join();
 
         assertThat(response.status()).isEqualTo("COMPLETED");
         assertThat(response.purchaseEventId()).isEqualTo(event.getEventId());
@@ -97,8 +97,9 @@ class PurchaseServiceTest {
         when(playerStateRepository.getWallet(PLAYER_ID))
                 .thenReturn(CompletableFuture.completedFuture(wallet));
 
-        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request))
-                .isInstanceOf(InsufficientFundsException.class);
+        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(InsufficientFundsException.class);
     }
 
     @Test
@@ -112,8 +113,9 @@ class PurchaseServiceTest {
         when(playerStateRepository.getWallet(PLAYER_ID))
                 .thenReturn(CompletableFuture.completedFuture(wallet));
 
-        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request))
-                .isInstanceOf(InsufficientFundsException.class);
+        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(InsufficientFundsException.class);
 
         verifyNoInteractions(gameEventMapper);
     }
@@ -125,8 +127,9 @@ class PurchaseServiceTest {
 
         PurchaseRequest request = new PurchaseRequest("item-01", 100L, "req-not-found");
 
-        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request))
-                .isInstanceOf(PlayerNotFoundException.class);
+        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(PlayerNotFoundException.class);
     }
 
     @Test
@@ -151,10 +154,10 @@ class PurchaseServiceTest {
         when(playerStateRepository.purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event)))
                 .thenReturn(CompletableFuture.failedFuture(txEx));
 
-        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request))
-                .isInstanceOf(StaleVersionException.class)
+        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
                 .satisfies(ex -> {
-                    StaleVersionException sve = (StaleVersionException) ex;
+                    StaleVersionException sve = (StaleVersionException) ex.getCause();
                     assertThat(sve.getPlayerId()).isEqualTo(PLAYER_ID);
                     assertThat(sve.getExpectedVersion()).isEqualTo(7L);
                 });
@@ -183,9 +186,9 @@ class PurchaseServiceTest {
 
         when(playerStateRepository.purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event)))
                 .thenReturn(CompletableFuture.failedFuture(new CompletionException(txEx)));
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(snapshot);
+        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(snapshot));
 
-        PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request);
+        PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request).join();
 
         assertThat(response.status()).isEqualTo("IDEMPOTENT_REPLAY");
     }
@@ -206,9 +209,9 @@ class PurchaseServiceTest {
         when(playerStateRepository.purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event)))
                 .thenReturn(CompletableFuture.failedFuture(transactionConflict()))
                 .thenReturn(CompletableFuture.completedFuture(null));
-        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(snapshot);
+        when(playerSnapshotService.load(PLAYER_ID)).thenReturn(CompletableFuture.completedFuture(snapshot));
 
-        PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request);
+        PurchaseResponse response = purchaseService.executePurchase(PLAYER_ID, request).join();
 
         assertThat(response.status()).isEqualTo("COMPLETED");
         // State is re-read and the transact rebuilt on each attempt.
@@ -232,8 +235,9 @@ class PurchaseServiceTest {
         when(playerStateRepository.purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event)))
                 .thenReturn(CompletableFuture.failedFuture(transactionConflict()));
 
-        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request))
-                .isInstanceOf(TransactionCanceledException.class);
+        assertThatThrownBy(() -> purchaseService.executePurchase(PLAYER_ID, request).join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(TransactionCanceledException.class);
 
         verify(playerStateRepository, times(3))
                 .purchaseTransaction(eq(wallet), eq(500L), eq("sword-01"), eq(event));

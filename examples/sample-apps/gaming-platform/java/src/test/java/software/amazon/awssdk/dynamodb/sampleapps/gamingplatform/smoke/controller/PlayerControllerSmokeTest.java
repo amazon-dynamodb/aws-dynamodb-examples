@@ -1,5 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.smoke.controller;
 
+import static software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.support.AsyncMockMvcTestSupport.performAsync;
+
 import java.util.UUID;
 
 import org.junit.jupiter.api.Tag;
@@ -27,7 +29,7 @@ class PlayerControllerSmokeTest extends AbstractSmokeTest {
 
     @Test
     void getProfile_whenSeededPlayer_shouldReturnProfileSliceWithoutRootPlayerId() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.profile.playerName").value("AlphaWolf"))
@@ -36,7 +38,7 @@ class PlayerControllerSmokeTest extends AbstractSmokeTest {
 
     @Test
     void getProfile_whenSeededPlayer_shouldReturnProfileSliceOnly() throws Exception {
-        mockMvc.perform(get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
+        performAsync(mockMvc, get("/api/v1/players/{playerId}/profile", SeedPlayerData.SEED_PLAYER_1))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerId").doesNotExist())
                 .andExpect(jsonPath("$.profile.playerName").value("AlphaWolf"));
@@ -46,7 +48,7 @@ class PlayerControllerSmokeTest extends AbstractSmokeTest {
     void registerPlayer_whenNewAccount_shouldReturnFullSnapshotAtRoot() throws Exception {
         String uniquePlatformUserId = "smoke-reg-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -67,7 +69,7 @@ class PlayerControllerSmokeTest extends AbstractSmokeTest {
     void registerPlayer_whenNewAndroidAccount_shouldReturnFullSnapshotAtRoot() throws Exception {
         String platformUserId = "smoke-snapshot-" + UUID.randomUUID();
 
-        mockMvc.perform(post("/api/v1/players")
+        performAsync(mockMvc, post("/api/v1/players")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {

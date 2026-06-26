@@ -23,6 +23,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.DescribeStreamRequest;
 import software.amazon.awssdk.services.dynamodb.model.DescribeStreamResponse;
+import software.amazon.awssdk.services.dynamodb.model.ExpiredIteratorException;
 import software.amazon.awssdk.services.dynamodb.model.GetRecordsRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetRecordsResponse;
 import software.amazon.awssdk.services.dynamodb.model.GetShardIteratorRequest;
@@ -30,6 +31,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetShardIteratorResponse;
 import software.amazon.awssdk.services.dynamodb.model.OperationType;
 import software.amazon.awssdk.services.dynamodb.model.Record;
 import software.amazon.awssdk.services.dynamodb.model.Shard;
+import software.amazon.awssdk.services.dynamodb.model.ShardIteratorType;
 import software.amazon.awssdk.services.dynamodb.model.StreamDescription;
 import software.amazon.awssdk.services.dynamodb.model.StreamRecord;
 import software.amazon.awssdk.services.dynamodb.model.TrimmedDataAccessException;
@@ -51,7 +53,7 @@ import static org.mockito.Mockito.when;
 class DynamoDbStreamsLeaderboardListenerTest {
 
     private static final String STREAM_ARN =
-            "arn:aws:dynamodb:eu-west-1:123456789012:table/JavaGamingGameEvents/stream/2024-01-01T00:00:00.000";
+            "arn:aws:dynamodb:eu-west-1:123456789012:table/JavaGameEvent/stream/2024-01-01T00:00:00.000";
     private static final String SHARD_ID = "shardId-00000001778153554951-c17279f5";
 
     @Mock
@@ -71,7 +73,7 @@ class DynamoDbStreamsLeaderboardListenerTest {
     private DynamoDbStreamsLeaderboardListener createListener() {
         return new DynamoDbStreamsLeaderboardListener(
                 dynamoDbClient, streamsClient, leaderboardRepository,
-                "JavaGamingGameEvents", "LATEST");
+                "JavaGameEvent", "LATEST");
     }
 
     @Test
@@ -407,6 +409,301 @@ class DynamoDbStreamsLeaderboardListenerTest {
         listener.processStreamRecord(record);
 
         assertThat(retryCounts).doesNotContainKey("player-x#seq-001");
+    }
+
+    @Test
+    void getRecordsWithRenewal_whenIteratorExpired_shouldRenewWithAfterSequenceAndRetry() throws Exception {
+        GetRecordsResponse afterRenewal = GetRecordsResponse.builder()
+                .records(List.of())
+                .nextShardIterator("next-after-renewal")
+                .build();
+
+        when(streamsClient.getRecords(any(GetRecordsRequest.class)))
+                .thenReturn(CompletableFuture.failedFuture(
+                        new CompletionException(ExpiredIteratorException.builder().build())))
+                .thenReturn(CompletableFuture.completedFuture(afterRenewal));
+
+        when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(
+                        GetShardIteratorResponse.builder().shardIterator("renewed-iter").build()));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Object cp = newShardCheckpoint();
+        ReflectionTestUtils.setField(cp, "lastSequenceNumber", "222");
+
+        GetRecordsResponse result = ReflectionTestUtils.invokeMethod(
+                listener, "getRecordsWithRenewal", STREAM_ARN, SHARD_ID, cp, "expired-iterator");
+
+        assertThat(result).isSameAs(afterRenewal);
+        assertThat(ReflectionTestUtils.getField(cp, "nextIterator")).isEqualTo("renewed-iter");
+
+        ArgumentCaptor<GetShardIteratorRequest> captor = ArgumentCaptor.forClass(GetShardIteratorRequest.class);
+        verify(streamsClient).getShardIterator(captor.capture());
+        assertThat(captor.getValue().shardIteratorType()).isEqualTo(ShardIteratorType.AFTER_SEQUENCE_NUMBER);
+        assertThat(captor.getValue().sequenceNumber()).isEqualTo("222");
+    }
+
+    @Test
+    void getRecordsWithRenewal_whenIteratorExpiredRawException_shouldRenewAndRetry() throws Exception {
+        GetRecordsResponse afterRenewal = GetRecordsResponse.builder()
+                .records(List.of())
+                .nextShardIterator("next-after-raw-renewal")
+                .build();
+
+        when(streamsClient.getRecords(any(GetRecordsRequest.class)))
+                .thenReturn(CompletableFuture.failedFuture(ExpiredIteratorException.builder().build()))
+                .thenReturn(CompletableFuture.completedFuture(afterRenewal));
+
+        when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(
+                        GetShardIteratorResponse.builder().shardIterator("renewed-raw-iter").build()));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Object cp = newShardCheckpoint();
+
+        GetRecordsResponse result = ReflectionTestUtils.invokeMethod(
+                listener, "getRecordsWithRenewal", STREAM_ARN, SHARD_ID, cp, "expired-raw-iterator");
+
+        assertThat(result).isSameAs(afterRenewal);
+        assertThat(ReflectionTestUtils.getField(cp, "nextIterator")).isEqualTo("renewed-raw-iter");
+    }
+
+    @Test
+    void unwrapStreamFailure_shouldUnwrapCompletionExceptionButPassThroughOthers() {
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+
+        RuntimeException root = new IllegalStateException("root");
+        Throwable wrapped = ReflectionTestUtils.invokeMethod(
+                listener, "unwrapStreamFailure", new CompletionException(root));
+        assertThat(wrapped).isSameAs(root);
+
+        RuntimeException raw = new IllegalStateException("raw");
+        Throwable passthrough = ReflectionTestUtils.invokeMethod(
+                listener, "unwrapStreamFailure", raw);
+        assertThat(passthrough).isSameAs(raw);
+    }
+
+    @Test
+    void writeLeaderboardEntryWithRetry_whenMaxRetriesReached_shouldSkipPoisonRecordWithoutRethrow() {
+        when(leaderboardRepository.putLeaderboardEntry(any()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Record record = buildPvpMatchRecord("poison-player", "Name", 100);
+
+        // Attempts below the limit re-throw so the shard does not advance.
+        for (int attempt = 1; attempt < DynamoDbStreamsLeaderboardListener.MAX_PROCESS_RETRIES; attempt++) {
+            assertThatThrownBy(() -> listener.processStreamRecord(record))
+                    .isInstanceOf(RuntimeException.class);
+        }
+
+        // The final attempt treats the record as a poison pill: no throw, entry removed.
+        listener.processStreamRecord(record);
+
+        Map<String, Integer> retryCounts = retryCountsOf(listener);
+        assertThat(retryCounts).doesNotContainKey("poison-player#seq-001");
+    }
+
+    @Test
+    void parseShardIteratorType_shouldDefaultToLatestForBlankOrUnknownAndMatchCaseInsensitively() {
+        assertThat(iteratorTypeOf(createListenerWithIteratorType("TRIM_HORIZON")))
+                .isEqualTo(ShardIteratorType.TRIM_HORIZON);
+        assertThat(iteratorTypeOf(createListenerWithIteratorType("latest")))
+                .isEqualTo(ShardIteratorType.LATEST);
+        assertThat(iteratorTypeOf(createListenerWithIteratorType("not-a-real-type")))
+                .isEqualTo(ShardIteratorType.LATEST);
+        assertThat(iteratorTypeOf(createListenerWithIteratorType("")))
+                .isEqualTo(ShardIteratorType.LATEST);
+        assertThat(iteratorTypeOf(createListenerWithIteratorType(null)))
+                .isEqualTo(ShardIteratorType.LATEST);
+    }
+
+    @Test
+    void openShardIterator_whenNoSequence_shouldUseConfiguredIteratorType() throws Exception {
+        when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(
+                        GetShardIteratorResponse.builder().shardIterator("cold-iter").build()));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Object cp = newShardCheckpoint();
+
+        String iterator = ReflectionTestUtils.invokeMethod(
+                listener, "openShardIterator", STREAM_ARN, SHARD_ID, cp);
+
+        assertThat(iterator).isEqualTo("cold-iter");
+        assertThat(ReflectionTestUtils.getField(cp, "nextIterator")).isEqualTo("cold-iter");
+
+        ArgumentCaptor<GetShardIteratorRequest> captor = ArgumentCaptor.forClass(GetShardIteratorRequest.class);
+        verify(streamsClient).getShardIterator(captor.capture());
+        assertThat(captor.getValue().shardIteratorType()).isEqualTo(ShardIteratorType.LATEST);
+        assertThat(captor.getValue().sequenceNumber()).isNull();
+    }
+
+    @Test
+    void openShardIterator_whenSequencePresent_shouldUseAfterSequenceNumber() throws Exception {
+        when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(
+                        GetShardIteratorResponse.builder().shardIterator("resume-iter").build()));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        Object cp = newShardCheckpoint();
+        ReflectionTestUtils.setField(cp, "lastSequenceNumber", "555");
+
+        String iterator = ReflectionTestUtils.invokeMethod(
+                listener, "openShardIterator", STREAM_ARN, SHARD_ID, cp);
+
+        assertThat(iterator).isEqualTo("resume-iter");
+
+        ArgumentCaptor<GetShardIteratorRequest> captor = ArgumentCaptor.forClass(GetShardIteratorRequest.class);
+        verify(streamsClient).getShardIterator(captor.capture());
+        assertThat(captor.getValue().shardIteratorType()).isEqualTo(ShardIteratorType.AFTER_SEQUENCE_NUMBER);
+        assertThat(captor.getValue().sequenceNumber()).isEqualTo("555");
+    }
+
+    @Test
+    void pollShard_whenRecordsAvailable_shouldProcessThemAndAdvanceCheckpointUntilShardCloses() {
+        when(leaderboardRepository.putLeaderboardEntry(any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(
+                        GetShardIteratorResponse.builder().shardIterator("iter-1").build()));
+
+        GetRecordsResponse first = GetRecordsResponse.builder()
+                .records(List.of(buildPvpMatchRecord("player-poll", "Name", 700)))
+                .nextShardIterator("iter-2")
+                .build();
+        GetRecordsResponse closed = GetRecordsResponse.builder()
+                .records(List.of())
+                .nextShardIterator(null)
+                .build();
+        when(streamsClient.getRecords(any(GetRecordsRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(first))
+                .thenReturn(CompletableFuture.completedFuture(closed));
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        markRunning(listener);
+
+        ReflectionTestUtils.invokeMethod(listener, "pollShard", STREAM_ARN, shard(SHARD_ID));
+
+        verify(leaderboardRepository, times(1)).putLeaderboardEntry(any());
+        Object cp = checkpointsOf(listener).get(SHARD_ID);
+        assertThat(cp).isNotNull();
+        assertThat(ReflectionTestUtils.getField(cp, "lastSequenceNumber")).isEqualTo("seq-001");
+        assertThat(ReflectionTestUtils.getField(cp, "nextIterator")).isNull();
+    }
+
+    @Test
+    void pollShard_whenShardStaysOpen_shouldStopAtMaxGetRecordsRoundsPerShard() {
+        when(streamsClient.getShardIterator(any(GetShardIteratorRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(
+                        GetShardIteratorResponse.builder().shardIterator("iter-open").build()));
+
+        GetRecordsResponse alwaysOpen = GetRecordsResponse.builder()
+                .records(List.of())
+                .nextShardIterator("iter-open")
+                .build();
+        when(streamsClient.getRecords(any(GetRecordsRequest.class)))
+                .thenReturn(CompletableFuture.completedFuture(alwaysOpen));
+
+        int maxRounds = (Integer) ReflectionTestUtils.getField(
+                DynamoDbStreamsLeaderboardListener.class, "MAX_GET_RECORDS_ROUNDS_PER_SHARD");
+
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+        markRunning(listener);
+
+        ReflectionTestUtils.invokeMethod(listener, "pollShard", STREAM_ARN, shard(SHARD_ID));
+
+        verify(streamsClient, times(maxRounds)).getRecords(any(GetRecordsRequest.class));
+    }
+
+    @Test
+    void processStreamRecord_whenDynamoDbStreamRecordNull_shouldSkip() {
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+
+        Record record = Record.builder()
+                .eventName(OperationType.INSERT)
+                .build();
+
+        listener.processStreamRecord(record);
+
+        verify(leaderboardRepository, never()).putLeaderboardEntry(any());
+    }
+
+    @Test
+    void processStreamRecord_whenPlayerIdMissing_shouldSkip() {
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+
+        Record record = Record.builder()
+                .eventName(OperationType.INSERT)
+                .dynamodb(StreamRecord.builder()
+                        .newImage(Map.of(
+                                "entityType", AttributeValue.fromS(GameEvent.ENTITY_TYPE),
+                                "eventType", AttributeValue.fromS(GameEventType.PVP_MATCH.name()),
+                                "playerScore", AttributeValue.fromN("1500")))
+                        .sequenceNumber("seq-1")
+                        .build())
+                .build();
+
+        listener.processStreamRecord(record);
+
+        verify(leaderboardRepository, never()).putLeaderboardEntry(any());
+    }
+
+    @Test
+    void processStreamRecord_whenScoreNotNumeric_shouldThrowNumberFormatException() {
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+
+        Record record = Record.builder()
+                .eventName(OperationType.INSERT)
+                .dynamodb(StreamRecord.builder()
+                        .newImage(Map.of(
+                                "entityType", AttributeValue.fromS(GameEvent.ENTITY_TYPE),
+                                "eventType", AttributeValue.fromS(GameEventType.PVP_MATCH.name()),
+                                "playerId", AttributeValue.fromS("player-1"),
+                                "playerScore", AttributeValue.fromN("not-a-number")))
+                        .sequenceNumber("seq-1")
+                        .build())
+                .build();
+
+        assertThatThrownBy(() -> listener.processStreamRecord(record))
+                .isInstanceOf(NumberFormatException.class);
+        verify(leaderboardRepository, never()).putLeaderboardEntry(any());
+    }
+
+    @Test
+    void lifecycle_startStop_shouldToggleRunningStateAndReportLatePhase() {
+        DynamoDbStreamsLeaderboardListener listener = createListener();
+
+        assertThat(listener.isRunning()).isFalse();
+        assertThat(listener.getPhase()).isEqualTo(Integer.MAX_VALUE);
+
+        listener.start();
+        assertThat(listener.isRunning()).isTrue();
+
+        listener.stop();
+        assertThat(listener.isRunning()).isFalse();
+    }
+
+    /**
+     * Builds a listener with the given raw iterator-type configuration value.
+     *
+     * @param iteratorTypeRaw raw configuration string (may be {@code null})
+     * @return configured listener using mock clients
+     */
+    private DynamoDbStreamsLeaderboardListener createListenerWithIteratorType(String iteratorTypeRaw) {
+        return new DynamoDbStreamsLeaderboardListener(
+                dynamoDbClient, streamsClient, leaderboardRepository,
+                "JavaGameEvent", iteratorTypeRaw);
+    }
+
+    /**
+     * Reads the resolved {@code shardIteratorType} field from the listener.
+     *
+     * @param listener the listener under test
+     * @return the parsed shard iterator type
+     */
+    private static ShardIteratorType iteratorTypeOf(DynamoDbStreamsLeaderboardListener listener) {
+        return (ShardIteratorType) ReflectionTestUtils.getField(listener, "shardIteratorType");
     }
 
     /**

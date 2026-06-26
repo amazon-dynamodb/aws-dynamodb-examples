@@ -1,6 +1,7 @@
 package software.amazon.awssdk.dynamodb.sampleapps.gamingplatform.unit.service;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -56,7 +57,7 @@ class PlayerProfileServiceTest {
         when(repository.getPlayer("player-1")).thenReturn(CompletableFuture.completedFuture(profile));
         when(mapper.toProfileSnapshot(profile)).thenReturn(expected);
 
-        GetProfileResponse result = service.getProfile("player-1");
+        GetProfileResponse result = service.getProfile("player-1").join();
 
         assertThat(result.profile().playerName()).isEqualTo("AlphaWolf");
         assertThat(result.profile().currentLevel()).isEqualTo(10);
@@ -66,7 +67,8 @@ class PlayerProfileServiceTest {
     void getProfile_whenPlayerMissing_shouldThrowPlayerNotFound() {
         when(repository.getPlayer("unknown")).thenReturn(CompletableFuture.completedFuture(null));
 
-        assertThatThrownBy(() -> service.getProfile("unknown"))
-                .isInstanceOf(PlayerNotFoundException.class);
+        assertThatThrownBy(() -> service.getProfile("unknown").join())
+                .isInstanceOf(CompletionException.class)
+                .hasCauseInstanceOf(PlayerNotFoundException.class);
     }
 }

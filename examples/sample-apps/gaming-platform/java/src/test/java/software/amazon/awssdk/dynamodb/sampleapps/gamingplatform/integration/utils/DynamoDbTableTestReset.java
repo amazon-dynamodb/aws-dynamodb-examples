@@ -53,8 +53,8 @@ public class DynamoDbTableTestReset {
      *
      * @param client               DynamoDB async client
      * @param playerStateTableName PlayerState table name
-     * @param gameEventsTableName  GameEvents table name
-     * @param leaderboardTableName LeaderboardAggregate table name
+     * @param gameEventsTableName  GameEvent table name
+     * @param leaderboardTableName Leaderboard table name
      */
     public DynamoDbTableTestReset(DynamoDbAsyncClient client,
                                    @Value("${dynamodb.player-state-table-name}") String playerStateTableName,
@@ -78,8 +78,8 @@ public class DynamoDbTableTestReset {
         deleteTableIfExists(leaderboardTableName);
 
         createPlayerStateTable();
-        createGameEventsTable();
-        enableTtlOnGameEvents();
+        createGameEventTable();
+        enableTtlOnGameEvent();
         createLeaderboardTable();
         seedPlayers();
     }
@@ -133,10 +133,10 @@ public class DynamoDbTableTestReset {
     }
 
     /**
-     * Creates the GameEvents table with composite primary key and a
+     * Creates the GameEvent table with composite primary key and a
      * {@code NEW_IMAGE} DynamoDB stream enabled for leaderboard projection.
      */
-    private void createGameEventsTable() {
+    private void createGameEventTable() {
         client.createTable(CreateTableRequest.builder()
                 .tableName(gameEventsTableName)
                 .keySchema(
@@ -154,10 +154,10 @@ public class DynamoDbTableTestReset {
     }
 
     /**
-     * Enables TTL on the {@code ttl} attribute for the GameEvents table.
+     * Enables TTL on the {@code ttl} attribute for the GameEvent table.
      * Failures are logged at debug level because local DynamoDB may not support TTL.
      */
-    private void enableTtlOnGameEvents() {
+    private void enableTtlOnGameEvent() {
         try {
             client.updateTimeToLive(UpdateTimeToLiveRequest.builder()
                     .tableName(gameEventsTableName)
@@ -172,7 +172,7 @@ public class DynamoDbTableTestReset {
     }
 
     /**
-     * Creates the LeaderboardAggregate table with composite string sort key
+     * Creates the Leaderboard table with composite string sort key
      * for zero-padded score ordering.
      */
     private void createLeaderboardTable() {

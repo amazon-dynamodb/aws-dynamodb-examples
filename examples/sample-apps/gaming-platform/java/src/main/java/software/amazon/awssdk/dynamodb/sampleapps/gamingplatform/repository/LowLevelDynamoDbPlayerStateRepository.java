@@ -89,11 +89,13 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
             "SET currencyBalance = currencyBalance - :cost, "
                     + "version = version + :one";
 
-    /** Update expression crediting currency on earn. Server-side ADD requires no version check. */
-    private static final String EARN_CURRENCY_EXPRESSION = "ADD currencyBalance :amount";
+    /** Update expression crediting currency and bumping the wallet version under optimistic lock. */
+    private static final String EARN_CURRENCY_EXPRESSION =
+            "SET currencyBalance = currencyBalance + :amount, version = version + :one";
 
-    /** Condition for earn: wallet item must exist (guards against phantom credits). */
-    private static final String EARN_WALLET_CONDITION = "attribute_exists(PK)";
+    /** Condition for earn: wallet item must exist and its version must match (optimistic lock). */
+    private static final String EARN_WALLET_CONDITION =
+            "attribute_exists(PK) AND version = :expectedVersion";
 
     /** Low-level async DynamoDB dynamoDbAsyncClient. */
     private final DynamoDbAsyncClient dynamoDbAsyncClient;
@@ -101,7 +103,7 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
     /** Physical PlayerState table name. */
     private final String tableName;
 
-    /** Physical GameEvents table name. */
+    /** Physical GameEvent table name. */
     private final String gameEventsTableName;
 
     /**
@@ -109,7 +111,7 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
      *
      * @param dynamoDbAsyncClient the low-level DynamoDB async client
      * @param tableName          PlayerState table name
-     * @param gameEventsTableName GameEvents table name
+     * @param gameEventsTableName GameEvent table name
      */
     public LowLevelDynamoDbPlayerStateRepository(
             DynamoDbAsyncClient dynamoDbAsyncClient,
@@ -259,23 +261,25 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
     /**
      * {@inheritDoc}
      *
-     * @implNote Uses a raw {@code ADD currencyBalance :amount} expression so the increment is
-     *           server-side atomic with no risk of overwrites from concurrent credits. The two items
-     *           are ordered by {@link WalletTransactItemOrder}: the wallet ADD (guarded by
-     *           {@code attribute_exists(PK)}) then the event PUT (guarded by
-     *           {@code attribute_not_exists(PK)} for idempotency).
+     * @implNote Credits currency and bumps the wallet {@code version} under an optimistic-lock guard
+     *           ({@code version = :expectedVersion}), mirroring the purchase debit. The two items are
+     *           ordered by {@link WalletTransactItemOrder}: the wallet credit (guarded by
+     *           {@code attribute_exists(PK) AND version = :expectedVersion}) then the event PUT
+     *           (guarded by {@code attribute_not_exists(PK)} for idempotency).
      */
     @Override
-    public CompletableFuture<Void> earnCurrencyTransaction(String playerId, long amount,
+    public CompletableFuture<Void> earnCurrencyTransaction(PlayerWallet currentWallet, long amount,
                                                             GameEvent rewardEvent) {
         Map<String, AttributeValue> walletKey = Map.of(
-                "PK", AttributeValue.fromS(PlayerProfile.PK_PREFIX + playerId),
+                "PK", AttributeValue.fromS(currentWallet.getPartitionKey()),
                 "SK", AttributeValue.fromS(PlayerWallet.SK_WALLET));
 
         Map<String, AttributeValue> earnValues = Map.of(
-                ":amount", AttributeValue.fromN(String.valueOf(amount)));
+                ":amount", AttributeValue.fromN(String.valueOf(amount)),
+                ":one", AttributeValue.fromN("1"),
+                ":expectedVersion", AttributeValue.fromN(String.valueOf(currentWallet.getVersion())));
 
-        // Atomic ADD on currencyBalance, guarded only by item existence
+        // Credit with version guard and version bump for optimistic locking
         Update addCurrency = Update.builder()
                 .tableName(tableName)
                 .key(walletKey)
@@ -305,7 +309,7 @@ public class LowLevelDynamoDbPlayerStateRepository implements PlayerStateReposit
 
         return dynamoDbAsyncClient.transactWriteItems(txRequest)
                 .thenRun(() -> logger.debug("Earn currency transaction completed [playerId={}]",
-                        playerId));
+                        currentWallet.getPlayerId()));
     }
 
     /**
