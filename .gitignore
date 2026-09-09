@@ -17,6 +17,7 @@ package-lock.json
 
 /examples/tester/.env
 /examples/tester/.next
+/examples/sample-apps/**/target
 
 **/.idea/
 **/.DS_Store

@@ -1,0 +1,149 @@
+package software.amazon.awssdk.dynamodb.sampleapps.instantpayments.service;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+import org.springframework.stereotype.Service;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentProjection;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.dto.MerchantPaymentsPage;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.exception.InvalidPaymentStateException;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.mapper.PaymentMapper;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.model.PaymentState;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.MerchantPaymentQueryResult;
+import software.amazon.awssdk.dynamodb.sampleapps.instantpayments.repository.PaymentRepository;
+
+/**
+ * Read-model service for merchant-scoped payment list queries.
+ *
+ * <p>Delegates to GSI-backed repository methods and maps results to
+ * {@link MerchantPaymentProjection} DTOs.
+ *
+ * <p><strong>Pagination token contract.</strong> A {@code nextToken} is opaque and bound to the exact
+ * route that issued it. The repository layer validates the decoded continuation key before it reaches
+ * DynamoDB and rejects misuse with {@code InvalidPaginationTokenException} (HTTP 400
+ * {@code INVALID_PAGINATION_TOKEN}): a malformed token, a token from the other merchant-list GSI
+ * (cross-endpoint reuse), or a token whose encoded {@code merchantId} differs from the path
+ * {@code merchantId} (cross-merchant reuse). This keeps an incompatible token from surfacing as an
+ * HTTP 500 dependency error.
+ *
+ * <p>Returns {@link CompletableFuture} so async MVC controllers can compose without blocking Tomcat
+ * worker threads.
+ */
+@Service
+public class MerchantPaymentQueryService {
+
+    /**
+     * Page size when the client omits {@code limit} or sends a non-positive value.
+     */
+    static final int DEFAULT_LIMIT = 50;
+
+    /** Persistence for GSI-backed merchant payment queries. */
+    private final PaymentRepository paymentRepository;
+    /** Maps stream-head rows to {@link MerchantPaymentProjection} DTOs. */
+    private final PaymentMapper paymentMapper;
+
+    /**
+     * @param paymentRepository persistence (high- or low-level per {@code dynamodb.client-type})
+     * @param paymentMapper     maps repository stream-head results to {@link MerchantPaymentProjection}
+     */
+    public MerchantPaymentQueryService(PaymentRepository paymentRepository,
+                                       PaymentMapper paymentMapper) {
+        this.paymentRepository = paymentRepository;
+        this.paymentMapper = paymentMapper;
+    }
+
+    /**
+     * Lists payment projections for a merchant.
+     *
+     * <p>When {@code scanIndexForward} is omitted or {@code false}, results are newest first
+     * (DynamoDB {@code ScanIndexForward=false}). When {@code true}, oldest first.
+     *
+     * @param merchantId        merchant scope
+     * @param limit             page size, uses {@value DEFAULT_LIMIT} when {@code null}, zero, or negative
+     * @param scanIndexForward  optional. {@code true} for ascending index traversal per DynamoDB Query
+     * @param nextToken         optional opaque pagination token from a previous page
+     * @return ordered page of payment projections (may be empty)
+     */
+    public CompletableFuture<MerchantPaymentsPage> listMerchantPayments(String merchantId,
+                                                                        Integer limit,
+                                                                        Boolean scanIndexForward,
+                                                                        String nextToken) {
+        int effectiveLimit = sanitizeLimit(limit);
+        boolean forward = effectiveScanIndexForward(scanIndexForward);
+
+        return paymentRepository
+                .queryMerchantPayments(merchantId, effectiveLimit, forward, nextToken)
+                .thenApply(this::toMerchantPaymentsPage);
+    }
+
+    /**
+     * Lists payment projections for a merchant filtered by state.
+     *
+     * <p>Ordering follows {@link #listMerchantPayments(String, Integer, Boolean, String)}.
+     *
+     * @param merchantId        merchant scope
+     * @param state             payment state (case-insensitive), validated against {@link PaymentState}
+     * @param limit             page size, uses {@value DEFAULT_LIMIT} when {@code null}, zero, or negative
+     * @param scanIndexForward  optional. {@code true} for ascending index traversal per DynamoDB Query
+     * @param nextToken         optional opaque pagination token from a previous page
+     * @return ordered page of matching payment projections (may be empty)
+     * @throws InvalidPaymentStateException if {@code state} is not a recognised value
+     */
+    public CompletableFuture<MerchantPaymentsPage> listMerchantPaymentsByState(String merchantId,
+                                                                               String state,
+                                                                               Integer limit,
+                                                                               Boolean scanIndexForward,
+                                                                               String nextToken) {
+        String normalizedState = validateAndNormalizeState(state);
+        int effectiveLimit = sanitizeLimit(limit);
+        boolean forward = effectiveScanIndexForward(scanIndexForward);
+
+        return paymentRepository
+                .queryMerchantPaymentsByState(merchantId, normalizedState, effectiveLimit, forward, nextToken)
+                .thenApply(this::toMerchantPaymentsPage);
+    }
+
+    /**
+     * Maps repository stream-head rows to API projections and wraps them in a page envelope.
+     *
+     * @param result paged query outcome from {@link PaymentRepository}
+     * @return client-facing page with defensive list copy inside {@link MerchantPaymentsPage}
+     */
+    private MerchantPaymentsPage toMerchantPaymentsPage(MerchantPaymentQueryResult result) {
+        List<MerchantPaymentProjection> projections = result.items().stream()
+                .map(paymentMapper::toMerchantPaymentProjection)
+                .toList();
+        return new MerchantPaymentsPage(projections, result.nextToken());
+    }
+
+    /**
+     * @param limit raw query parameter (may be {@code null})
+     * @return {@link #DEFAULT_LIMIT} when null or non-positive, otherwise {@code limit}
+     */
+    private static int sanitizeLimit(Integer limit) {
+        return (limit == null || limit <= 0) ? DEFAULT_LIMIT : limit;
+    }
+
+    /**
+     * @param scanIndexForward raw query parameter (may be {@code null})
+     * @return {@code true} only when the client sends {@code true}, otherwise {@code false} (newest first)
+     */
+    private static boolean effectiveScanIndexForward(Boolean scanIndexForward) {
+        return Boolean.TRUE.equals(scanIndexForward);
+    }
+
+    /**
+     * @param state raw path segment (case-insensitive)
+     * @return upper-case {@link PaymentState} name
+     * @throws InvalidPaymentStateException if not a known enum constant
+     */
+    private static String validateAndNormalizeState(String state) {
+        String upper = state.toUpperCase();
+        try {
+            PaymentState.valueOf(upper);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidPaymentStateException(state);
+        }
+        return upper;
+    }
+}

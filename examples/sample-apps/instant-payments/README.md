@@ -6,15 +6,19 @@ Instant Payments is an application that models a focused slice of a real-time pa
 
 The application demonstrates key DynamoDB capabilities, including multi-item atomicity with **TransactWriteItems**, **conditional writes** for idempotency and state transitions, and asynchronous event processing with **DynamoDB Streams** (**NEW_IMAGE**). It uses **Global Secondary Indexes** for query access patterns, **Time to Live (TTL)** for idempotency record expiry, and **optimistic locking** for safe concurrent updates. The system follows a **single-table design**, organizing entities with **composite keys**, and provides interchangeable implementations using both a **low-level DynamoDB client** and a **high-level document or enhanced client** (configurable at application startup).
 
+For simplicity, the automatic stream-driven processing tracks its progress in memory, so if the application restarts a payment created during that brief window may not be picked up automatically. No payment is lost: it can always be completed by re-triggering processing for that payment, and the application can be configured to replay from the beginning of the stream history, which catches missed payments but reprocesses everything in the retention window.
+
 ---
 
 ## Why DynamoDB?
 
 An instant payment flow is a short-lived state machine (accept a command, reserve funds, complete or reject) where every step must be safe under retries and concurrency, reads must return in single-digit milliseconds to meet real-time SLAs, and the full history must be auditable. The access patterns are narrow and predictable: point reads on a known payment or account, ordered scans within a single partition for event replay, and indexed lookups by merchant. DynamoDB fits because its core primitives line up directly with these requirements.
 
-Each payment's stream head and events live under one partition key, and each account's balance, reservations, and ledger entries live under another, so a single `Query` retrieves an entire aggregate without cross-table joins. Events are stored with sorted keys (`EVENT#0001`, `EVENT#0002`, ...) that give an append-only, replayable log per payment - no separate event store needed. Each lifecycle step bundles two to five items across these entity types into one `TransactWriteItems` call, and condition expressions inside that transaction enforce the state machine: sequence checks on the stream head, version guards on the account, status gates on reservations, and write-once constraints on ledger entries. Concurrent processors that lose a race receive an immediate conditional failure rather than corrupting state, which is exactly what an at-least-once delivery model (HTTP retries, DynamoDB Streams) needs.
+Each payment's stream head and events live under one partition key, and each account's balance, reservations, and ledger entries live under another, so a single `Query` retrieves an entire aggregate without cross-table joins. Events are stored with sorted keys (`EVENT#0001`, `EVENT#0002`, ...) that give an append-only, replayable log per payment - no separate event store needed. Each lifecycle step bundles two to six items across these entity types into one `TransactWriteItems` call, and condition expressions inside that transaction enforce the state machine: sequence checks on the stream head, version guards on the account, status gates on reservations, and write-once constraints on ledger entries. Concurrent processors that lose a race receive an immediate conditional failure rather than corrupting state, which is exactly what an at-least-once delivery model (HTTP retries, DynamoDB Streams) needs.
 
 Beyond correctness, DynamoDB Streams triggers the processing lifecycle automatically when the first payment event is inserted, removing the need for a separate message broker. Idempotency records are created atomically alongside the payment and expire via TTL after a configurable window, so deduplication cleanup requires no scheduled jobs. On-demand capacity absorbs payment volume spikes without throughput planning, and single-partition `GetItem` reads stay in the low single-digit milliseconds regardless of table size.
+
+One cost trade-off comes with the single-table design: a raw DynamoDB stream carries every table change and offers no server-side filter, so the stream consumer reads all records and filters in code to payment-created events, paying `GetRecords` cost on account, ledger, and idempotency writes it then discards. The per-payment event volume here is small, but on a busy table this adds up. A workload that needs server-side filtering can use Kinesis Data Streams for DynamoDB, which supports consumer-side stream filters, instead of raw DynamoDB Streams.
 
 ---
 
@@ -38,7 +42,7 @@ Retrieves an account’s balances and active reservations in a single read. The 
 
 ### POST /api/v1/accounts/{accountId}/batch-get-reservations
 
-Retrieves specific reservations for a single account by their ids using **BatchGetItem**. The service accepts up to **100** reservation identifiers in JSON, merging duplicates while keeping first-seen order. The response includes found reservations and lists missing ids separately, returning a success response even when some ids are absent so callers can merge partial success with the request list.
+Retrieves specific reservations for a single account by their ids. The caller supplies between **1** and **100** reservation identifiers in JSON. Duplicate ids in the list are merged while preserving first-seen order. Requests with no ids, more than **100** ids, or blank identifiers are rejected. For valid requests, the response includes found reservations and lists any missing ids separately, so callers can reconcile partial results against the identifiers they sent.
 
 ### GET /api/v1/merchants/{merchantId}/payments
 
@@ -46,4 +50,4 @@ Lists a merchant's payments ordered by creation time. The service queries a **Gl
 
 ### GET /api/v1/merchants/{merchantId}/payments/state/{state}
 
-Lists a merchant's payments filtered by lifecycle state, ordered by creation time. The service queries a **Global Secondary Index (GSI)** with a **composite partition key** (merchant and state) to directly retrieve only matching items without a **FilterExpression**. The index returns full payment data, sorted newest first by default with optional sort direction and page size controls.
+Lists a merchant's payments filtered by lifecycle state, ordered by creation time. The service queries a **Global Secondary Index (GSI)** with a **composite partition key** (merchant and state) to directly retrieve only matching items without a **FilterExpression**. The index projects the subset of attributes the merchant list needs, avoiding additional reads from the **base table**, and returns results sorted newest first by default with optional sort direction and page size controls.

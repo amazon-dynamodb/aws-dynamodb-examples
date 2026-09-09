@@ -1,0 +1,85 @@
+server:
+  # TCP port the embedded web server listens on.
+  port: 8080
+  # On SIGTERM, stop accepting new requests and let in-flight ones finish before the context closes.
+  shutdown: graceful
+
+spring:
+  application:
+    # Logical Spring application name, used in logs.
+    name: instant-payments
+  mvc:
+    async:
+      # Max time (ms) Spring MVC waits for an async controller result before timing out the request.
+      # Above DynamoDbConfig.API_CALL_TIMEOUT (5s): let the SDK finish or fail with a mapped error first.
+      request-timeout: 10000
+  lifecycle:
+    # Upper bound for each shutdown phase to drain. In-flight DynamoDB calls are themselves bounded
+    # by the SDK apiCallTimeout, so the poller and request threads give up well inside this window.
+    timeout-per-shutdown-phase: 30s
+
+dynamodb:
+  # Required. DynamoDB endpoint URL, either local or https://dynamodb.{region}.amazonaws.com
+  endpoint: http://localhost:8000
+  # Required. AWS region for the DynamoDB client.
+  region: eu-west-1
+  # Required. SDK mapping style, either high-level (enhanced client) or low-level.
+  client-type: high-level
+  # Name of the DynamoDB table backing the app.
+  table-name: JavaInstantPayments
+  # Local dev only. When true, the app creates the table, enables TTL, and seeds demo accounts.
+  # In production, set false or omit the property. Create the table beforehand (CDK, CloudFormation,
+  # Terraform, or console). The app then only verifies the table exists at startup.
+  create-resources: true
+  # Seconds until idempotency items get ttl = createdAtUtc + this (DynamoDB deletes eventually). Min 3600, max 31536000.
+  idempotency-ttl-seconds: 2592000
+  # Seconds a funds reservation hold stays valid. The temporary reservation timer row is stamped with
+  # ttl = createdAtUtc + this. When DynamoDB deletes the expired timer, the Streams REMOVE record drives
+  # the release path, which restores availableBalance and marks the ACTIVE audit hold RELEASED.
+  # Kept short here so the sample is easy to observe. A real instant-payment hold would be minutes to hours.
+  reservation-timeout-seconds: 900
+  streams:
+    # Optional. Shard iterator type when reading the DynamoDB stream. LATEST (default) reads only new records,
+    # TRIM_HORIZON reads from the oldest available record. Sample tests use TRIM_HORIZON.
+    iterator-type: LATEST
+
+instant-payments:
+  mvc:
+    async:
+      # Core number of threads kept alive in the MVC async (mvc-async-*) executor pool.
+      core-pool-size: 10
+      # Maximum number of threads the MVC async executor pool can grow to under load.
+      max-pool-size: 50
+      # Number of queued async dispatches allowed before the pool rejects new ones.
+      queue-capacity: 100
+
+springdoc:
+  api-docs:
+    # URL path where the generated OpenAPI JSON document is served.
+    path: /api-docs
+  # springdoc-openapi defaults to */*. Set application/json so /api-docs matches this JSON API.
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
+  swagger-ui:
+    # URL path where the interactive Swagger UI is served.
+    path: /swagger-ui.html
+    # Order operations are listed in Swagger UI, sorted by HTTP method.
+    operations-sorter: method
+
+---
+# Production profile (spring.profiles.active=prod) turns off the interactive API docs. Swagger UI and
+# the OpenAPI JSON are a teaching feature here and stay on by default, but in production they are
+# usually disabled so the API surface is not advertised.
+spring:
+  config:
+    activate:
+      # Profile that must be active for this document block to apply.
+      on-profile: prod
+
+springdoc:
+  api-docs:
+    # Disable serving the OpenAPI JSON document in production.
+    enabled: false
+  swagger-ui:
+    # Disable serving the interactive Swagger UI in production.
+    enabled: false

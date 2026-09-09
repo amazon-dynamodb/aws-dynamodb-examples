@@ -1,0 +1,37 @@
+# Merged when spring.profiles.active=test (@ActiveProfiles on AbstractIntegrationTest in integration.utils).
+# DynamoDbTableTestReset (test profile) deletes, recreates, and seeds the table before each test method.
+
+spring:
+  mvc:
+    async:
+      # Max time (ms) Spring MVC waits for an async controller result before timing out the request.
+      request-timeout: 10000
+
+instant-payments:
+  mvc:
+    async:
+      # Core number of threads kept alive in the MVC async (mvc-async-*) executor pool.
+      core-pool-size: 4
+      # Maximum number of threads the MVC async executor pool can grow to under load.
+      max-pool-size: 8
+      # Number of queued async dispatches allowed before the pool rejects new ones.
+      queue-capacity: 50
+
+dynamodb:
+  # DynamoDB endpoint URL, overridden by AbstractIntegrationTest#dynamoDbProperties
+  endpoint: http://localhost:8000
+  # AWS region for the DynamoDB client.
+  region: eu-west-1
+  # SDK mapping style, either high-level (enhanced client) or low-level.
+  client-type: high-level
+  # Name of the DynamoDB table backing the app.
+  table-name: JavaInstantPayments
+  # Create table and seed at startup. DynamoDbTableTestReset resets the table before each test.
+  create-resources: true
+  # Seconds until idempotency items get ttl = createdAtUtc + this (DynamoDB deletes eventually). Min 3600, max 31536000.
+  idempotency-ttl-seconds: 2592000
+  streams:
+    # Shard iterator type when reading the DynamoDB stream. LATEST reads only new records,
+    # TRIM_HORIZON reads from the oldest available record.
+    # Lets integration tests observe INSERTs without relying on LATEST iterator timing.
+    iterator-type: TRIM_HORIZON
