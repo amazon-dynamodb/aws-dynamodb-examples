@@ -15,12 +15,12 @@ import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedAsyncClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 
 /**
- * Smoke tests for core application wiring and infrastructure endpoints.
+ * Smoke tests for core application wiring and API documentation.
  *
  * <p>Extends {@link AbstractSmokeTest} with the full Spring context and DynamoDB Local from
- * Testcontainers. Uses MockMvc to verify {@code /actuator/health} and the OpenAPI spec at
- * {@code /api-docs}. Also asserts {@link DynamoDbConfig} applies an explicit SDK retry strategy
- * on the wired {@link DynamoDbAsyncClient} and optional {@link DynamoDbEnhancedAsyncClient}.
+ * Testcontainers. Uses MockMvc to verify the OpenAPI spec at {@code /api-docs}. Also asserts
+ * {@link DynamoDbConfig} applies an explicit SDK retry strategy on the wired
+ * {@link DynamoDbAsyncClient} and optional {@link DynamoDbEnhancedAsyncClient}.
  */
 @Tag("smoke")
 public class ApplicationSmokeTest extends AbstractSmokeTest {
@@ -30,13 +30,6 @@ public class ApplicationSmokeTest extends AbstractSmokeTest {
 
     @Autowired(required = false)
     private DynamoDbEnhancedAsyncClient dynamoDbEnhancedAsyncClient;
-
-    @Test
-    void actuatorHealth_whenRequested_shouldReturn200() throws Exception {
-        performAsync(mockMvc, get("/actuator/health"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"));
-    }
 
     @Test
     void favicon_whenRequested_shouldReturn204() throws Exception {

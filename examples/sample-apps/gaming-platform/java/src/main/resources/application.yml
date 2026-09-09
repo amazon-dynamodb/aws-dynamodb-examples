@@ -6,7 +6,7 @@ server:
 
 spring:
   application:
-    # Logical Spring application name, used in logs and management endpoints.
+    # Logical Spring application name, used in logs.
     name: gaming-platform
   mvc:
     async:
@@ -17,20 +17,6 @@ spring:
     # Upper bound for each shutdown phase to drain. In-flight DynamoDB calls are themselves bounded
     # by the SDK apiCallTimeout, so the poller and request threads give up well inside this window.
     timeout-per-shutdown-phase: 20s
-
-# Actuator is locked down so only /actuator/health is web-exposed and a profile override cannot
-# accidentally surface env, heapdump, configprops, etc. Health shows status only without component
-# or disk details to avoid leaking infrastructure information to unauthenticated callers.
-management:
-  endpoints:
-    web:
-      exposure:
-        # Comma-separated list of actuator endpoints exposed over HTTP. Only health is published.
-        include: health
-  endpoint:
-    health:
-      # Detail level of the health endpoint response. never hides component and disk details so only status is shown.
-      show-details: never
 
 dynamodb:
   # Required. DynamoDB endpoint URL, either local or https://dynamodb.{region}.amazonaws.com

@@ -12,23 +12,13 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.ClassPathResource;
 
 /**
- * Verifies the security-relevant settings in {@code application.yml} stay pinned.
+ * Verifies the runtime settings in {@code application.yml} stay pinned.
  *
- * <p>It loads the packaged YAML and asserts the actuator exposure lockdown and the production
- * profile that disables springdoc, so a future edit cannot silently widen the surface.
+ * <p>It loads the packaged YAML and asserts graceful shutdown and the production profile that
+ * disables springdoc.
  */
 @Tag("unit")
 class ApplicationYamlConfigTest {
-
-    @Test
-    void applicationYaml_whenLoaded_shouldPinActuatorExposureToHealthOnly() throws IOException {
-        PropertySource<?> defaultDocument = loadDocuments().get(0);
-
-        assertThat(defaultDocument.getProperty("management.endpoints.web.exposure.include"))
-                .isEqualTo("health");
-        assertThat(defaultDocument.getProperty("management.endpoint.health.show-details"))
-                .isEqualTo("never");
-    }
 
     @Test
     void applicationYaml_whenLoaded_shouldConfigureGracefulShutdown() throws IOException {
@@ -63,5 +53,4 @@ class ApplicationYamlConfigTest {
                 .load("application.yml", new ClassPathResource("application.yml"));
     }
 }
-
 
