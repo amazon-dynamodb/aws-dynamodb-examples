@@ -1,0 +1,23 @@
+# Merged when spring.profiles.active=test (@ActiveProfiles on AbstractIntegrationTest in integration).
+# DynamoDbTableTestReset (test profile) deletes, recreates, and seeds all three tables before each test method.
+
+dynamodb:
+  # DynamoDB endpoint URL, overridden by AbstractIntegrationTest#dynamoDbProperties
+  endpoint: http://localhost:8000
+  # AWS region for the DynamoDB client.
+  region: eu-west-1
+  # SDK mapping style, either high-level (enhanced client) or low-level.
+  client-type: high-level
+  # Name of the PlayerState table holding the profile, settings, and wallet items for each player.
+  player-state-table-name: JavaPlayerState
+  # Name of the GameEvent table holding the append-only event log, with a DynamoDB stream and TTL.
+  game-events-table-name: JavaGameEvent
+  # Name of the Leaderboard table holding the projected top-ranked rows.
+  leaderboard-table-name: JavaLeaderboard
+  # Seconds until each game event gets ttl = recordedAt + this (DynamoDB deletes eventually). Min 60, max 31536000.
+  game-events-ttl-seconds: 7776000
+  streams:
+    # Shard iterator type when reading the DynamoDB stream. LATEST reads only new records,
+    # TRIM_HORIZON reads from the oldest available record.
+    # Lets integration tests observe INSERTs without relying on LATEST iterator timing.
+    iterator-type: TRIM_HORIZON

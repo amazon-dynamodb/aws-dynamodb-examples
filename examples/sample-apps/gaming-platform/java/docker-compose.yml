@@ -1,0 +1,32 @@
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: dynamodb-local
+    # Prevent the container processes from gaining new privileges
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "8000:8000"
+    command: "-jar DynamoDBLocal.jar -sharedDb -inMemory"
+
+  gaming-platform-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gaming-platform-app
+    # Prevent the container processes from gaining new privileges
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "8080:8080"
+    environment:
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      DYNAMODB_REGION: eu-west-1
+      DYNAMODB_CLIENTTYPE: ${DYNAMODB_CLIENTTYPE:-high-level}
+      DYNAMODB_PLAYERSTATETABLENAME: JavaPlayerState
+      DYNAMODB_GAMEEVENTSTABLENAME: JavaGameEvent
+      DYNAMODB_LEADERBOARDTABLENAME: JavaLeaderboard
+    depends_on:
+      - dynamodb-local
+    profiles:
+      - app
